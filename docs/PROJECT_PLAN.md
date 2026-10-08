@@ -140,8 +140,8 @@ Checkbox means acceptance verified, not merely code written. Status: Not started
 - [x] **T01 — Lichess reuse audit.** Status: Done (research only). [Dependency audit](research/lichess-puzzle-dependencies.md) pins upstream revision and covers bootstrap, network, player/views, services, licenses and online/local seams. Runtime baseline remains T05.
 - [x] **T02 — Reproducible rated puzzle pack.** Status: Done for around-1000 POC pack. Tool, retained snapshot, 100 puzzles, manifest and validation report delivered. Coordinator reran 8 passing tests and successful pack verification. See [content report](research/puzzle-content-sources.md) and `../tools/puzzles/README.md`. Other rating bands remain future content work.
 - [x] **T03 — Anki-inspired scheduling specification.** Status: Done (design only). [Specification](research/scheduling-behavior.md) covers explicit transitions, presets, bounded timing, queue/interruptions and 21 acceptance scenarios. Numeric defaults remain proposals; no scheduler implemented.
-- [ ] **T04 — Contracts and schemas.** Depends T01/T03. Typed service interfaces, schema versions, fixtures, contract tests; resolve Q02/Q03/Q09 and idempotency. Acceptance: same UI-facing interface works online/local. One integration owner.
-- [ ] **T05 — Runnable Lila baseline.** Depends T01. Reproducible setup and seeded puzzle route; record actual services and blockers. Acceptance: existing interaction verified before customization.
+- [x] **T04 — Contracts and schemas.** Status: Done for architecture-neutral contracts. `packages/contracts/` defines the UI↔training-service boundary, attempt identity, idempotent outcome commits, immutable scored failure, correction separation, and versioned content/progress schemas. Reference in-memory test double + 7 passing contract tests; fixtures use real pack entries. Coordinator reran tests (`node --test --experimental-strip-types`) and typecheck (`tsc --noEmit`), both clean. Q02/Q09 recorded as **Proposed** ADRs ([ADR-001](decisions/ADR-001-training-service-boundary.md), [ADR-002](decisions/ADR-002-progress-scope-and-authority.md)), not accepted. Q03 remains open. See [contracts design](research/contracts-design.md). Real scheduler is T06.
+- [ ] **T05 — Runnable Lila baseline.** Status: **Partial / Blocked** (setup feasibility only). Pinned-revision clone succeeded (`f5b261e3d8ece6f511484e398cb8d81e37735bea`, 183 MB) and tooling was probed, but the app could not be started: **sbt/coursier, MongoDB and Redis are not installed**. Docker is available for services; exact next commands recorded. No puzzle route or seeded content verified. See [baseline report](research/lichess-baseline.md).
 - [ ] **T06 — Scheduler/attempt core.** Depends T04. Deterministic module and transition tests. Acceptance: correction cannot erase failure; time secondary; configurable policies; duplicate submissions harmless.
 - [ ] **T07 — Online adapter.** Depends T02/T04/T05. API/session/attempt persistence. Acceptance: session start, recording, selection and resume meet contracts.
 - [ ] **T08 — Player integration.** Depends T04/T05. Inject adapter, report attempts and timing. Acceptance: failure-and-continue behavior; preserve working Lichess interaction where practical.
@@ -186,6 +186,41 @@ Key findings for T04/T05:
 5. Scheduling specification distinguishes Anki concepts from the proposed ladder and timing adjustment. T04 should explicitly decide progress scope and scheduling authority before parallel implementation. Retry-reset versus retry-retain remains a default-policy choice, not a new user instruction.
 
 Next eligible parallel tasks: T04 contracts/schema design and T05 baseline setup. T04 must record provisional implementation decisions transparently; T05 must inspect available tooling before installing or starting infrastructure. Neither task has started yet.
+
+## Wave 2 review and next handoff — 2026-10-09
+
+Two agents ran T04 (contracts) and T05 (baseline). Coordinator verified T04 by running the 7
+contract tests and `tsc --noEmit` (both clean) and wrote/persisted the T05 baseline report
+from the agent's verified findings. The pinned Lila clone exists at the correct SHA; no server
+was started.
+
+Key findings:
+
+1. **Contracts are usable and architecture-neutral.** The same `TrainingService` interface
+   targets both an HTTP adapter and a bundled local adapter. Outcomes are idempotent via
+   idempotency keys, scored failure is immutable, and correction is a separate step. Progress
+   scope is provisionally per training program (ADR-002, Proposed).
+2. **The full unchanged-Lila baseline is heavy.** It needs sbt/coursier plus MongoDB and Redis;
+   none are installed. Docker can host the services, but the Scala build is the real cost. This
+   is achievable but is not a quick win, and it does **not** unblock the offline goal by itself.
+3. **The offline path does not require the full server.** T01/T05 both point to a FEN-rooted
+   content seam (`solverFen` + `setupUci` + `solutionUci`) plus host-service injection. This can
+   be proven with Chessground + chessops over the T02 pack, independent of the backend build.
+
+Recommended next wave (parallel, after this review):
+
+- **T06 — scheduler/attempt core:** implement the deterministic scheduler against the T04
+  contracts (T03 spec), with transition tests. Independent of the Lila build.
+- **T08-lite — FEN-rooted local player spike:** minimal Chessground + chessops page that loads
+  the T02 pack, enforces failure-and-continue, and reports attempts through the contracts. This
+  is the fastest route to a *visible, testable* vertical slice and informs the Q01 fork-vs-
+  extraction decision.
+- **T05 (optional, human/system):** install sbt/coursier + Docker Mongo/Redis and complete the
+  unchanged baseline if the explicit comparison is still wanted.
+
+Open decisions still requiring confirmation before persistence work: **Q02** (authority
+online), **Q03** (which Lichess response contracts to preserve), **Q09** (progress scope),
+**Q12** (backup/migration). ADR-001 and ADR-002 remain Proposed.
 
 ## Sources
 
