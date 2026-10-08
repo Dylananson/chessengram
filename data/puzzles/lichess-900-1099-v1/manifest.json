@@ -1,0 +1,63 @@
+{
+  "checksums_sha256": {
+    "pack.jsonl": "5f26a52606c60c11c92b4d3a61e25eee66b1845bc7a09d9310042e3671da1e7f",
+    "source.csv": "e0c44102bc50a6a1f4c88bd1e623fb68d2759f441e0837744871aaee1e85120a",
+    "source.json": "f632599e3a0586e2e29b985a403e318353b00eec2eaeca8e65ae8766dcd12e5a",
+    "validation.json": "55194ab278562780c490b0f318d5b1ec06c87fc0c5104668f27348fa73e9f670"
+  },
+  "convention": "sourceFen/original.FEN is BEFORE setupMove; solverFen is AFTER setupMove; solution excludes setup and includes alternating solver/opponent plies",
+  "count": 100,
+  "environment": {
+    "chess": "1.11.2",
+    "python": "3.14.7",
+    "zstandard": "0.25.0"
+  },
+  "license": "CC0-1.0",
+  "pack_id": "lichess-900-1099-starter-v1",
+  "schema_version": 1,
+  "selection": {
+    "count": 100,
+    "deduplication": "first in hash order per ID and solver FEN first four fields (legal en passant); ignore clocks",
+    "ordering": "ascending SHA256(UTF-8(seed + ':' + PuzzleId)), then PuzzleId",
+    "plays_min": 100,
+    "popularity_min": 80,
+    "rating_deviation_max": 100,
+    "rating_max": 1099,
+    "rating_min": 900,
+    "scope": "first 5000 complete data rows of official CSV; not a global random sample",
+    "seed": "chessreps-t02-v1"
+  },
+  "serialization": "UTF-8, LF; JSONL sorted keys compact separators; JSON sorted keys indent=2 trailing LF",
+  "source_snapshot": {
+    "compressed_prefix_bytes": 1048576,
+    "compressed_prefix_sha256": "dc8043e631315c5219880b4082a9f4a79c9030f6187dbd6267cf7b759cec21ab",
+    "data_rows": 5000,
+    "final_url": "https://database.lichess.org/lichess_db_puzzle.csv.zst",
+    "first_id": "00008",
+    "http_status": 206,
+    "last_id": "039QA",
+    "license": "CC0-1.0",
+    "license_source": "https://database.lichess.org/#puzzles",
+    "limitations": "bounded prefix, not a global sample; compressed frame incomplete, full archive checksum unavailable",
+    "requested_range": "bytes=0-1048575",
+    "response_headers": {
+      "Connection": "close",
+      "Content-Length": "1048576",
+      "Content-Range": "bytes 0-1048575/307234795",
+      "Content-Type": "application/octet-stream",
+      "Date": "Thu, 08 Oct 2026 22:42:48 GMT",
+      "ETag": "\"6abf70a1-125007eb\"",
+      "Last-Modified": "Fri, 02 Oct 2026 08:51:45 GMT",
+      "Server": "nginx",
+      "Strict-Transport-Security": "max-age=63072000; includeSubDomains; preload",
+      "X-Frame-Options": "DENY"
+    },
+    "retrieved_at_utc": "2026-10-08T22:42:51.079054+00:00",
+    "schema_version": 1,
+    "snapshot_identity": "retained source.csv SHA256; URL is mutable; HTTP dates are recorded, not inferred",
+    "source_csv_bytes": 925082,
+    "source_csv_sha256": "e0c44102bc50a6a1f4c88bd1e623fb68d2759f441e0837744871aaee1e85120a",
+    "url": "https://database.lichess.org/lichess_db_puzzle.csv.zst"
+  },
+  "tool_sha256": "09c3c99e9bfd5b0a0ee8797368ac3c22bf03211ad2cf37333963c98491c0b580"
+}

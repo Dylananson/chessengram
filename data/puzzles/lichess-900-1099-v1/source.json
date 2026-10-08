@@ -1,0 +1,31 @@
+{
+  "compressed_prefix_bytes": 1048576,
+  "compressed_prefix_sha256": "dc8043e631315c5219880b4082a9f4a79c9030f6187dbd6267cf7b759cec21ab",
+  "data_rows": 5000,
+  "final_url": "https://database.lichess.org/lichess_db_puzzle.csv.zst",
+  "first_id": "00008",
+  "http_status": 206,
+  "last_id": "039QA",
+  "license": "CC0-1.0",
+  "license_source": "https://database.lichess.org/#puzzles",
+  "limitations": "bounded prefix, not a global sample; compressed frame incomplete, full archive checksum unavailable",
+  "requested_range": "bytes=0-1048575",
+  "response_headers": {
+    "Connection": "close",
+    "Content-Length": "1048576",
+    "Content-Range": "bytes 0-1048575/307234795",
+    "Content-Type": "application/octet-stream",
+    "Date": "Thu, 08 Oct 2026 22:42:48 GMT",
+    "ETag": "\"6abf70a1-125007eb\"",
+    "Last-Modified": "Fri, 02 Oct 2026 08:51:45 GMT",
+    "Server": "nginx",
+    "Strict-Transport-Security": "max-age=63072000; includeSubDomains; preload",
+    "X-Frame-Options": "DENY"
+  },
+  "retrieved_at_utc": "2026-10-08T22:42:51.079054+00:00",
+  "schema_version": 1,
+  "snapshot_identity": "retained source.csv SHA256; URL is mutable; HTTP dates are recorded, not inferred",
+  "source_csv_bytes": 925082,
+  "source_csv_sha256": "e0c44102bc50a6a1f4c88bd1e623fb68d2759f441e0837744871aaee1e85120a",
+  "url": "https://database.lichess.org/lichess_db_puzzle.csv.zst"
+}
