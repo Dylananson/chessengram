@@ -19,7 +19,7 @@ import { chessgroundDests } from 'chessops/compat';
 import { makeFen, parseFen } from 'chessops/fen';
 import { makeUci, parseSquare, parseUci, squareRank } from 'chessops/util';
 import type { Color, SquareName } from 'chessops/types';
-import type { NormalizedPuzzle } from '../../../packages/contracts/src/types.ts';
+import type { NormalizedPuzzle } from '@chessreps/contracts';
 
 export type PromotionRole = 'q' | 'r' | 'b' | 'n';
 

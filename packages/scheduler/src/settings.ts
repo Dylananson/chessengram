@@ -6,7 +6,7 @@
  * See docs/decisions/ADR-003-scheduler-defaults.md.
  */
 
-import type { FailurePreset } from "../../contracts/src/types.ts";
+import type { FailurePreset } from "@chessreps/contracts";
 
 export const SCHEDULE_SCHEMA_VERSION = "1.0.0" as const;
 

@@ -1,6 +1,6 @@
 import { test, describe } from "node:test";
 import assert from "node:assert";
-import type { ScheduleStateDetails, TimingSegments } from "../../contracts/src/types.ts";
+import type { ScheduleStateDetails, TimingSegments } from "@chessreps/contracts";
 import { fixedClock } from "../src/clock.ts";
 import { scoreOnce } from "../src/transition.ts";
 import { applyCorrectionCompletion, createInitialSchedule } from "../src/core.ts";

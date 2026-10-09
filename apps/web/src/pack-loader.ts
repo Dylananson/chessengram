@@ -1,4 +1,4 @@
-import type { NormalizedPuzzle } from '../../../packages/contracts/src/types.ts';
+import type { NormalizedPuzzle } from '@chessreps/contracts';
 
 export const DEFAULT_PACK_PATH = '/data/puzzles/lichess-900-1099-v1/pack.jsonl';
 export const DEFAULT_PACK_ID = 'lichess-900-1099-v1';

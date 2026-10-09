@@ -360,7 +360,7 @@ Constraints that must hold across every phase:
 | Phase | Scope | Tasks | Status |
 |---|---|---|---|
 | PB0 | Rename `apps/player-spike` → `apps/web`; neutralize "spike" strings; preserve IDs/DB name | T12 | **Done 2026-10-09** |
-| PB1 | Monorepo hygiene: root workspaces, package exports, package imports, drop `fs.allow`, root scripts, CSS extraction | T12 | In progress |
+| PB1 | Monorepo hygiene: root workspaces, package exports, package imports, drop `fs.allow`, root scripts, CSS extraction | T12 | **Done 2026-10-09** |
 | PB2 | App shell: hash router, screens (Train/Puzzles/Collections/Settings/History); fix solution spoiler; wire Skip; due counts; split `main.ts` | T12 | Not started |
 | PB3 | Puzzles screen: pack library + JSONL upload; puzzle creator (FEN+solution, chessops-validated); Lichess CSV import; PGN import with ambiguity preview | T13 | Not started |
 | PB4 | Settings screen (curated: failure preset, new-per-day, timing on/off, relearning delay) + versioned persisted settings store | T13/T12 | Not started |

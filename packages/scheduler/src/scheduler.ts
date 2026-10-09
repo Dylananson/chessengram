@@ -5,11 +5,11 @@
  * "deterministic module" for T06.
  */
 
-import type { AttemptId, AttemptOutcome, FailureReason, ProgressKey, TimingSegments } from "../../contracts/src/types.ts";
+import type { AttemptId, AttemptOutcome, FailureReason, ProgressKey, TimingSegments } from "@chessreps/contracts";
 import type { SchedulerSettings } from "./settings.ts";
 import { resolveSettings, settingsHash } from "./settings.ts";
 import type { Clock } from "./clock.ts";
-import type { ScheduleStateDetails } from "../../contracts/src/types.ts";
+import type { ScheduleStateDetails } from "@chessreps/contracts";
 import { applyCorrectionCompletion } from "./core.ts";
 import type { Transition } from "./core.ts";
 import {

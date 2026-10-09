@@ -22,7 +22,7 @@ import type {
   ProgressKey,
   ScheduleStateDetails,
   TimingSegments,
-} from "../../contracts/src/types.ts";
+} from "@chessreps/contracts";
 import { applyOutcome, createInitialSchedule, type ScoredOutcomeInput, type TransitionEffect } from "./core.ts";
 import type { SchedulerSettings } from "./settings.ts";
 

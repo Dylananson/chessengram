@@ -5,7 +5,7 @@
  * eligible New by stable order; backlog does not fabricate failures.
  */
 
-import type { ScheduleState, ScheduleStateDetails } from "../../contracts/src/types.ts";
+import type { ScheduleState, ScheduleStateDetails } from "@chessreps/contracts";
 
 export interface Candidate {
   progressKey: string;

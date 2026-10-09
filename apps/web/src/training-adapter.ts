@@ -16,7 +16,7 @@ import type {
   NormalizedPuzzle,
   ProgressKey,
   TimingSegments,
-} from '../../../packages/contracts/src/types.ts';
+} from '@chessreps/contracts';
 import {
   DEFAULT_COLLECTION_ID,
   DEFAULT_PROGRAM_ID,

@@ -35,7 +35,7 @@ import type {
   ScheduleStateDetails,
   SessionState,
   TimingSegments,
-} from '../../../packages/contracts/src/types.ts';
+} from '@chessreps/contracts';
 import type {
   CommitOutcomeRequest,
   CommitOutcomeResponse,
@@ -54,7 +54,7 @@ import type {
   StartSessionRequest,
   StartSessionResponse,
   TrainingService,
-} from '../../../packages/contracts/src/training-service.ts';
+} from '@chessreps/contracts';
 import { LocalStore, META_ACTIVE_SESSIONS, META_CONTENT_SET, META_PUZZLE_ORDER } from './storage/local-store.ts';
 import type { ContentSetMeta } from './storage/local-store.ts';
 

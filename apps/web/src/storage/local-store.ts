@@ -13,7 +13,7 @@ import type {
   ContentSchemaVersion,
   NormalizedPuzzle,
   SessionState,
-} from '../../../../packages/contracts/src/types.ts';
+} from '@chessreps/contracts';
 import type { StorageBackend } from './backend.ts';
 
 export const COLLECTION_CONTENT = 'content';
@@ -31,7 +31,7 @@ export const LOCAL_STORE_SCHEMA_VERSION = '1.0.0';
 
 /**
  * Expected persisted schema versions. These mirror the contract literal types
- * (packages/contracts/src/types.ts). A record whose envelope version does not
+ * (@chessreps/contracts). A record whose envelope version does not
  * match is treated as absent so incompatible data is never silently loaded.
  */
 export const EXPECTED_CONTENT_SCHEMA_VERSION = '1.0.0';

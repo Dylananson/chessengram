@@ -15,7 +15,8 @@
     "vite": "^8.3.0"
   },
   "dependencies": {
-    "@chessreps/scheduler": "file:../../packages/scheduler",
+    "@chessreps/contracts": "*",
+    "@chessreps/scheduler": "*",
     "chessground": "^9.2.1",
     "chessops": "^0.15.1"
   }

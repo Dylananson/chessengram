@@ -4,4 +4,4 @@ export type {
   ProgressKey,
   AttemptRecord,
   SessionState,
-} from '../../../packages/contracts/src/types.ts';
+} from '@chessreps/contracts';

@@ -1,6 +1,7 @@
 import 'chessground/assets/chessground.base.css';
 import 'chessground/assets/chessground.brown.css';
 import 'chessground/assets/chessground.cburnett.css';
+import './app.css';
 
 import { Chessground } from 'chessground';
 import type { Api } from 'chessground/api';
@@ -22,7 +23,7 @@ import { IndexedDbStorageBackend } from './storage/indexeddb-backend.ts';
 import { InMemoryStorageBackend } from './storage/memory-backend.ts';
 import type { StorageBackend } from './storage/backend.ts';
 import { loadPuzzlesFromPack } from './pack-loader.ts';
-import type { AttemptRecord, NormalizedPuzzle } from '../../../packages/contracts/src/types.ts';
+import type { AttemptRecord, NormalizedPuzzle } from '@chessreps/contracts';
 
 const START_FEN = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
 

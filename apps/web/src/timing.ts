@@ -7,7 +7,7 @@
  * into a neutral timing factor, so this is best-effort but wired end to end.
  */
 
-import type { TimingSegments } from '../../../packages/contracts/src/types.ts';
+import type { TimingSegments } from '@chessreps/contracts';
 
 export interface AttemptTimerOptions {
   now?: () => number;

@@ -7,9 +7,4 @@ export default defineConfig({
       '@': resolve(import.meta.dirname, './src'),
     },
   },
-  server: {
-    fs: {
-      allow: ['..', '../../..'],
-    },
-  },
 });
