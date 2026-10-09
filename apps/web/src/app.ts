@@ -102,4 +102,17 @@ async function init(): Promise<void> {
   startRouter(ctx, document.getElementById('screen')!);
 }
 
+/**
+ * Register the offline app-shell service worker (production builds only).
+ * Called before any awaited work so it does not depend on the page load event.
+ */
+function registerServiceWorker(): void {
+  if (!import.meta.env.PROD) return;
+  if (!('serviceWorker' in navigator)) return;
+  navigator.serviceWorker.register('/sw.js').catch(() => {
+    // Offline caching is a progressive enhancement; ignore registration failures.
+  });
+}
+
+registerServiceWorker();
 void init();

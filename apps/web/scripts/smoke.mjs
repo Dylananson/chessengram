@@ -301,6 +301,42 @@ try {
   const rowsAfterRestore = await page.$$eval('#puzzles-list tbody tr', (r) => r.length);
   check('restore brings the library back', rowsAfterRestore === rowsBeforeImport, `${rowsAfterRestore} vs ${rowsBeforeImport}`);
 
+  // --- Offline startup via the service worker ---------------------------------
+  const swState = await page.evaluate(async () => {
+    if (!('serviceWorker' in navigator)) return 'unsupported';
+    const ready = await Promise.race([
+      navigator.serviceWorker.ready.then(() => 'ready'),
+      new Promise((resolve) => setTimeout(() => resolve('timeout'), 8000)),
+    ]);
+    return ready;
+  });
+  check('service worker is active', swState === 'ready', swState);
+
+  // Warm the cache under SW control, then boot with the network disabled.
+  await hash(page, 'train');
+  await page.waitForSelector('#board', { timeout: 10000 });
+  await page.reload({ waitUntil: 'networkidle0', timeout: 20000 });
+  await page.waitForSelector('#board', { timeout: 10000 });
+  const controlled = await page.evaluate(() => Boolean(navigator.serviceWorker.controller));
+  const cacheKeys = await page.evaluate(async () => {
+    const c = await caches.open('chessreps-shell-v1');
+    return (await c.keys()).map((k) => k.url.replace(location.origin, ''));
+  });
+  check('page controlled by service worker', controlled);
+  check(
+    'service worker cache holds the shell and hashed bundle',
+    cacheKeys.includes('/index.html') && cacheKeys.some((k) => k.startsWith('/assets/')),
+    `${cacheKeys.length} keys`,
+  );
+  await page.setOfflineMode(true);
+  try {
+    await page.reload({ waitUntil: 'domcontentloaded', timeout: 20000 });
+    await page.waitForSelector('#board', { timeout: 10000 });
+    check('app boots offline from the service worker', await page.$('#puzzle-id').then(Boolean));
+  } finally {
+    await page.setOfflineMode(false);
+  }
+
   check('no page errors across the whole run', pageErrors.length === 0, pageErrors.join(' | '));
 } finally {
   await browser?.close().catch(() => {});
