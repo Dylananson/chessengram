@@ -266,3 +266,131 @@ h1 {
     background: #44444a;
   }
 }
+
+/* --- Puzzles / management screens (PB3) --- */
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 14px 16px;
+  margin-bottom: 14px;
+}
+.panel h3 {
+  margin: 0 0 8px 0;
+  font-size: 15px;
+}
+.panel p {
+  margin: 4px 0;
+  font-size: 14px;
+  color: var(--muted);
+  word-break: break-word;
+}
+.flex-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 10px;
+}
+.field label {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--muted);
+}
+.field input,
+.field textarea {
+  font: inherit;
+  font-size: 14px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text);
+}
+.field textarea {
+  min-height: 44px;
+  resize: vertical;
+}
+.error {
+  background: #f8d7da;
+  color: #721c24;
+  border-radius: 6px;
+  padding: 8px 12px;
+  font-size: 13px;
+}
+.ok {
+  background: #d4edda;
+  color: #155724;
+  border-radius: 6px;
+  padding: 8px 12px;
+  font-size: 13px;
+}
+.button.compact {
+  width: auto;
+  padding: 8px 14px;
+  font-size: 14px;
+}
+.button-tertiary {
+  background: transparent;
+  color: var(--accent);
+  border: 1px solid var(--border);
+}
+.button-tertiary:hover:not(:disabled) {
+  background: rgba(127, 127, 127, 0.1);
+}
+.table-wrap {
+  overflow-x: auto;
+}
+.puzzle-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+.puzzle-table th,
+.puzzle-table td {
+  text-align: left;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+}
+.puzzle-table th {
+  color: var(--muted);
+  font-weight: 600;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+.puzzle-table td.actions {
+  display: flex;
+  gap: 6px;
+}
+.actions button {
+  padding: 4px 10px;
+  font-size: 12px;
+  cursor: pointer;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--panel);
+  color: var(--text);
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+.muted {
+  color: var(--muted);
+}
+
+@media (prefers-color-scheme: dark) {
+  .error {
+    background: #5a1d22;
+    color: #f3c1c5;
+  }
+  .ok {
+    background: #134e23;
+    color: #b8e6c4;
+  }
+}

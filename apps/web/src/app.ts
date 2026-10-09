@@ -20,6 +20,7 @@ import {
 } from './scheduler-service.ts';
 import type { ScreenFactory } from './router.ts';
 import { stubFactories } from './screens.ts';
+import { PuzzlesView } from './puzzles-view.ts';
 import { IndexedDbStorageBackend } from './storage/indexeddb-backend.ts';
 import { LocalStore } from './storage/local-store.ts';
 import { InMemoryStorageBackend } from './storage/memory-backend.ts';
@@ -72,6 +73,7 @@ function buildNav(ctx: AppContext): void {
 function registerScreens(): void {
   const trainFactory: ScreenFactory = (ctx) => new TrainView(ctx);
   registerScreen('train', trainFactory);
+  registerScreen('puzzles', (ctx) => new PuzzlesView(ctx));
   for (const { id, factory } of stubFactories()) {
     registerScreen(id, factory);
   }

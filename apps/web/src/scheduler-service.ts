@@ -231,6 +231,72 @@ export class LocalTrainingService implements TrainingService {
     return [...this.puzzleOrder];
   }
 
+  listPuzzles(): NormalizedPuzzle[] {
+    return this.puzzleOrder.flatMap((id) => {
+      const puzzle = this.puzzles.get(id);
+      return puzzle ? [puzzle] : [];
+    });
+  }
+
+  /**
+   * Merge puzzles into the library (PB3). Existing ids are replaced in place;
+   * new ids are appended to the presentation order. Progress/history for an id
+   * that is only replaced is intentionally left untouched (same id, new content).
+   */
+  async upsertPuzzles(
+    puzzles: readonly NormalizedPuzzle[],
+    meta: { packId?: string } = {},
+  ): Promise<{ added: number; replaced: number }> {
+    if (puzzles.length === 0) return { added: 0, replaced: 0 };
+    let added = 0;
+    let replaced = 0;
+    for (const puzzle of puzzles) {
+      if (this.puzzles.has(puzzle.id)) {
+        replaced += 1;
+      } else {
+        added += 1;
+        if (!this.puzzleOrder.includes(puzzle.id)) this.puzzleOrder.push(puzzle.id);
+      }
+      this.puzzles.set(puzzle.id, puzzle);
+    }
+    await this.store.savePuzzles(puzzles);
+    await this.store.saveMeta(META_PUZZLE_ORDER, [...this.puzzleOrder]);
+    await this.refreshContentMeta(meta.packId);
+    return { added, replaced };
+  }
+
+  /**
+   * Remove a puzzle's content and its derived schedule state. Raw attempt
+   * history is deliberately kept (D09: history outlives content), so previous
+   * attempts on the removed puzzle remain auditable.
+   */
+  async removePuzzle(puzzleId: string): Promise<void> {
+    this.puzzles.delete(puzzleId);
+    this.puzzleOrder = this.puzzleOrder.filter((id) => id !== puzzleId);
+    const scheduleKeys = [...this.schedules.keys()].filter((key) =>
+      key.endsWith(`:${puzzleId}`),
+    );
+    for (const key of scheduleKeys) {
+      this.schedules.delete(key);
+      await this.store.deleteSchedule(key);
+    }
+    await this.store.deletePuzzle(puzzleId);
+    await this.store.saveMeta(META_PUZZLE_ORDER, [...this.puzzleOrder]);
+    await this.refreshContentMeta();
+  }
+
+  private async refreshContentMeta(packId?: string): Promise<void> {
+    const existing = await this.loadContentMeta();
+    const first = this.puzzles.values().next().value as NormalizedPuzzle | undefined;
+    const meta: ContentSetMeta = {
+      packId: packId ?? existing?.packId ?? '',
+      contentSchemaVersion: first?.contentSchemaVersion ?? '1.0.0',
+      count: this.puzzles.size,
+      loadedAt: existing?.loadedAt ?? this.clock.now(),
+    };
+    await this.store.saveMeta(META_CONTENT_SET, meta);
+  }
+
   getScheduleState(key: string): ScheduleStateDetails | undefined {
     return this.schedules.get(key)?.schedule;
   }

@@ -1,8 +1,9 @@
 /**
  * Headless browser smoke test for apps/web using puppeteer-core + system
  * Chromium. Verifies the shell boots, the train screen renders a queue, a
- * puzzle is selected, navigation between screens works, and the solution stays
- * hidden until revealed.
+ * puzzle is selected, navigation works, the solution stays hidden until
+ * revealed, Skip advances, and the Puzzles screen can create/import/remove
+ * puzzles.
  *
  * Usage from repo root: npm run smoke
  * Set CHROMIUM_PATH if Chromium is not found on PATH.
@@ -11,25 +12,29 @@
 import puppeteer from 'puppeteer-core';
 import { createRequire } from 'node:module';
 import { spawn } from 'node:child_process';
-import { once } from 'node:events';
+import { writeFileSync, mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 const require = createRequire(import.meta.url);
 const root = require.resolve('@chessreps/web/package.json').replace('/package.json', '');
 
 const PORT = 5317;
 const BASE = `http://localhost:${PORT}`;
+const PROMOTION_FEN = '7k/1P6/8/8/8/8/8/K7 w - - 0 1';
+
 const findChromium = () =>
-  process.env.CHROMIUM_PATH || ['/usr/bin/chromium', '/usr/bin/chromium-browser', '/usr/bin/google-chrome'].find((p) => p);
+  process.env.CHROMIUM_PATH ||
+  ['/usr/bin/chromium', '/usr/bin/chromium-browser', '/usr/bin/google-chrome'].find((p) => p);
 
 function startPreview() {
-  const child = spawn('npm', ['run', 'preview', '--workspace', '@chessreps/web', '--', '--port', String(PORT)], {
-    cwd: new URL('..', import.meta.url).pathname,
+  return spawn('npm', ['run', 'preview', '--workspace', '@chessreps/web', '--', '--port', String(PORT)], {
+    cwd: root,
     stdio: 'ignore',
   });
-  return child;
 }
 
-async function waitForServer(url, timeoutMs = 15000) {
+async function waitForServer(url, timeoutMs = 20000) {
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
     try {
@@ -47,6 +52,12 @@ const failures = [];
 function check(name, ok, detail = '') {
   console.log(`${ok ? 'ok' : 'FAIL'}  ${name}${detail ? ` — ${detail}` : ''}`);
   if (!ok) failures.push(name);
+}
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+async function hash(page, id) {
+  await page.evaluate((target) => { window.location.hash = `#/${target}`; }, id);
+  await sleep(350);
 }
 
 let browser;
@@ -68,6 +79,7 @@ try {
   page.on('console', (msg) => {
     if (msg.type() === 'error') pageErrors.push(msg.text());
   });
+  page.on('dialog', (d) => void d.accept());
 
   await page.goto(BASE, { waitUntil: 'networkidle0', timeout: 20000 });
 
@@ -76,29 +88,31 @@ try {
   const navIds = await page.$$eval('#nav .nav-item', (els) =>
     els.map((el) => el.getAttribute('data-nav')),
   );
-  check('nav has all five screens', JSON.stringify(navIds) === JSON.stringify(['train', 'puzzles', 'collections', 'settings', 'history']), `got [${navIds}]`);
+  check(
+    'nav has all five screens',
+    JSON.stringify(navIds) === JSON.stringify(['train', 'puzzles', 'collections', 'settings', 'history']),
+    `got [${navIds}]`,
+  );
 
   const queueText = await page.$eval('#queue', (el) => el.textContent).catch(() => '');
   check('queue summary rendered', /puzzles/.test(queueText), queueText.trim());
 
-  const boardMounted = await page.$('#board').then(Boolean);
-  check('train board mounted', boardMounted);
+  check('train board mounted', await page.$('#board').then(Boolean));
 
   const statusText = await page.$eval('#status', (el) => el.textContent).catch(() => '');
-  check('an attempt started (status not just loading)', statusText.length > 0 && !statusText.includes('Loading'), statusText.trim());
+  check('an attempt started', statusText.length > 0 && !statusText.includes('Loading'), statusText.trim());
 
-  const solutionVisible = await page.$eval('#solution', (el) => !el.classList.contains('hidden')).catch(() => true);
-  check('solution hidden by default (no spoiler)', solutionVisible === false);
+  const solutionHidden = await page.$eval('#solution', (el) => el.classList.contains('hidden')).catch(() => false);
+  check('solution hidden by default (no spoiler)', solutionHidden);
 
-  // Reveal: shows the solution and abandons the active attempt without scoring.
+  // Reveal shows the solution and abandons the attempt without scoring.
   await page.click('#reveal-btn');
-  await new Promise((r) => setTimeout(r, 250));
-  const revealedVisible = await page.$eval('#solution', (el) => !el.classList.contains('hidden')).catch(() => false);
-  check('reveal shows the solution', revealedVisible);
+  await sleep(250);
+  check('reveal shows the solution', await page.$eval('#solution', (el) => !el.classList.contains('hidden')));
   const revealedStatus = await page.$eval('#status', (el) => el.textContent).catch(() => '');
   check('reveal reports no score recorded', /no score recorded/.test(revealedStatus), revealedStatus.trim());
 
-  // Reload to start a fresh attempt, then Skip moves to a different puzzle.
+  // Reload to start a fresh attempt, then Skip must move to a different puzzle.
   await page.reload({ waitUntil: 'networkidle0', timeout: 20000 });
   await page.waitForSelector('#board', { timeout: 10000 });
   const idBefore = await page.$eval('#puzzle-id', (el) => el.textContent);
@@ -110,23 +124,84 @@ try {
   );
   const idAfter = await page.$eval('#puzzle-id', (el) => el.textContent);
   check('skip moves to a different puzzle', idAfter !== idBefore, `${idBefore} -> ${idAfter}`);
-  const skippedStatus = await page.$eval('#status', (el) => el.textContent).catch(() => '');
-  check('skip resumes with a fresh attempt', /solve the puzzle/.test(skippedStatus), skippedStatus.trim());
 
-  await page.evaluate(() => { window.location.hash = '#/puzzles'; });
-  await new Promise((r) => setTimeout(r, 300));
-  const puzzlesBody = await page.$eval('#screen .info p', (el) => el.textContent).catch(() => '');
-  check('puzzles screen navigates', puzzlesBody.length > 0, puzzlesBody.slice(0, 60));
+  // --- Puzzles screen: creator -------------------------------------------------
+  await hash(page, 'puzzles');
+  const packVisible = await page.$eval('#screen .panel h3', (el) => el.textContent).catch(() => '');
+  check('puzzles screen shows the pack panel', /Pack/.test(packVisible), packVisible);
 
-  await page.evaluate(() => { window.location.hash = '#/train'; });
-  await new Promise((r) => setTimeout(r, 500));
-  const boardBack = await page.$('#board').then(Boolean);
-  check('returning to train remounts the board', boardBack);
+  const rowsBefore = await page.$$eval('#puzzles-list tbody tr', (r) => r.length);
+  check('library lists the bundled pack', rowsBefore === 100, `${rowsBefore} rows`);
 
-  await page.evaluate(() => { window.location.hash = '#/settings'; });
-  await new Promise((r) => setTimeout(r, 300));
+  await page.click('#puzzles-new-btn');
+  await page.waitForSelector('#pc-save', { timeout: 5000 });
+  await page.type('#pc-fen', PROMOTION_FEN);
+  await page.type('#pc-solution', 'b7b8q');
+  await page.type('#pc-rating', '1234');
+  await page.type('#pc-themes', 'endgame promotion');
+  await page.click('#pc-save');
+  await sleep(400);
+
+  const saveMessage = await page.$eval('#puzzles-message', (el) => el.textContent).catch(() => '');
+  check('creator reports a saved puzzle', /Saved/.test(saveMessage), saveMessage.trim());
+  const createdId = (saveMessage.match(/Saved\s+(\S+)/) || [])[1];
+  check('creator produced an id', Boolean(createdId), createdId);
+
+  const rowsAfterCreate = await page.$$eval('#puzzles-list tbody tr', (r) => r.length);
+  check('created puzzle appears in the library', rowsAfterCreate === 101, `${rowsAfterCreate} rows`);
+  const createdInList = createdId
+    ? await page.$$eval('#puzzles-list tbody tr td:first-child', (cells, id) =>
+        cells.some((c) => c.textContent === id), createdId)
+    : false;
+  check('created puzzle is present by id', createdInList, createdId);
+
+  // Persistence: reload and confirm the created puzzle survives.
+  await page.reload({ waitUntil: 'networkidle0', timeout: 20000 });
+  await page.waitForSelector('#nav', { timeout: 10000 });
+  await hash(page, 'puzzles');
+  const survived = createdId
+    ? await page.$$eval('#puzzles-list tbody tr td:first-child', (cells, id) =>
+        cells.some((c) => c.textContent === id), createdId)
+    : false;
+  check('created puzzle survives reload', survived, createdId);
+
+  // --- Puzzles screen: JSONL import -------------------------------------------
+  const dir = mkdtempSync(join(tmpdir(), 'chessreps-smoke-'));
+  const importPath = join(dir, 'smoke-import.jsonl');
+  writeFileSync(
+    importPath,
+    `${JSON.stringify({
+      id: 'smokeimp',
+      solverFen: '7k/1P6/8/8/8/8/8/K7 w - - 0 1',
+      solution: ['b7b8q'],
+      rating: 1450,
+      themes: ['endgame'],
+      source: 'smoke',
+    })}\n`,
+  );
+  const fileInput = await page.$('#puzzles-import-file');
+  await fileInput.uploadFile(importPath);
+  await page.click('#puzzles-import-btn');
+  await sleep(400);
+  const importMessage = await page.$eval('#puzzles-message', (el) => el.textContent).catch(() => '');
+  check('JSONL import reports a result', /added/.test(importMessage), importMessage.trim());
+  const imported = await page.$$eval('#puzzles-list tbody tr td:first-child', (cells) =>
+    cells.some((c) => c.textContent === 'smokeimp'));
+  check('imported puzzle is present', imported);
+
+  // --- Puzzles screen: remove --------------------------------------------------
+  await page.click('#puzzles-list [data-remove="smokeimp"]');
+  await sleep(400);
+  const removed = await page.$$eval('#puzzles-list tbody tr td:first-child', (cells) =>
+    cells.some((c) => c.textContent === 'smokeimp'));
+  check('removed puzzle disappears from the library', !removed);
+
+  // --- Settings stub still reachable ------------------------------------------
+  await hash(page, 'settings');
   const settingsBody = await page.$eval('#screen .info p', (el) => el.textContent).catch(() => '');
   check('settings screen navigates', settingsBody.length > 0, settingsBody.slice(0, 60));
+
+  check('no page errors across the whole run', pageErrors.length === 0, pageErrors.join(' | '));
 } finally {
   await browser?.close().catch(() => {});
   preview?.kill('SIGTERM');

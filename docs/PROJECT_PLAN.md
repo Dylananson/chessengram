@@ -362,7 +362,7 @@ Constraints that must hold across every phase:
 | PB0 | Rename `apps/player-spike` → `apps/web`; neutralize "spike" strings; preserve IDs/DB name | T12 | **Done 2026-10-09** |
 | PB1 | Monorepo hygiene: root workspaces, package exports, package imports, drop `fs.allow`, root scripts, CSS extraction | T12 | **Done 2026-10-09** |
 | PB2 | App shell: hash router, screens (Train/Puzzles/Collections/Settings/History); fix solution spoiler; wire Skip; due counts; split `main.ts` | T12 | **Done 2026-10-09** |
-| PB3 | Puzzles screen: pack library + JSONL upload; puzzle creator (FEN+solution, chessops-validated); Lichess CSV import; PGN import with ambiguity preview | T13 | Not started |
+| PB3 | Puzzles screen: pack library + JSONL upload; puzzle creator (FEN+solution, chessops-validated); Lichess CSV import; PGN import with ambiguity preview | T13 | **In progress** (library + JSONL + creator/editor/remove done; CSV + PGN pending) |
 | PB4 | Settings screen (curated: failure preset, new-per-day, timing on/off, relearning delay) + versioned persisted settings store | T13/T12 | Not started |
 | PB5 | Data safety: full JSON export/import + migration policy + recovery | T14/Q12 | Not started |
 | PB6 | T11 device verification pass; PWA (manifest + service worker) | T11/T15 | Not started |
@@ -399,6 +399,37 @@ continuity held).
 
 Next: **PB3** (Puzzles screen) — pack library + JSONL upload + single-puzzle creator first,
 then Lichess puzzle-CSV and PGN import; keep `tools/puzzles` validation rules shared.
+
+### Build-out handoff — PB3a–c (2026-10-09)
+
+The Puzzles screen is live and content is now user-manageable. Scope done so far: the pack
+library view, JSONL import, and the single-puzzle creator/editor/remover. Lichess CSV and PGN
+imports remain for this phase.
+
+- **Shared validator** `apps/web/src/validation/puzzle-validation.ts` ports the `tools/puzzles`
+  rules to chessops: legal FEN, legal solution plies from the solver position, setup-move
+  bridging for `sourceFen`→`solverFen`, `mate` theme must end in checkmate, and `solverColor`
+  must match the side to move. It also parses JSONL and normalizes creator input.
+- **Service/content API** (`scheduler-service.ts`): `listPuzzles`, `upsertPuzzles` (merge:
+  replace same id, append new), `removePuzzle` (drops content + derived schedule, **keeps raw
+  attempt history per D09**), additive `ContentSetMeta` refresh. `LocalStore` gained
+  `deletePuzzle`/`deleteSchedule`. No storage schema version changed.
+- **Puzzles screen** (`apps/web/src/puzzles-view.ts`): pack panel, JSONL file import, creator /
+  edit form (`FEN`, optional source FEN + setup move, solution, rating, themes, source id),
+  per-puzzle schedule status, and remove-with-confirm.
+
+Verified by coordinator: root `npm test` = **69** (7 contracts + 21 scheduler + 41 web, of which
+12 are new validation/content tests); typecheck clean; production build succeeds (116 KB / 36 KB
+gzip). The browser smoke now also exercises the Puzzles screen end-to-end: create a puzzle (id
+auto-assigned), see it in the library, **reload and confirm it persists**, import a JSONL file,
+and remove a puzzle — all with no page errors.
+
+Deliberate semantics: editing a puzzle with the same id keeps its schedule/history (the id is the
+progress slot); removing a puzzle deletes derived state but never the attempt log. Import is
+additive (never wipes the library); boot-time seeding still only runs when the library is empty.
+
+Next in PB3: Lichess puzzle-**CSV** import and **PGN** import (with an ambiguity/mistake-branch
+preview), reusing the same validator.
 
 ## Sources
 

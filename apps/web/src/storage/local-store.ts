@@ -115,6 +115,10 @@ export class LocalStore {
     return this.unwrap<NormalizedPuzzle>(raw, EXPECTED_CONTENT_SCHEMA_VERSION);
   }
 
+  async deletePuzzle(puzzleId: string): Promise<void> {
+    await this.backend.delete(COLLECTION_CONTENT, puzzleId);
+  }
+
   // --- scheduler state (derived) -----------------------------------------
 
   async saveSchedule(progressKey: string, state: SchedulerState): Promise<void> {
@@ -123,6 +127,10 @@ export class LocalStore {
       progressKey,
       this.wrap(state.schedule.scheduleSchemaVersion, state),
     );
+  }
+
+  async deleteSchedule(progressKey: string): Promise<void> {
+    await this.backend.delete(COLLECTION_SCHEDULES, progressKey);
   }
 
   async loadSchedules(): Promise<Map<string, SchedulerState>> {
