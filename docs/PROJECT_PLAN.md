@@ -141,13 +141,13 @@ Checkbox means acceptance verified, not merely code written. Status: Not started
 - [x] **T02 — Reproducible rated puzzle pack.** Status: Done for around-1000 POC pack. Tool, retained snapshot, 100 puzzles, manifest and validation report delivered. Coordinator reran 8 passing tests and successful pack verification. See [content report](research/puzzle-content-sources.md) and `../tools/puzzles/README.md`. Other rating bands remain future content work.
 - [x] **T03 — Anki-inspired scheduling specification.** Status: Done (design only). [Specification](research/scheduling-behavior.md) covers explicit transitions, presets, bounded timing, queue/interruptions and 21 acceptance scenarios. Numeric defaults remain proposals; no scheduler implemented.
 - [x] **T04 — Contracts and schemas.** Status: Done for architecture-neutral contracts. `packages/contracts/` defines the UI↔training-service boundary, attempt identity, idempotent outcome commits, immutable scored failure, correction separation, and versioned content/progress schemas. Reference in-memory test double + 7 passing contract tests; fixtures use real pack entries. Coordinator reran tests (`node --test --experimental-strip-types`) and typecheck (`tsc --noEmit`), both clean. Q02/Q09 recorded as **Proposed** ADRs ([ADR-001](decisions/ADR-001-training-service-boundary.md), [ADR-002](decisions/ADR-002-progress-scope-and-authority.md)), not accepted. Q03 remains open. See [contracts design](research/contracts-design.md). Real scheduler is T06.
-- [ ] **T05 — Runnable Lila baseline.** Status: **Partial / Blocked** (setup feasibility only). Pinned-revision clone succeeded (`f5b261e3d8ece6f511484e398cb8d81e37735bea`, 183 MB) and tooling was probed, but the app could not be started: **sbt/coursier, MongoDB and Redis are not installed**. Docker is available for services; exact next commands recorded. No puzzle route or seeded content verified. See [baseline report](research/lichess-baseline.md).
+- [x] **T05 — Runnable Lila baseline.** Status: Done (measured reference). The unchanged Lila at pinned SHA `f5b261e3d8ece6f511484e398cb8d81e37735bea` was compiled (Scala 3.8.4, sbt 2.0.10, 169 s), run on :9663 (native mongod 7.0.14 + redis 7.2.5, since Docker was inaccessible), seeded with one puzzle + source game, and the real puzzle page driven headlessly: wrong move → failure feedback → continued solving → `win=true` → continue → next round. Evidence in `tools/lichess-baseline/evidence/`. All servers stopped; no system-wide installs. See [baseline report](research/lichess-baseline.md).
 - [x] **T06 — Scheduler/attempt core.** Status: Done. `packages/scheduler/` implements the T03 model as a pure, clock-injectable projection on `ScheduleStateDetails`: New/Learning/Review/Relearning, an 8-rung ladder, `retry-reset`/`retry-retain`/`step-back` failure presets, bounded isolated timing (±10%, capped), idempotent commits and stale-revision rejection. All **21 T03 acceptance scenarios** pass as named tests; typecheck clean (coordinator reran). Defaults recorded as **Proposed** [ADR-003](decisions/ADR-003-scheduler-defaults.md). See [scheduler implementation](research/scheduler-implementation.md). Numeric defaults remain unvalidated proposals.
 - [ ] **T07 — Online adapter.** Depends T02/T04/T05. API/session/attempt persistence. Acceptance: session start, recording, selection and resume meet contracts.
-- [ ] **T08 — Player integration.** Status: **Partial (FEN-rooted spike)**. `apps/player-spike/` is a runnable Vite app using Lichess' own `chessground` + `chessops`: loads the T02 pack, starts from `solverFen` (+ optional setup animation), enforces failure-and-continue (wrong move commits an immutable scored failure without advancing), supports correction and an explicit Next, and reports attempts through the T04 `TrainingService`. 6 tests pass; production build succeeds (coordinator reran). See [player spike](research/player-spike.md). NOT yet: injection into the real Lichess player/controllers, timing/eventing completeness, phone layout.
+- [x] **T08 — Player integration.** Status: Done (extracted-library path). `apps/player-spike/` is a runnable Vite app using Lichess' own `chessground` + `chessops` (not the Lichess controller): starts from `solverFen` (+ optional setup animation), enforces failure-and-continue (wrong move commits one immutable scored failure without advancing), supports correction and explicit Next, pawn promotion with a role picker, active/correction timing with hidden-time exclusion, responsive/touch layout and a tiny i18n layer, and reports attempts through the T04 `TrainingService` now backed by the real T06 scheduler. 26 tests pass; build succeeds. See [player spike](research/player-spike.md). Preserving the Lichess *controller* itself was deliberately not done (extraction path).
 - [ ] **T09 — Online POC integration.** Depends T06/T07/T08. Acceptance: actual rated collection trained, corrected, scheduled and resumed through UI.
-- [ ] **T10 — Local persistence adapter.** Depends T02/T04. Local content/history/schedules/session. Acceptance: contract tests and reload persistence.
-- [ ] **T11 — Offline vertical slice.** Depends T09/T10. Cache app shell and run locally. Acceptance: disable network, reload, solve multiple puzzles, record failure, resume saved progress; record hidden dependencies and phone results.
+- [x] **T10 — Local persistence adapter.** Status: Done. `apps/player-spike/src/storage/` provides a storage seam (IndexedDB + in-memory fallback) with versioned envelopes; content, per-program scheduler state, raw attempt history and sessions persist separately. A reload restores content, order, schedules and an open attempt (replays logged moves; a scored failure resumes as correction). `?reset=1` clears state. Coordinator reran 26 tests including IndexedDB (fake-indexeddb) + reload round-trip; build succeeds. See [local persistence](research/local-persistence.md) and [ADR-004](decisions/ADR-004-local-storage-and-selection.md) (Proposed).
+- [ ] **T11 — Offline vertical slice.** Status: **Partial**. The local player now runs entirely from bundled pack content with no server and persists across reload (schedules, history, open attempt), and the app shell is a static Vite bundle. Acceptance not yet *verified* end-to-end in a real browser/phone: disable network, reload, solve multiple puzzles, record failure, resume; record hidden dependencies and real-device results. The reload/selection/resume logic is covered by headless tests, but this needs a manual device pass.
 - [ ] **G1 — Architecture decision.** Depends T11. Compare observed costs and behavior; record chosen structure, rejected alternatives, rationale. Not predetermined.
 - [ ] **T12 — Harden app structure.** Depends G1. Reproducible build, boundaries, attribution and deployment.
 - [ ] **T13 — Collection UI/PGN import.** Depends T12. Create collections, preview/import supported PGNs, report ambiguity, preserve original content. Never silently accept explanatory mistake branches.
@@ -263,6 +263,48 @@ Legitimate next options (pick one focus):
 
 Still open/unconfirmed: Q01 (architecture — no decision yet), Q02/Q03/Q09/Q12, ADR-001/002/003
 all Proposed. The T02 pack is a deterministic bounded-prefix sample, not theme-balanced.
+
+## Wave 4 review and next handoff — 2026-10-09
+
+Two agents ran T05 (finish the baseline) and a combined T09-lite + T10 + phone/touch spike
+maturation. Coordinator independently reran all suites, the build, and the baseline evidence
+check, and fixed defects found on review.
+
+Verified by coordinator (not just agent claims):
+
+- `apps/player-spike`: **26 tests pass**; `vite build` succeeds (91 KB / 29 KB gzip); no lila/mongo/redis
+  ports left listening and no leftover heavy processes.
+- T05 evidence is genuine: `summary.json` contains real Lichess page feedback
+  (`"✗ That's not the move! Try something else."`), a `win=false` then `win=true` POST to
+  `/training/complete/mix/abcde`, and a real next-puzzle payload; screenshots exist.
+- Fixes applied on review:
+  1. `LocalStore.unwrap` version checks passed the record's own version, so incompatible schemas
+     were never rejected. Now uses explicit expected-version constants per collection.
+  2. Duplicate `finishCorrection` appended a second correction event; duplicates are now idempotent
+     and do not re-append evidence.
+
+Now true:
+
+1. **A complete local training loop exists:** real scheduler (T06) + persistence (T10) + player (T08),
+   offline-capable, failure-immutable, correction-aware, with due-based selection and reload resume.
+2. **Q01 now has both measured sides:** unchanged-Lila baseline (heavy: sbt+mongo+redis, ~1.3 GB
+   build tree, but interaction verified) vs. the extracted-library spike (no server, static bundle,
+   FEN-rooted). The evidence favors the extracted path for a personal offline trainer; the decision
+   itself is still open and should be recorded as an ADR at G1.
+3. T05's baseline showed the completion endpoint is web-internal with no durable attempt state, and
+   `lila-ws` is optional for the puzzle route (only Redis looked required) — confirms T07 should not
+   treat Lila HTTP as ChessReps' durable scheduling API.
+
+Open/unconfirmed: Q01, Q02, Q03, Q12; ADR-001/002/003/004 all Proposed. T11 needs a real
+browser/phone pass. The T02 pack remains a deterministic bounded-prefix sample.
+
+Recommended next:
+
+- **T11 manual verification pass** on desktop + phone (disable network, reload, multi-puzzle,
+  failure, resume) to convert T11 from Partial to Done and produce real-device evidence.
+- **T09-lite → T09:** wire the same contracts to an online adapter (T07) or add feedback/UX polish.
+- **G1 decision:** once T11 is verified, record the fork-vs-extraction architecture decision with the
+  Wave 4 evidence.
 
 ## Sources
 
