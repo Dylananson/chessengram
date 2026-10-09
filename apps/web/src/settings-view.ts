@@ -8,6 +8,13 @@ import type { AppContext } from './app-context.ts';
 import { t } from './i18n.ts';
 import type { Screen } from './router.ts';
 import { DEFAULT_COLLECTION_ID, DEFAULT_PROGRAM_ID } from './scheduler-service.ts';
+import {
+  CURATED_DEFAULTS,
+  FAILURE_PRESETS,
+  failurePresetLabel,
+  parseCurated,
+  type CuratedSettings,
+} from './settings-preferences.ts';
 import { parseExport, summarizeExport } from './storage/data-port.ts';
 import type { StoreExport, StoreExportSummary } from './storage/local-store.ts';
 
@@ -51,6 +58,7 @@ export class SettingsView implements Screen {
   private summary: StoreExportSummary | null = null;
   private backups: string[] = [];
   private pending: PendingImport | null = null;
+  private curated: CuratedSettings = CURATED_DEFAULTS;
   private readonly ctx: AppContext;
 
   constructor(ctx: AppContext) {
@@ -70,8 +78,53 @@ export class SettingsView implements Screen {
     if (!this.host) return;
     this.summary = await this.ctx.service.exportStoreSummary();
     this.backups = await this.ctx.service.listBackups();
+    this.curated = this.ctx.service.getCuratedSettings();
     this.host.innerHTML = this.template();
     this.bind();
+  }
+
+  private preferencesHtml(): string {
+    const c = this.curated;
+    const options = FAILURE_PRESETS.map(
+      (preset) =>
+        `<option value="${preset}" ${preset === c.failurePreset ? 'selected' : ''}>${escapeHtml(
+          failurePresetLabel(preset),
+        )}</option>`,
+    ).join('');
+    return `
+      <section class="panel">
+        <h3>${t('settings.prefs.title')}</h3>
+        <p>${t('settings.prefs.body')}</p>
+        <div class="field">
+          <label for="set-failure">${t('settings.prefs.failurePreset')}</label>
+          <select id="set-failure">${options}</select>
+        </div>
+        <div class="field">
+          <label for="set-step-back">${t('settings.prefs.stepBack')}</label>
+          <input id="set-step-back" type="number" min="1" max="10" value="${c.stepBackAmount}" />
+        </div>
+        <div class="field">
+          <label for="set-retry-retain">${t('settings.prefs.retryRetain')}</label>
+          <input id="set-retry-retain" type="number" min="0" max="10" value="${c.retryRetainAmount}" />
+        </div>
+        <div class="field">
+          <label for="set-new-per-day">${t('settings.prefs.newPerDay')}</label>
+          <input id="set-new-per-day" type="number" min="0" max="999" value="${c.newIntroductionLimitPerDay}" />
+        </div>
+        <div class="field">
+          <label for="set-relearning">${t('settings.prefs.relearning')}</label>
+          <input id="set-relearning" type="number" min="1" max="1440" value="${c.relearningMinutes}" />
+        </div>
+        <div class="field checkbox">
+          <label><input id="set-timing" type="checkbox" ${c.timingEnabled ? 'checked' : ''} /> ${t(
+            'settings.prefs.timing',
+          )}</label>
+        </div>
+        <div class="button-row">
+          <button type="button" class="button compact" id="settings-save-prefs">${t('settings.prefs.save')}</button>
+        </div>
+      </section>
+    `;
   }
 
   private countsLine(summary: StoreExportSummary): string {
@@ -102,6 +155,7 @@ export class SettingsView implements Screen {
 
     return `
       <h2>${t('screen.settings.title')}</h2>
+      ${this.preferencesHtml()}
       <section class="panel">
         <h3>${t('settings.data.title')}</h3>
         <p>${t('settings.data.body')}</p>
@@ -150,6 +204,9 @@ export class SettingsView implements Screen {
 
   private bind(): void {
     document
+      .getElementById('settings-save-prefs')
+      ?.addEventListener('click', () => void this.onSavePreferences());
+    document
       .getElementById('settings-export')
       ?.addEventListener('click', () => void this.onExport());
     document
@@ -167,6 +224,29 @@ export class SettingsView implements Screen {
     document.querySelectorAll<HTMLButtonElement>('[data-restore]').forEach((button) => {
       button.addEventListener('click', () => void this.onRestore(button.dataset.restore!));
     });
+  }
+
+  private async onSavePreferences(): Promise<void> {
+    const number = (id: string, fallback: number): number => {
+      const input = document.getElementById(id) as HTMLInputElement | null;
+      const value = input ? Number(input.value) : NaN;
+      return Number.isFinite(value) ? value : fallback;
+    };
+    const preset = (document.getElementById('set-failure') as HTMLSelectElement | null)?.value;
+    const curated = parseCurated({
+      failurePreset: preset,
+      stepBackAmount: number('set-step-back', CURATED_DEFAULTS.stepBackAmount),
+      retryRetainAmount: number('set-retry-retain', CURATED_DEFAULTS.retryRetainAmount),
+      newIntroductionLimitPerDay: number(
+        'set-new-per-day',
+        CURATED_DEFAULTS.newIntroductionLimitPerDay,
+      ),
+      relearningMinutes: number('set-relearning', CURATED_DEFAULTS.relearningMinutes),
+      timingEnabled: (document.getElementById('set-timing') as HTMLInputElement | null)?.checked,
+    });
+    this.curated = await this.ctx.service.applyCuratedSettings(curated);
+    this.message = { kind: 'ok', text: t('settings.prefs.saved') };
+    await this.render();
   }
 
   private async onExport(): Promise<void> {

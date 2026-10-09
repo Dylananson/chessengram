@@ -1,6 +1,6 @@
 # ChessReps working plan
 
-Status: product build-out in progress (spike promoted by ADR-005); personal use initially.
+Status: product build-out in progress (spike promoted by ADR-005); PB0–PB5 done, PB6 (device pass + PWA) remaining; personal use initially.
 
 ## Goal and delivery sequence
 
@@ -363,7 +363,7 @@ Constraints that must hold across every phase:
 | PB1 | Monorepo hygiene: root workspaces, package exports, package imports, drop `fs.allow`, root scripts, CSS extraction | T12 | **Done 2026-10-09** |
 | PB2 | App shell: hash router, screens (Train/Puzzles/Collections/Settings/History); fix solution spoiler; wire Skip; due counts; split `main.ts` | T12 | **Done 2026-10-09** |
 | PB3 | Puzzles screen: pack library + JSONL upload; puzzle creator (FEN+solution, chessops-validated); Lichess CSV import; PGN import with ambiguity preview | T13 | **Done** 2026-10-09 (library, JSONL, creator/editor/remove, Lichess CSV, PGN preview) |
-| PB4 | Settings screen (curated: failure preset, new-per-day, timing on/off, relearning delay) + versioned persisted settings store | T13/T12 | Not started |
+| PB4 | Settings screen (curated: failure preset, new-per-day, timing on/off, relearning delay) + versioned persisted settings store | T13/T12 | **Done** 2026-10-09 (curated prefs, persisted `settings` collection, new-per-day enforced) |
 | PB5 | Data safety: full JSON export/import + migration policy + recovery | T14/Q12 | **Done** 2026-10-09 (lossless JSON export/import, preview+confirm, pre-import snapshots, restore) |
 | PB6 | T11 device verification pass; PWA (manifest + service worker) | T11/T15 | Not started |
 
@@ -486,6 +486,27 @@ clean; production build succeeds (150 KB / 45 KB gzip). The smoke now also check
 library **survives reload**, then exercises the full Settings data-safety flow: export a file,
 preview it, import it (creating a recovery snapshot), and restore the snapshot — the library
 returns to exactly its pre-import size, with no page errors.
+
+### Build-out handoff — PB4 (2026-10-09)
+
+The Settings screen now edits a curated set of scheduler preferences, with a small versioned store.
+
+- **Curated prefs** (`settings-preferences.ts`): failure preset (`retry-reset` / `retry-retain` /
+  `step-back`) plus its amount, new-puzzles-per-day, timing on/off, and relearning delay. Only this
+  subset is persisted; the rest of `SchedulerSettings` is always re-derived from `DEFAULT_SETTINGS`
+  via `resolveSettings`, so improving a default later is picked up automatically and the stored
+  schema stays tiny. `parseCurated` clamps every value and rejects unknown presets on read.
+- **Versioned store**: new `settings` collection (`EXPECTED_SETTINGS_SCHEMA_VERSION`), included in
+  full exports/imports. `LocalTrainingService.init` loads it; `applyCuratedSettings` persists and
+  rebuilds the `Scheduler`. A change takes effect on the **next** attempt — in-flight attempts keep
+  the settings snapshot they started with (unchanged `settingsHash` semantics).
+- **New-per-day is now real**: `selectNext` counts puzzles introduced today (local day, per program)
+  and stops offering new puzzles once `newIntroductionLimitPerDay` is reached. Previously the field
+  existed in settings but was never enforced.
+
+Verified by coordinator: root `npm test` = **86** (7 contracts + 21 scheduler + 58 web); typecheck
+clean; production build succeeds (156 KB / 46 KB gzip). The smoke saves a preference and confirms
+it **persists across reload**, on top of the PB5 export/import/restore flow, with no page errors.
 
 ## Sources
 

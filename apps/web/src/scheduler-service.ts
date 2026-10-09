@@ -58,6 +58,13 @@ import type {
 import { LocalStore, META_ACTIVE_SESSIONS, META_CONTENT_SET, META_PUZZLE_ORDER } from './storage/local-store.ts';
 import type { ContentSetMeta, StoreExport, StoreExportSummary } from './storage/local-store.ts';
 import { summarizeExport } from './storage/data-port.ts';
+import {
+  fromCurated,
+  parseCurated,
+  SCHEDULER_SETTINGS_KEY,
+  toCurated,
+  type CuratedSettings,
+} from './settings-preferences.ts';
 
 export const DEFAULT_PROGRAM_ID = 'local-spaced-reps-v1';
 export const DEFAULT_COLLECTION_ID = 'lichess-900-1099-v1';
@@ -113,7 +120,8 @@ export interface QueueSummary {
 }
 
 export class LocalTrainingService implements TrainingService {
-  private readonly scheduler: Scheduler;
+  private scheduler: Scheduler;
+  private settings: SchedulerSettings;
   private readonly store: LocalStore;
   private readonly clock: Clock;
   private readonly idFactory: () => string;
@@ -130,9 +138,10 @@ export class LocalTrainingService implements TrainingService {
     this.store = options.store;
     this.clock = options.clock ?? systemClock;
     this.idFactory = options.idFactory ?? makeId;
+    this.settings = resolveSettings(options.settings);
     this.scheduler = new Scheduler({
       clock: this.clock,
-      settings: resolveSettings(options.settings),
+      settings: this.settings,
     });
   }
 
@@ -170,7 +179,28 @@ export class LocalTrainingService implements TrainingService {
       }
     }
 
+    const storedSettings = await this.store.loadSettings<unknown>(SCHEDULER_SETTINGS_KEY);
+    if (storedSettings !== undefined) this.applySettings(parseCurated(storedSettings));
+
     this.initialized = true;
+  }
+
+  /** Rebuild the scheduler from a curated settings value (no persistence). */
+  private applySettings(curated: CuratedSettings): void {
+    this.settings = fromCurated(curated);
+    this.scheduler = new Scheduler({ clock: this.clock, settings: this.settings });
+  }
+
+  getCuratedSettings(): CuratedSettings {
+    return toCurated(this.settings);
+  }
+
+  /** Persist and apply curated scheduler preferences. Takes effect on new attempts. */
+  async applyCuratedSettings(curated: CuratedSettings): Promise<CuratedSettings> {
+    const safe = parseCurated(curated);
+    this.applySettings(safe);
+    await this.store.saveSettings(SCHEDULER_SETTINGS_KEY, safe);
+    return safe;
   }
 
   isInitialized(): boolean {
@@ -198,6 +228,8 @@ export class LocalTrainingService implements TrainingService {
     this.puzzles.clear();
     this.activeSessionByProgram.clear();
     this.puzzleOrder = [];
+    this.settings = resolveSettings();
+    this.scheduler = new Scheduler({ clock: this.clock, settings: this.settings });
     this.initialized = false;
   }
 
@@ -600,12 +632,15 @@ export class LocalTrainingService implements TrainingService {
     const newOrder: string[] = [];
     const seen = new Set<string>();
     const excluded = new Set(request.excludedKeys ?? []);
+    const newIntroductionsAllowed =
+      this.countIntroducedToday(programId, now) < this.settings.newIntroductionLimitPerDay;
 
     for (const puzzleId of this.puzzleOrder) {
       if (excluded.has(puzzleId)) continue;
       const key = `${programId}:${puzzleId}`;
-      seen.add(key);
       const state = this.schedules.get(key)?.schedule ?? this.scheduler.createState().schedule;
+      if (state.state === 'new' && !newIntroductionsAllowed) continue;
+      seen.add(key);
       candidates.push({ progressKey: key, state, orderKey: puzzleId });
       if (state.state === 'new') newOrder.push(key);
     }
@@ -691,6 +726,23 @@ export class LocalTrainingService implements TrainingService {
 
   private keyInProgram(key: string, programId: string): boolean {
     return key.startsWith(`${programId}:`);
+  }
+
+  /** Count puzzles introduced today (local day) for the new-per-day cap. */
+  private countIntroducedToday(programId: string, now: number): number {
+    const start = new Date(now);
+    start.setHours(0, 0, 0, 0);
+    const dayStart = start.getTime();
+    const dayEnd = dayStart + 24 * 60 * 60 * 1000;
+    let count = 0;
+    for (const [key, state] of this.schedules) {
+      if (!this.keyInProgram(key, programId)) continue;
+      const introducedAt = state.schedule.introducedAt;
+      if (introducedAt !== undefined && introducedAt >= dayStart && introducedAt < dayEnd) {
+        count += 1;
+      }
+    }
+    return count;
   }
 
   private async clearActiveAttempt(sessionId: string): Promise<void> {

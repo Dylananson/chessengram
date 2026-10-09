@@ -239,6 +239,19 @@ try {
   await hash(page, 'settings');
   check('settings shows the data safety panel', await page.$('#settings-export').then(Boolean));
 
+  // --- Settings: scheduler preferences persist ---------------------------------
+  await page.$eval('#set-new-per-day', (el) => {
+    el.value = '5';
+  });
+  await page.click('#settings-save-prefs');
+  await sleep(300);
+  const prefsMessage = await page.$eval('#settings-message', (el) => el.textContent).catch(() => '');
+  check('preferences save', /Preferences saved/.test(prefsMessage), prefsMessage.trim());
+  await page.reload({ waitUntil: 'networkidle0', timeout: 20000 });
+  await sleep(400);
+  const savedPerDay = await page.$eval('#set-new-per-day', (el) => el.value).catch(() => '');
+  check('preferences persist across reload', savedPerDay === '5', savedPerDay);
+
   const puzzle = {
     contentSchemaVersion: '1.0.0',
     rating: 1000,

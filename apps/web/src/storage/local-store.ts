@@ -21,6 +21,7 @@ export const COLLECTION_SCHEDULES = 'schedules';
 export const COLLECTION_ATTEMPTS = 'attempts';
 export const COLLECTION_SESSIONS = 'sessions';
 export const COLLECTION_META = 'meta';
+export const COLLECTION_SETTINGS = 'settings';
 /** Pre-import recovery snapshots. Deliberately excluded from exports/imports. */
 export const COLLECTION_BACKUPS = 'backups';
 
@@ -30,6 +31,7 @@ export const STORE_COLLECTIONS = [
   COLLECTION_SCHEDULES,
   COLLECTION_ATTEMPTS,
   COLLECTION_SESSIONS,
+  COLLECTION_SETTINGS,
   COLLECTION_META,
 ] as const;
 
@@ -55,6 +57,7 @@ export const EXPECTED_CONTENT_SCHEMA_VERSION = '1.0.0';
 export const EXPECTED_SCHEDULE_SCHEMA_VERSION = '1.0.0';
 export const EXPECTED_ATTEMPT_SCHEMA_VERSION = '1.0.0';
 export const EXPECTED_SESSION_SCHEMA_VERSION = '1.0.0';
+export const EXPECTED_SETTINGS_SCHEMA_VERSION = '1.0.0';
 
 export interface Envelope<T> {
   /** Version of the persisted record shape. */
@@ -222,6 +225,17 @@ export class LocalStore {
       if (session) out.push(session);
     }
     return out;
+  }
+
+  // --- settings (curated scheduler preferences) --------------------------
+
+  async saveSettings<T>(key: string, value: T): Promise<void> {
+    await this.backend.set(COLLECTION_SETTINGS, key, this.wrap(EXPECTED_SETTINGS_SCHEMA_VERSION, value));
+  }
+
+  async loadSettings<T>(key: string): Promise<T | undefined> {
+    const raw = await this.backend.get(COLLECTION_SETTINGS, key);
+    return this.unwrap<T>(raw, EXPECTED_SETTINGS_SCHEMA_VERSION);
   }
 
   // --- meta ---------------------------------------------------------------

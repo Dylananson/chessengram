@@ -28,6 +28,17 @@ const en: LocaleMessages = {
   'screen.settings.body': 'Scheduler defaults and training preferences arrive in the next build step.',
   'screen.history.title': 'History',
   'screen.history.body': 'Raw attempt history, stored separately from derived schedule state.',
+  'settings.prefs.title': 'Scheduler preferences',
+  'settings.prefs.body':
+    'Defaults for new attempts. A change takes effect on the next attempt; in-progress attempts keep the settings they started with.',
+  'settings.prefs.failurePreset': 'On a failed review',
+  'settings.prefs.stepBack': 'Step-back amount (used by “step-back”)',
+  'settings.prefs.retryRetain': 'Retain amount (used by “retry-retain”)',
+  'settings.prefs.newPerDay': 'New puzzles per day',
+  'settings.prefs.relearning': 'Relearning delay (minutes)',
+  'settings.prefs.timing': 'Adjust review intervals by solving time',
+  'settings.prefs.save': 'Save preferences',
+  'settings.prefs.saved': 'Preferences saved.',
   'settings.data.title': 'Data safety',
   'settings.data.body':
     'Everything lives on this device. Export it as one JSON file for safekeeping or to move to another device. Imports replace all data, but your current data is snapshotted first and can be restored.',
