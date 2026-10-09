@@ -19,6 +19,13 @@ interface KvRecord {
 const SEP = '\u0000';
 const RANGE_END = '\uffff';
 
+/**
+ * Legacy database name. Kept deliberately when the app was renamed from
+ * "player-spike" to "web": changing it would orphan existing progress stored
+ * under the old name. Renaming requires a migration that copies old -> new.
+ */
+export const INDEXEDDB_NAME = 'chessreps-player-spike';
+
 export class IndexedDbStorageBackend implements StorageBackend {
   readonly kind = 'indexeddb';
 
@@ -27,7 +34,7 @@ export class IndexedDbStorageBackend implements StorageBackend {
   private readonly version: number;
   private dbPromise: Promise<IDBDatabase> | null = null;
 
-  constructor(dbName = 'chessreps-player-spike', storeName = 'kv', version = 1) {
+  constructor(dbName = INDEXEDDB_NAME, storeName = 'kv', version = 1) {
     this.dbName = dbName;
     this.storeName = storeName;
     this.version = version;

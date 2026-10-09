@@ -5,7 +5,7 @@ import { getLocale, registerLocale, setLocale, t } from '../src/i18n.ts';
 test('english is the default locale with interpolation', () => {
   setLocale('en');
   assert.equal(getLocale(), 'en');
-  assert.equal(t('app.title'), 'ChessReps Player');
+  assert.equal(t('app.title'), 'ChessReps');
   assert.equal(t('status.yourTurn', { color: t('color.white') }), 'Your turn (white) — solve the puzzle');
 });
 

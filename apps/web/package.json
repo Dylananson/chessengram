@@ -1,5 +1,5 @@
 {
-  "name": "player-spike",
+  "name": "@chessreps/web",
   "private": true,
   "version": "0.0.0",
   "type": "module",

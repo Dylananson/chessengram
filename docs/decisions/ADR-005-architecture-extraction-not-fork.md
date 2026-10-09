@@ -21,7 +21,7 @@ The project did both investigations before deciding:
 - **T04/T06/T08/T10 (extraction spike, measured):** an architecture-neutral
   `TrainingService` boundary, a deterministic scheduler, and a FEN-rooted local
   player with IndexedDB persistence run offline from bundled content with no
-  server. Evidence: `packages/contracts`, `packages/scheduler`, `apps/player-spike`.
+  server. Evidence: `packages/contracts`, `packages/scheduler`, `apps/web`.
 
 ## Decision
 
@@ -69,7 +69,7 @@ it does not require hosting Lila.
 
 - Baseline vs. spike measurements: `docs/research/lichess-baseline.md`,
   `docs/research/player-spike.md`, `docs/research/local-persistence.md`.
-- Working local loop with scheduler + persistence: `apps/player-spike` (26 tests,
+- Working local loop with scheduler + persistence: `apps/web` (26 tests,
   successful production build).
 - Architecture-neutral boundary: `packages/contracts` (7 tests) and
   `packages/scheduler` (21 T03 acceptance tests).

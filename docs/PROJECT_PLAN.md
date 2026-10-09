@@ -149,7 +149,7 @@ Checkbox means acceptance verified, not merely code written. Status: Not started
 - [x] **T05 — Runnable Lila baseline.** Status: Done (measured reference). The unchanged Lila at pinned SHA `f5b261e3d8ece6f511484e398cb8d81e37735bea` was compiled (Scala 3.8.4, sbt 2.0.10, 169 s), run on :9663 (native mongod 7.0.14 + redis 7.2.5, since Docker was inaccessible), seeded with one puzzle + source game, and the real puzzle page driven headlessly: wrong move → failure feedback → continued solving → `win=true` → continue → next round. Evidence in `tools/lichess-baseline/evidence/`. All servers stopped; no system-wide installs. See [baseline report](research/lichess-baseline.md).
 - [x] **T06 — Scheduler/attempt core.** Status: Done. `packages/scheduler/` implements the T03 model as a pure, clock-injectable projection on `ScheduleStateDetails`: New/Learning/Review/Relearning, an 8-rung ladder, `retry-reset`/`retry-retain`/`step-back` failure presets, bounded isolated timing (±10%, capped), idempotent commits and stale-revision rejection. All **21 T03 acceptance scenarios** pass as named tests; typecheck clean (coordinator reran). Defaults recorded as **Proposed** [ADR-003](decisions/ADR-003-scheduler-defaults.md). See [scheduler implementation](research/scheduler-implementation.md). Numeric defaults remain unvalidated proposals.
 - [ ] **T07 — Remote adapter (online mode).** Depends T02/T04 (Lila itself no longer a dependency per ADR-005). Implement the T04 `TrainingService` against a thin API of our own, for eventual online/sync. Acceptance: session start, recording, selection and resume meet contracts; offline→online reconciliation uses idempotency keys and revision guards. Does not depend on Lila web-internal endpoints as durable storage.
-- [x] **T08 — Player integration.** Status: Done (extracted-library path). `apps/player-spike/` is a runnable Vite app using Lichess' own `chessground` + `chessops` (not the Lichess controller): starts from `solverFen` (+ optional setup animation), enforces failure-and-continue (wrong move commits one immutable scored failure without advancing), supports correction and explicit Next, pawn promotion with a role picker, active/correction timing with hidden-time exclusion, responsive/touch layout and a tiny i18n layer, and reports attempts through the T04 `TrainingService` now backed by the real T06 scheduler. 26 tests pass; build succeeds. See [player spike](research/player-spike.md). Preserving the Lichess *controller* itself was deliberately not done (extraction path).
+- [x] **T08 — Player integration.** Status: Done (extracted-library path). `apps/web/` is a runnable Vite app using Lichess' own `chessground` + `chessops` (not the Lichess controller): starts from `solverFen` (+ optional setup animation), enforces failure-and-continue (wrong move commits one immutable scored failure without advancing), supports correction and explicit Next, pawn promotion with a role picker, active/correction timing with hidden-time exclusion, responsive/touch layout and a tiny i18n layer, and reports attempts through the T04 `TrainingService` now backed by the real T06 scheduler. 26 tests pass; build succeeds. See [player spike](research/player-spike.md). Preserving the Lichess *controller* itself was deliberately not done (extraction path).
 - [ ] **T09 — Online POC integration.** Depends T06/T07/T08. Acceptance: actual rated collection trained, corrected, scheduled and resumed through UI.
 - [x] **T10 — Local persistence adapter.** Status: Done. `apps/player-spike/src/storage/` provides a storage seam (IndexedDB + in-memory fallback) with versioned envelopes; content, per-program scheduler state, raw attempt history and sessions persist separately. A reload restores content, order, schedules and an open attempt (replays logged moves; a scored failure resumes as correction). `?reset=1` clears state. Coordinator reran 26 tests including IndexedDB (fake-indexeddb) + reload round-trip; build succeeds. See [local persistence](research/local-persistence.md) and [ADR-004](decisions/ADR-004-local-storage-and-selection.md) (Proposed).
 - [ ] **T11 — Offline vertical slice.** Status: **Partial**. The local player now runs entirely from bundled pack content with no server and persists across reload (schedules, history, open attempt), and the app shell is a static Vite bundle. Acceptance not yet *verified* end-to-end in a real browser/phone: disable network, reload, solve multiple puzzles, record failure, resume; record hidden dependencies and real-device results. The reload/selection/resume logic is covered by headless tests, but this needs a manual device pass.
@@ -236,7 +236,7 @@ Verified by coordinator (not just agent claims):
 
 - `packages/contracts`: 7 tests pass; `tsc --noEmit` clean.
 - `packages/scheduler`: **21 tests pass**; `tsc --noEmit` clean.
-- `apps/player-spike`: 6 tests pass; `vite build` succeeds (~42 KB gzip 14 KB).
+- `apps/web`: 6 tests pass; `vite build` succeeds (~42 KB gzip 14 KB).
 - Fixes applied on review:
   1. Spike never committed the scored failure through the contract and later called
      `commitSuccess` after a failure. Now the first wrong move commits an immutable failure
@@ -277,7 +277,7 @@ check, and fixed defects found on review.
 
 Verified by coordinator (not just agent claims):
 
-- `apps/player-spike`: **26 tests pass**; `vite build` succeeds (91 KB / 29 KB gzip); no lila/mongo/redis
+- `apps/web`: **26 tests pass**; `vite build` succeeds (91 KB / 29 KB gzip); no lila/mongo/redis
   ports left listening and no leftover heavy processes.
 - T05 evidence is genuine: `summary.json` contains real Lichess page feedback
   (`"✗ That's not the move! Try something else."`), a `win=false` then `win=true` POST to
@@ -339,6 +339,38 @@ Consequences reflected on the board:
 
 Still open/unconfirmed: Q02/Q03/Q12 (Q04/Q05/Q06/Q07 now covered by ADR-003 defaults, Proposed);
 ADR-001/002/003/004 remain Proposed implementation defaults, not architecture blockers.
+
+## Product build-out (post-decision) — starting 2026-10-09
+
+The architecture decision (ADR-005) promotes the extracted spike from a proof to the
+actual product. This sequence turns `apps/web` (formerly `apps/player-spike`) into a real
+app with content and settings management. Tasks T12 (harden structure) and T13
+(collections/PGN) are realized through these phases.
+
+Constraints that must hold across every phase:
+
+- **Data continuity:** stored program/collection IDs, the IndexedDB database name
+  (`chessreps-player-spike`, intentionally retained) and storage schema versions are not
+  changed casually; the app keeps working with existing progress.
+- **No silent data loss:** export/import + a migration policy (Q12) land before the first
+  new persisted schema (settings).
+- **Verification each phase:** tests pass + production build succeeds; user-visible phases
+  also get a device/browser check.
+
+| Phase | Scope | Tasks | Status |
+|---|---|---|---|
+| PB0 | Rename `apps/player-spike` → `apps/web`; neutralize "spike" strings; preserve IDs/DB name | T12 | **Done 2026-10-09** |
+| PB1 | Monorepo hygiene: root workspaces, package exports, package imports, drop `fs.allow`, root scripts, CSS extraction | T12 | In progress |
+| PB2 | App shell: hash router, screens (Train/Puzzles/Collections/Settings/History); fix solution spoiler; wire Skip; due counts; split `main.ts` | T12 | Not started |
+| PB3 | Puzzles screen: pack library + JSONL upload; puzzle creator (FEN+solution, chessops-validated); Lichess CSV import; PGN import with ambiguity preview | T13 | Not started |
+| PB4 | Settings screen (curated: failure preset, new-per-day, timing on/off, relearning delay) + versioned persisted settings store | T13/T12 | Not started |
+| PB5 | Data safety: full JSON export/import + migration policy + recovery | T14/Q12 | Not started |
+| PB6 | T11 device verification pass; PWA (manifest + service worker) | T11/T15 | Not started |
+
+Content-import scope agreed with user (2026-10-09): JSONL file upload first, a single-puzzle
+creator (FEN + solution), then Lichess puzzle-CSV import (reusing `tools/puzzles` validation
+rules) and PGN import. A pack is content only; scheduling stays per program over the same
+`ProgressKey`. CSV/JSONL/PGN are ingestion formats, not a new content model.
 
 ## Sources
 

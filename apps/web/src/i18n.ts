@@ -13,8 +13,8 @@
 export type LocaleMessages = Record<string, string>;
 
 const en: LocaleMessages = {
-  'app.title': 'ChessReps Player',
-  'app.subtitle': 'Spaced-repetition puzzle training (local spike)',
+  'app.title': 'ChessReps',
+  'app.subtitle': 'Spaced-repetition puzzle training',
   'puzzle.info': 'Puzzle',
   'puzzle.id': 'ID',
   'puzzle.rating': 'Rating',

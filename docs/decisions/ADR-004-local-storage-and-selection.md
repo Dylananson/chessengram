@@ -75,19 +75,19 @@ local-first design.
 
 ## Evidence
 
-- `apps/player-spike/src/storage/{backend,memory-backend,indexeddb-backend,local-store}.ts`
-- `apps/player-spike/src/scheduler-service.ts` (`LocalTrainingService implements TrainingService`)
-- `apps/player-spike/src/training-adapter.ts`, `src/puzzle-game.ts`, `src/timing.ts`, `src/i18n.ts`, `src/main.ts`
+- `apps/web/src/storage/{backend,memory-backend,indexeddb-backend,local-store}.ts`
+- `apps/web/src/scheduler-service.ts` (`LocalTrainingService implements TrainingService`)
+- `apps/web/src/training-adapter.ts`, `src/puzzle-game.ts`, `src/timing.ts`, `src/i18n.ts`, `src/main.ts`
 - `docs/research/local-persistence.md`
 - Tests (26 total, Node v25.9.0):
-  `cd apps/player-spike && npm test`
+  `cd apps/web && npm test`
   - failure-flow: immutable failure, duplicate receipt, success leaves `new`
   - persistence: store round-trip, full service reload + active attempt resume, reset
   - indexeddb-store: real backend across connections
   - selection: stable new order, active reservation skipped, completion frees reservation
   - puzzle-game: grading, illegal move, promotion/underpromotion, setup-move, replay
   - timing: active/correction split, hidden time + trust, repeatable snapshots
-- Build: `cd apps/player-spike && npm run build` → tsc clean, Vite build succeeds.
+- Build: `cd apps/web && npm run build` → tsc clean, Vite build succeeds.
 
 ## Open questions / follow-ups
 
