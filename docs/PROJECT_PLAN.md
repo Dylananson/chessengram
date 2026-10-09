@@ -367,6 +367,7 @@ Constraints that must hold across every phase:
 | PB5 | Data safety: full JSON export/import + migration policy + recovery | T14/Q12 | **Done** 2026-10-09 (lossless JSON export/import, preview+confirm, pre-import snapshots, restore) |
 | PB6 | T11 device verification pass; PWA (manifest + service worker) | T11/T15 | **PWA Done 2026-10-09** (manifest, icons, service worker; offline boot verified headlessly). T11 real-device pass remaining |
 
+| PB7 | Stockfish analysis + attempt review (review-mode only, full-attempt navigation, lazy-loaded full single-threaded build) | T15/UX | Not started (documented) |
 Content-import scope agreed with user (2026-10-09): JSONL file upload first, a single-puzzle
 creator (FEN + solution), then Lichess puzzle-CSV import (reusing `tools/puzzles` validation
 rules) and PGN import. A pack is content only; scheduling stays per program over the same

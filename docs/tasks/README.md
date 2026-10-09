@@ -2,7 +2,7 @@
 
 Source of truth: ../PROJECT_PLAN.md. Only the coordinator edits its status, decisions and graph.
 
-## Current phase: product build-out (PB0–PB6)
+## Current phase: product build-out (PB0–PB7)
 
 The architecture decision (ADR-005) is made: extract/reuse, no Lila fork. Work now moves the
 runnable app (`apps/web`, formerly `apps/player-spike`) into a real product. See the
@@ -16,7 +16,8 @@ runnable app (`apps/web`, formerly `apps/player-spike`) into a real product. See
 | PB3 | Puzzles screen: upload, creator, CSV, PGN | apps/web/src/**, apps/web/tests/** | PB2 |
 | PB4 | Settings screen + persisted settings store | apps/web/src/**, apps/web/tests/** | PB3, PB5 |
 | PB5 | Data safety: export/import + migration policy | apps/web/src/**, apps/web/tests/** | PB2 |
-| PB6 | Device verification pass; PWA | apps/web/**, docs/** | PB4 |
+| PB6 | PWA (manifest + service worker); offline verification | apps/web/**, docs/** | PB4 |
+| PB7 | Stockfish analysis + attempt review | apps/web/**, docs/** | PB6 |
 
 Research scratch work can use /tmp/opencode with distinct task directories. Inspect before
 overwriting. Prefer pinned upstream revisions.
