@@ -15,8 +15,10 @@
 
 import { Chess } from 'chessops/chess';
 import { makeFen, parseFen } from 'chessops/fen';
+import { parsePgn, startingPosition, type Node, type PgnNodeData } from 'chessops/pgn';
+import { parseSan } from 'chessops/san';
 import type { Setup } from 'chessops/setup';
-import { parseUci } from 'chessops/util';
+import { makeUci, parseUci } from 'chessops/util';
 import type { Color } from 'chessops/types';
 import type { NormalizedPuzzle } from '@chessreps/contracts';
 
@@ -243,9 +245,10 @@ function normalizeKnownRecord(value: unknown): ValidationResult {
     setupMove: record.setupMove === undefined ? undefined : String(record.setupMove),
     solverFen: String(record.solverFen),
     solution: Array.isArray(record.solution) ? (record.solution as unknown[]).map(String) : [],
-    solverColor: record.solverColor === 'white' || record.solverColor === 'black'
-      ? record.solverColor
-      : undefined,
+    solverColor:
+      record.solverColor === 'white' || record.solverColor === 'black'
+        ? record.solverColor
+        : undefined,
   };
   const result = validateAndNormalize(input);
   if (!result.ok) return result;
@@ -253,10 +256,255 @@ function normalizeKnownRecord(value: unknown): ValidationResult {
     ok: true,
     puzzle: {
       ...result.puzzle,
-      ratingDeviation: record.ratingDeviation === undefined
-        ? undefined
-        : Number(record.ratingDeviation),
+      ratingDeviation:
+        record.ratingDeviation === undefined ? undefined : Number(record.ratingDeviation),
       originalFields: (record.originalFields as Record<string, unknown>) ?? {},
     },
   };
+}
+
+// --- Lichess puzzle CSV ------------------------------------------------------
+
+const LICHESS_COLUMNS = [
+  'PuzzleId',
+  'FEN',
+  'Moves',
+  'Rating',
+  'RatingDeviation',
+  'Popularity',
+  'NbPlays',
+  'Themes',
+  'GameUrl',
+  'OpeningTags',
+] as const;
+
+/** Minimal RFC-4180-ish CSV parser (handles quoted fields and CRLF). */
+function parseCsvRows(text: string): string[][] {
+  const rows: string[][] = [];
+  let row: string[] = [];
+  let field = '';
+  let inQuotes = false;
+  for (let i = 0; i < text.length; i += 1) {
+    const ch = text[i]!;
+    if (inQuotes) {
+      if (ch === '"') {
+        if (text[i + 1] === '"') {
+          field += '"';
+          i += 1;
+        } else {
+          inQuotes = false;
+        }
+      } else {
+        field += ch;
+      }
+    } else if (ch === '"') {
+      inQuotes = true;
+    } else if (ch === ',') {
+      row.push(field);
+      field = '';
+    } else if (ch === '\n') {
+      row.push(field);
+      rows.push(row);
+      row = [];
+      field = '';
+    } else if (ch !== '\r') {
+      field += ch;
+    }
+  }
+  if (field.length > 0 || row.length > 0) {
+    row.push(field);
+    rows.push(row);
+  }
+  return rows;
+}
+
+function normalizeLichessRow(row: Record<string, string>): ValidationResult {
+  const id = row.PuzzleId ?? '';
+  const sourceFen = row.FEN ?? '';
+  const moves = (row.Moves ?? '').split(/\s+/).filter(Boolean);
+  if (moves.length < 2 || moves.length % 2 !== 0) {
+    return { ok: false, errors: [`expected setup + an even solver line, got ${moves.length} plies`] };
+  }
+  const source = chessFrom(sourceFen);
+  if (!source.chess) return { ok: false, errors: [`invalid FEN (${source.message})`] };
+
+  let solverFen: string | undefined;
+  for (const [index, uci] of moves.entries()) {
+    const move = parseUci(uci);
+    if (!move || !source.chess.isLegal(move)) {
+      return { ok: false, errors: [`illegal ply ${index + 1}: ${uci}`] };
+    }
+    source.chess.play(move);
+    if (index === 0) solverFen = makeFen(source.chess.toSetup());
+  }
+  if (!solverFen) return { ok: false, errors: ['could not derive solver position'] };
+
+  const rating = Number(row.Rating);
+  const ratingDeviation = row.RatingDeviation === undefined ? undefined : Number(row.RatingDeviation);
+  const themes = (row.Themes ?? '').split(/\s+/).filter(Boolean);
+
+  const result = validateAndNormalize({
+    id,
+    rating: Number.isFinite(rating) ? rating : 0,
+    themes,
+    source: 'lichess',
+    sourceId: id,
+    sourceFen,
+    setupMove: moves[0],
+    solverFen,
+    solution: moves.slice(1),
+  });
+  if (!result.ok) return result;
+
+  const originalFields: Record<string, unknown> = {};
+  for (const column of LICHESS_COLUMNS) originalFields[column] = row[column] ?? '';
+
+  return {
+    ok: true,
+    puzzle: { ...result.puzzle, ratingDeviation, originalFields },
+  };
+}
+
+/**
+ * Parse the official Lichess puzzle CSV export. The first move of `Moves` is
+ * the opponent's setup move; `FEN` is the position before it.
+ */
+export function parseLichessCsv(text: string): ImportResult {
+  const puzzles: NormalizedPuzzle[] = [];
+  const errors: string[] = [];
+  const rows = parseCsvRows(text);
+  if (rows.length === 0) return { puzzles, errors: ['empty file'], examined: 0 };
+
+  const header = rows[0]!.map((h) => h.trim());
+  const required = ['PuzzleId', 'FEN', 'Moves', 'Rating', 'Themes'];
+  const missing = required.filter((column) => !header.includes(column));
+  if (missing.length > 0) {
+    return { puzzles, errors: [`missing required column(s): ${missing.join(', ')}`], examined: 0 };
+  }
+
+  let examined = 0;
+  for (const row of rows.slice(1)) {
+    if (row.length === 1 && row[0]!.trim() === '') continue;
+    examined += 1;
+    const record: Record<string, string> = {};
+    header.forEach((column, index) => {
+      record[column] = row[index] ?? '';
+    });
+    const result = normalizeLichessRow(record);
+    if (result.ok) puzzles.push(result.puzzle);
+    else errors.push(`row ${examined} (${record.PuzzleId || '?'}): ${result.errors.join('; ')}`);
+  }
+  return { puzzles, errors, examined };
+}
+// --- PGN import -------------------------------------------------------------
+
+export interface PgnCandidate {
+  index: number;
+  headers: Record<string, string>;
+  solverFen?: string;
+  solverColor: 'white' | 'black';
+  plies: number;
+  variations: number;
+  /** Present when the game's mainline validated as a puzzle. */
+  puzzle?: NormalizedPuzzle;
+  /** Present when the game could not be turned into a puzzle. */
+  error?: string;
+}
+
+export interface PgnPreview {
+  candidates: PgnCandidate[];
+}
+
+const SUPPORTED_VARIANTS = new Set(['standard', 'chess', 'from position', '']);
+
+function countVariations(node: Node<PgnNodeData>): number {
+  let count = node.children.length > 1 ? node.children.length - 1 : 0;
+  for (const child of node.children) count += countVariations(child);
+  return count;
+}
+
+/**
+ * Turn each PGN game into a puzzle candidate: the game's starting position is
+ * the solver position and the mainline is the solution. Variations are counted
+ * and reported but never imported as solutions (T13: no silent mistake branches).
+ */
+export function previewPgn(text: string): PgnPreview {
+  const games = parsePgn(text);
+  const candidates: PgnCandidate[] = [];
+
+  games.forEach((game, i) => {
+    const headers: Record<string, string> = {};
+    for (const [key, value] of game.headers) headers[key] = value;
+
+    const candidate: PgnCandidate = {
+      index: i + 1,
+      headers,
+      solverColor: 'white',
+      plies: 0,
+      variations: countVariations(game.moves),
+    };
+
+    const variant = (headers.Variant ?? '').toLowerCase();
+    if (!SUPPORTED_VARIANTS.has(variant)) {
+      candidate.error = `unsupported variant: ${headers.Variant}`;
+      candidates.push(candidate);
+      return;
+    }
+
+    const start = startingPosition(game.headers);
+    if (start.isErr) {
+      candidate.error = `invalid start position (${start.error.message})`;
+      candidates.push(candidate);
+      return;
+    }
+
+    const pos = start.value;
+    candidate.solverFen = makeFen(pos.toSetup());
+    candidate.solverColor = pos.turn === 'white' ? 'white' : 'black';
+
+    const solution: string[] = [];
+    let problem: string | undefined;
+    for (const node of game.moves.mainline()) {
+      const move = parseSan(pos, node.san);
+      if (!move) {
+        problem = `illegal SAN "${node.san}" at ply ${solution.length + 1}`;
+        break;
+      }
+      solution.push(makeUci(move));
+      pos.play(move);
+    }
+    candidate.plies = solution.length;
+
+    if (problem) {
+      candidate.error = problem;
+      candidates.push(candidate);
+      return;
+    }
+    if (solution.length === 0) {
+      candidate.error = 'game has no moves';
+      candidates.push(candidate);
+      return;
+    }
+
+    const normalized = validateAndNormalize({
+      id: makeLichessStyleId(),
+      rating: 0,
+      themes: [],
+      source: 'pgn',
+      sourceId: headers.Site || headers.Event || `pgn-${i + 1}`,
+      solverFen: candidate.solverFen,
+      solution,
+    });
+    if (normalized.ok) {
+      candidate.puzzle = {
+        ...normalized.puzzle,
+        originalFields: headers as Record<string, unknown>,
+      };
+    } else {
+      candidate.error = normalized.errors.join('; ');
+    }
+    candidates.push(candidate);
+  });
+
+  return { candidates };
 }

@@ -189,6 +189,44 @@ try {
     cells.some((c) => c.textContent === 'smokeimp'));
   check('imported puzzle is present', imported);
 
+  // --- Puzzles screen: Lichess CSV import -------------------------------------
+  const csvPath = join(dir, 'smoke-import.csv');
+  writeFileSync(
+    csvPath,
+    'PuzzleId,FEN,Moves,Rating,RatingDeviation,Popularity,NbPlays,Themes,GameUrl,OpeningTags\n' +
+      'smokecsv,5r1k/pp4pp/8/3B4/1P2pRQ1/P5PP/3q4/6K1 b - - 2 33,f8f4 g4c8 f4f8 c8f8,905,80,91,1855,endgame mate,https://lichess.org/x,\n',
+  );
+  const csvInput = await page.$('#puzzles-import-csv-file');
+  await csvInput.uploadFile(csvPath);
+  await page.click('#puzzles-import-csv-btn');
+  await sleep(400);
+  const csvMessage = await page.$eval('#puzzles-message', (el) => el.textContent).catch(() => '');
+  check('CSV import reports a result', /added/.test(csvMessage), csvMessage.trim());
+  const csvImported = await page.$$eval('#puzzles-list tbody tr td:first-child', (cells) =>
+    cells.some((c) => c.textContent === 'smokecsv'));
+  check('CSV-imported puzzle is present', csvImported);
+
+  // --- Puzzles screen: PGN preview + import -----------------------------------
+  const pgnPath = join(dir, 'smoke-import.pgn');
+  writeFileSync(
+    pgnPath,
+    '[Event "Smoke"]\n[Site "https://lichess.org/pgn1"]\n\n1. e4 e5 2. Nf3 Nc6 3. Bb5 *\n',
+  );
+  const pgnInput = await page.$('#puzzles-pgn-file');
+  await pgnInput.uploadFile(pgnPath);
+  await page.click('#puzzles-pgn-preview-btn');
+  await page.waitForSelector('#puzzles-pgn-confirm', { timeout: 5000 });
+  const previewText = await page.$eval('#screen', (el) => el.textContent);
+  check('PGN preview lists the game', /Game 1/.test(previewText));
+
+  const rowsBeforePgn = await page.$$eval('#puzzles-list tbody tr', (r) => r.length);
+  await page.click('#puzzles-pgn-confirm');
+  await sleep(400);
+  const pgnMessage = await page.$eval('#puzzles-message', (el) => el.textContent).catch(() => '');
+  check('PGN import reports a result', /Imported/.test(pgnMessage), pgnMessage.trim());
+  const rowsAfterPgn = await page.$$eval('#puzzles-list tbody tr', (r) => r.length);
+  check('PGN import adds a puzzle', rowsAfterPgn === rowsBeforePgn + 1, `${rowsBeforePgn} -> ${rowsAfterPgn}`);
+
   // --- Puzzles screen: remove --------------------------------------------------
   await page.click('#puzzles-list [data-remove="smokeimp"]');
   await sleep(400);

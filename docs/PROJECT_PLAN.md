@@ -362,7 +362,7 @@ Constraints that must hold across every phase:
 | PB0 | Rename `apps/player-spike` → `apps/web`; neutralize "spike" strings; preserve IDs/DB name | T12 | **Done 2026-10-09** |
 | PB1 | Monorepo hygiene: root workspaces, package exports, package imports, drop `fs.allow`, root scripts, CSS extraction | T12 | **Done 2026-10-09** |
 | PB2 | App shell: hash router, screens (Train/Puzzles/Collections/Settings/History); fix solution spoiler; wire Skip; due counts; split `main.ts` | T12 | **Done 2026-10-09** |
-| PB3 | Puzzles screen: pack library + JSONL upload; puzzle creator (FEN+solution, chessops-validated); Lichess CSV import; PGN import with ambiguity preview | T13 | **In progress** (library + JSONL + creator/editor/remove done; CSV + PGN pending) |
+| PB3 | Puzzles screen: pack library + JSONL upload; puzzle creator (FEN+solution, chessops-validated); Lichess CSV import; PGN import with ambiguity preview | T13 | **Done** 2026-10-09 (library, JSONL, creator/editor/remove, Lichess CSV, PGN preview) |
 | PB4 | Settings screen (curated: failure preset, new-per-day, timing on/off, relearning delay) + versioned persisted settings store | T13/T12 | Not started |
 | PB5 | Data safety: full JSON export/import + migration policy + recovery | T14/Q12 | Not started |
 | PB6 | T11 device verification pass; PWA (manifest + service worker) | T11/T15 | Not started |
@@ -430,6 +430,27 @@ additive (never wipes the library); boot-time seeding still only runs when the l
 
 Next in PB3: Lichess puzzle-**CSV** import and **PGN** import (with an ambiguity/mistake-branch
 preview), reusing the same validator.
+
+### Build-out handoff — PB3d–e (2026-10-09)
+
+PB3 is complete. Both remaining importers reuse the shared chessops validator and stay additive
+(never wipe the library).
+
+- **Lichess CSV** (`parseLichessCsv` in `puzzle-validation.ts`): RFC-4180-ish `parseCsvRows`
+  (quoted fields), requires columns `PuzzleId,FEN,Moves,Rating,…`; the first `Moves` ply is the
+  opponent setup move applied to `FEN` to derive `solverFen`; the rest must be a legal alternating
+  solution. Imported with `source:'lichess'`, preserving extra columns in `originalFields`.
+- **PGN** (`previewPgn`): each game becomes a candidate — its start position (honoring `SetUp`/
+  `FEN` headers) is the solver position and its **mainline** is the solution. Variations are
+  **counted and reported but never imported as solutions** (T13: no silent mistake branches). The
+  screen shows a preview list (game #, plies, solver color, variation count, or a per-game error
+  for illegal SAN / unsupported variant) with an explicit "Import N" confirm before committing,
+  so nothing is imported blindly.
+
+Verified by coordinator: root `npm test` = **77** (7 contracts + 21 scheduler + 49 web; web gained
+the CSV/PGN validation tests); typecheck clean; production build succeeds (142 KB / 43 KB gzip).
+The browser smoke now also exercises CSV import and the PGN preview→confirm→import flow with no
+page errors.
 
 ## Sources
 

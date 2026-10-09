@@ -15,8 +15,11 @@ import {
   makeLichessStyleId,
   normalizeUciList,
   parseJsonlPuzzles,
+  parseLichessCsv,
+  previewPgn,
   solutionToText,
   validateAndNormalize,
+  type PgnPreview,
   type PuzzleInput,
 } from './validation/puzzle-validation.ts';
 
@@ -40,6 +43,7 @@ export class PuzzlesView implements Screen {
   private message: Message | null = null;
   private editing: NormalizedPuzzle | null = null;
   private showCreator = false;
+  private pgnPreview: PgnPreview | null = null;
   private readonly ctx: AppContext;
 
   constructor(ctx: AppContext) {
@@ -116,6 +120,20 @@ export class PuzzlesView implements Screen {
           <input type="file" id="puzzles-import-file" accept=".jsonl,application/jsonl,text/plain" />
           <button type="button" class="button compact" id="puzzles-import-btn">${t('puzzles.import.button')}</button>
         </div>
+        <p>${t('puzzles.import.csv.hint')}</p>
+        <div class="flex-row">
+          <input type="file" id="puzzles-import-csv-file" accept=".csv,text/csv" />
+          <button type="button" class="button compact" id="puzzles-import-csv-btn">${t('puzzles.import.csv.button')}</button>
+        </div>
+      </div>
+      <div class="panel">
+        <h3>${t('puzzles.pgn.title')}</h3>
+        <p>${t('puzzles.pgn.hint')}</p>
+        <div class="flex-row">
+          <input type="file" id="puzzles-pgn-file" accept=".pgn,application/x-chess-pgn,text/plain" />
+          <button type="button" class="button compact" id="puzzles-pgn-preview-btn">${t('puzzles.pgn.previewButton')}</button>
+        </div>
+        ${this.pgnPreview ? this.pgnPreviewHtml() : ''}
       </div>
       <div class="panel">
         <h3>${this.showCreator ? (this.editing ? t('puzzles.creator.mode.edit', { id: this.editing.id }) : t('puzzles.creator.mode.create')) : t('puzzles.creator.title')}</h3>
@@ -125,6 +143,38 @@ export class PuzzlesView implements Screen {
       <div class="panel">
         <h3>${t('puzzles.list.title')}</h3>
         <div id="puzzles-list">${table}</div>
+      </div>
+    `;
+  }
+
+  private pgnPreviewHtml(): string {
+    const candidates = this.pgnPreview!.candidates;
+    const valid = candidates.filter((c) => c.puzzle).length;
+    const rows = candidates
+      .map((c) =>
+        c.error
+          ? `<p class="error">${escapeHtml(t('puzzles.pgn.preview.error', { index: c.index, error: c.error }))}</p>`
+          : `<p>${escapeHtml(
+              t('puzzles.pgn.preview.row', {
+                index: c.index,
+                plies: c.plies,
+                color: t(`color.${c.solverColor}`),
+                variations: c.variations,
+              }),
+            )}</p>`,
+      )
+      .join('');
+    return `
+      <div class="panel">
+        <h3>${t('puzzles.pgn.preview.title')}</h3>
+        ${rows}
+        <div class="button-row">
+          <button type="button" class="button compact" id="puzzles-pgn-confirm" ${valid === 0 ? 'disabled' : ''}>${t(
+            'puzzles.pgn.confirm',
+            { count: valid },
+          )}</button>
+          <button type="button" class="button button-secondary compact" id="puzzles-pgn-cancel">${t('puzzles.pgn.cancel')}</button>
+        </div>
       </div>
     `;
   }
@@ -176,7 +226,19 @@ export class PuzzlesView implements Screen {
   private bind(puzzles: NormalizedPuzzle[]): void {
     document
       .getElementById('puzzles-import-btn')
-      ?.addEventListener('click', () => void this.onImport());
+      ?.addEventListener('click', () => void this.onImport('jsonl'));
+    document
+      .getElementById('puzzles-import-csv-btn')
+      ?.addEventListener('click', () => void this.onImport('csv'));
+    document
+      .getElementById('puzzles-pgn-preview-btn')
+      ?.addEventListener('click', () => void this.onPreviewPgn());
+    document
+      .getElementById('puzzles-pgn-confirm')
+      ?.addEventListener('click', () => void this.onConfirmPgn());
+    document
+      .getElementById('puzzles-pgn-cancel')
+      ?.addEventListener('click', () => void this.onCancelPgn());
     document
       .getElementById('puzzles-new-btn')
       ?.addEventListener('click', () => void this.onToggleCreator());
@@ -279,15 +341,51 @@ export class PuzzlesView implements Screen {
     await this.render();
   }
 
-  private async onImport(): Promise<void> {
-    const input = document.getElementById('puzzles-import-file') as HTMLInputElement | null;
+  private async onPreviewPgn(): Promise<void> {
+    const input = document.getElementById('puzzles-pgn-file') as HTMLInputElement | null;
     const file = input?.files?.[0];
     if (!file) {
       this.message = { kind: 'error', text: t('puzzles.import.none') };
       await this.render();
       return;
     }
-    const parsed = parseJsonlPuzzles(await file.text());
+    const preview = previewPgn(await file.text());
+    if (preview.candidates.length === 0) {
+      this.message = { kind: 'error', text: t('puzzles.pgn.none') };
+      this.pgnPreview = null;
+      await this.render();
+      return;
+    }
+    this.pgnPreview = preview;
+    this.message = null;
+    await this.render();
+  }
+
+  private async onConfirmPgn(): Promise<void> {
+    if (!this.pgnPreview) return;
+    const puzzles = this.pgnPreview.candidates.flatMap((c) => (c.puzzle ? [c.puzzle] : []));
+    const { added, replaced } = await this.ctx.service.upsertPuzzles(puzzles, { packId: 'pgn' });
+    this.pgnPreview = null;
+    this.message = { kind: 'ok', text: t('puzzles.pgn.imported', { added, replaced }) };
+    await this.render();
+  }
+
+  private async onCancelPgn(): Promise<void> {
+    this.pgnPreview = null;
+    await this.render();
+  }
+
+  private async onImport(kind: 'jsonl' | 'csv'): Promise<void> {
+    const inputId = kind === 'csv' ? 'puzzles-import-csv-file' : 'puzzles-import-file';
+    const input = document.getElementById(inputId) as HTMLInputElement | null;
+    const file = input?.files?.[0];
+    if (!file) {
+      this.message = { kind: 'error', text: t('puzzles.import.none') };
+      await this.render();
+      return;
+    }
+    const text = await file.text();
+    const parsed = kind === 'csv' ? parseLichessCsv(text) : parseJsonlPuzzles(text);
     if (parsed.puzzles.length === 0) {
       this.message = {
         kind: 'error',
