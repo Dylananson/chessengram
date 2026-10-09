@@ -12,13 +12,10 @@
  */
 
 import type {
-  AttemptEvent,
   AttemptId,
-  AttemptOutcome,
   AttemptRecord,
   CommitOutcomeRequest,
   CommitOutcomeResponse,
-  FailurePreset,
   FinishCorrectionRequest,
   FinishCorrectionResponse,
   GetAttemptRequest,
@@ -27,6 +24,7 @@ import type {
   LoadPuzzleResponse,
   NormalizedPuzzle,
   OutcomeReceipt,
+  ProgressKey,
   RecordEventRequest,
   RecordEventResponse,
   ScheduleStateDetails,
@@ -63,19 +61,30 @@ export class InMemoryTrainingService implements TrainingService {
     if (initialPuzzles) {
       for (const puzzle of initialPuzzles) {
         this.puzzles.set(puzzle.id, puzzle);
-        // Initialize schedule state for new puzzles
-        const key = `${puzzle.id}`;
-        this.scheduleStates.set(key, {
-          scheduleSchemaVersion: "1.0.0",
-          state: "new",
-          algorithmId: "stub-v1",
-          algorithmVersion: "1.0.0",
-          settingsHash: "stub-hash",
-          lapseCount: 0,
-          currentStepFailureCount: 0,
-        });
       }
     }
+  }
+
+  /**
+   * Schedule state is scoped per (programId, puzzleId) per ADR-002 and is
+   * created lazily on first commit so the scope is always explicit.
+   */
+  private getOrCreateScheduleState(progressKey: ProgressKey): ScheduleStateDetails {
+    const key = `${progressKey.programId}:${progressKey.puzzleId}`;
+    let state = this.scheduleStates.get(key);
+    if (!state) {
+      state = {
+        scheduleSchemaVersion: "1.0.0",
+        state: "new",
+        algorithmId: "stub-v1",
+        algorithmVersion: "1.0.0",
+        settingsHash: "stub-hash",
+        lapseCount: 0,
+        currentStepFailureCount: 0,
+      };
+      this.scheduleStates.set(key, state);
+    }
+    return state;
   }
 
   private nextAttemptId(): AttemptId {
@@ -124,27 +133,26 @@ export class InMemoryTrainingService implements TrainingService {
     return { session: { ...session }, scheduleStates };
   }
 
-  async loadPuzzle(request: LoadPuzzleRequest): Promise<LoadPuzzleResponse> {
-    const puzzle = this.puzzles.get(request.puzzleId);
+  async loadPuzzle(_request: LoadPuzzleRequest): Promise<LoadPuzzleResponse> {
+    const puzzle = this.puzzles.get(_request.puzzleId);
     if (!puzzle) {
-      throw new Error(`Puzzle not found: ${request.puzzleId}`);
+      throw new Error(`Puzzle not found: ${_request.puzzleId}`);
     }
     return { puzzle: { ...puzzle } };
   }
 
-  async startAttempt(request: StartAttemptRequest): Promise<StartAttemptResponse> {
+  async startAttempt(_request: StartAttemptRequest): Promise<StartAttemptResponse> {
     const now = Date.now();
     const attemptId = this.nextAttemptId();
-    const key = `${request.progressKey.programId}:${request.progressKey.puzzleId}`;
 
     const storedAttempt: StoredAttempt = {
       attemptSchemaVersion: "1.0.0",
       attemptId,
-      progressKey: request.progressKey,
-      sessionId: request.sessionId,
-      scheduleRevisionBefore: request.expectedScheduleRevision,
+      progressKey: _request.progressKey,
+      sessionId: _request.sessionId,
+      scheduleRevisionBefore: _request.expectedScheduleRevision,
       contentHash: "stub-content-hash",
-      startingFen: this.getPuzzleFen(request.progressKey.puzzleId),
+      startingFen: this.getPuzzleFen(_request.progressKey.puzzleId),
       timing: {
         activeSolvingSeconds: 0,
         correctionSeconds: 0,
@@ -166,7 +174,7 @@ export class InMemoryTrainingService implements TrainingService {
     };
     this.attempts.set(attemptId.value, storedAttempt);
 
-    const session = this.sessions.get(request.sessionId);
+    const session = this.sessions.get(_request.sessionId);
     if (session) {
       session.activeAttemptId = attemptId;
       session.lastActivityAt = now;
@@ -264,9 +272,8 @@ export class InMemoryTrainingService implements TrainingService {
     }
 
     // Update schedule state based on outcome (simple stub)
-    const key = `${attempt.progressKey.programId}:${attempt.progressKey.puzzleId}`;
-    const current = this.scheduleStates.get(key);
-    if (current) {
+    const current = this.getOrCreateScheduleState(attempt.progressKey);
+    {
       if (request.outcome === "success") {
         if (current.state === "new") {
           current.state = "learning";
@@ -338,29 +345,29 @@ export class InMemoryTrainingService implements TrainingService {
     return { accepted: true };
   }
 
-  async selectNext(request: SelectNextRequest): Promise<SelectNextResponse> {
+  async selectNext(_request: SelectNextRequest): Promise<SelectNextResponse> {
     const now = Date.now();
     // Simple stub: find a puzzle with due work, or any new puzzle
     for (const [key, state] of this.scheduleStates.entries()) {
       if (state.dueAt && state.dueAt <= now) {
-        const puzzleId = key.split(":")[1] ?? key;
+        const puzzleId = key.includes(":") ? key.slice(key.indexOf(":") + 1) : key;
         return { puzzleId };
       }
     }
     // If nothing due, return first new puzzle
     for (const [key, state] of this.scheduleStates.entries()) {
       if (state.state === "new") {
-        const puzzleId = key.split(":")[1] ?? key;
+        const puzzleId = key.includes(":") ? key.slice(key.indexOf(":") + 1) : key;
         return { puzzleId };
       }
     }
     return { puzzleId: null, reason: "queue-empty" };
   }
 
-  async getSession(request: GetSessionRequest): Promise<SessionState> {
-    const session = this.sessions.get(request.sessionId);
+  async getSession(_request: GetSessionRequest): Promise<SessionState> {
+    const session = this.sessions.get(_request.sessionId);
     if (!session) {
-      throw new Error(`Session not found: ${request.sessionId}`);
+      throw new Error(`Session not found: ${_request.sessionId}`);
     }
     return { ...session };
   }
@@ -377,29 +384,13 @@ export class InMemoryTrainingService implements TrainingService {
   // Test helper methods
   addPuzzle(puzzle: NormalizedPuzzle): void {
     this.puzzles.set(puzzle.id, puzzle);
-    const key = `${puzzle.id}`;
-    this.scheduleStates.set(key, {
-      scheduleSchemaVersion: "1.0.0",
-      state: "new",
-      algorithmId: "stub-v1",
-      algorithmVersion: "1.0.0",
-      settingsHash: "stub-hash",
-      lapseCount: 0,
-      currentStepFailureCount: 0,
-    });
   }
 
-  setScheduleState(puzzleId: string, state: Partial<ScheduleStateDetails>): void {
-    const key = `${puzzleId}`;
-    const current = this.scheduleStates.get(key) ?? {
-      scheduleSchemaVersion: "1.0.0",
-      state: "new",
-      algorithmId: "stub-v1",
-      algorithmVersion: "1.0.0",
-      settingsHash: "stub-hash",
-      lapseCount: 0,
-      currentStepFailureCount: 0,
-    };
-    this.scheduleStates.set(key, { ...current, ...state });
+  setScheduleState(progressKey: ProgressKey, state: Partial<ScheduleStateDetails>): void {
+    const current = this.getOrCreateScheduleState(progressKey);
+    this.scheduleStates.set(
+      `${progressKey.programId}:${progressKey.puzzleId}`,
+      { ...current, ...state }
+    );
   }
 }

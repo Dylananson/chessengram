@@ -93,6 +93,9 @@ describe("TrainingService contracts", () => {
     });
     assert.ok(result.committed);
     assert.ok(result.receipt);
+    // A new puzzle advances to learning on first success (per-program scope)
+    assert.equal(result.newScheduleState?.state, "learning");
+    assert.ok(result.newScheduleState?.dueAt);
   });
 
   test("commitOutcome is idempotent via idempotencyKey", async () => {
