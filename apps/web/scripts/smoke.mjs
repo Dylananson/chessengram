@@ -233,11 +233,60 @@ try {
   const removed = await page.$$eval('#puzzles-list tbody tr td:first-child', (cells) =>
     cells.some((c) => c.textContent === 'smokeimp'));
   check('removed puzzle disappears from the library', !removed);
+  const rowsBeforeImport = await page.$$eval('#puzzles-list tbody tr', (r) => r.length);
 
-  // --- Settings stub still reachable ------------------------------------------
+  // --- Settings: data safety (export/import/restore) --------------------------
   await hash(page, 'settings');
-  const settingsBody = await page.$eval('#screen .info p', (el) => el.textContent).catch(() => '');
-  check('settings screen navigates', settingsBody.length > 0, settingsBody.slice(0, 60));
+  check('settings shows the data safety panel', await page.$('#settings-export').then(Boolean));
+
+  const puzzle = {
+    contentSchemaVersion: '1.0.0',
+    rating: 1000,
+    source: 'lichess',
+    sourceId: 'smokedata',
+    themes: [],
+    sourceFen: 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1',
+    solverFen: 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1',
+    solverColor: 'white',
+    solution: ['e2e4'],
+    originalFields: {},
+  };
+  const exported = {
+    format: 'chessreps-export',
+    formatVersion: '1.0.0',
+    exportedAt: Date.now(),
+    backendKind: 'indexeddb',
+    collections: {
+      content: { smokedata: { schemaVersion: '1.0.0', savedAt: Date.now(), data: puzzle } },
+      schedules: {},
+      attempts: {},
+      sessions: {},
+      meta: {},
+    },
+  };
+  const exportPath = join(dir, 'smoke-export.json');
+  writeFileSync(exportPath, JSON.stringify(exported));
+  const settingsFile = await page.$('#settings-import-file');
+  await settingsFile.uploadFile(exportPath);
+  await page.click('#settings-import-preview');
+  await page.waitForSelector('#settings-import-confirm', { timeout: 5000 });
+  const importPreview = await page.$eval('#screen', (el) => el.textContent);
+  check('import preview shows the file summary', /Export from/.test(importPreview));
+
+  await page.click('#settings-import-confirm');
+  await sleep(500);
+  const settingsMessage = await page.$eval('#settings-message', (el) => el.textContent).catch(() => '');
+  check('import reports success', /Imported/.test(settingsMessage), settingsMessage.trim());
+  check('import created a recovery snapshot', await page.$('[data-restore]').then(Boolean));
+
+  // Restore the pre-import snapshot; this must bring the library back.
+  await page.click('[data-restore]');
+  await sleep(500);
+  const restoredMessage = await page.$eval('#settings-message', (el) => el.textContent).catch(() => '');
+  check('restore reports success', /Restored/.test(restoredMessage), restoredMessage.trim());
+  await hash(page, 'puzzles');
+  const rowsAfterRestore = await page.$$eval('#puzzles-list tbody tr', (r) => r.length);
+  check('restore brings the library back', rowsAfterRestore === rowsBeforeImport, `${rowsAfterRestore} vs ${rowsBeforeImport}`);
 
   check('no page errors across the whole run', pageErrors.length === 0, pageErrors.join(' | '));
 } finally {

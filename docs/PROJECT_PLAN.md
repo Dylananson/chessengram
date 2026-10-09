@@ -364,7 +364,7 @@ Constraints that must hold across every phase:
 | PB2 | App shell: hash router, screens (Train/Puzzles/Collections/Settings/History); fix solution spoiler; wire Skip; due counts; split `main.ts` | T12 | **Done 2026-10-09** |
 | PB3 | Puzzles screen: pack library + JSONL upload; puzzle creator (FEN+solution, chessops-validated); Lichess CSV import; PGN import with ambiguity preview | T13 | **Done** 2026-10-09 (library, JSONL, creator/editor/remove, Lichess CSV, PGN preview) |
 | PB4 | Settings screen (curated: failure preset, new-per-day, timing on/off, relearning delay) + versioned persisted settings store | T13/T12 | Not started |
-| PB5 | Data safety: full JSON export/import + migration policy + recovery | T14/Q12 | Not started |
+| PB5 | Data safety: full JSON export/import + migration policy + recovery | T14/Q12 | **Done** 2026-10-09 (lossless JSON export/import, preview+confirm, pre-import snapshots, restore) |
 | PB6 | T11 device verification pass; PWA (manifest + service worker) | T11/T15 | Not started |
 
 Content-import scope agreed with user (2026-10-09): JSONL file upload first, a single-puzzle
@@ -451,6 +451,41 @@ Verified by coordinator: root `npm test` = **77** (7 contracts + 21 scheduler + 
 the CSV/PGN validation tests); typecheck clean; production build succeeds (142 KB / 43 KB gzip).
 The browser smoke now also exercises CSV import and the PGN preview→confirm→import flow with no
 page errors.
+
+### Build-out handoff — PB5 (2026-10-09)
+
+Data safety landed **before** any new persisted schema, per the T14/Q12 rule. Persisted data now
+has a documented, reversible escape hatch.
+
+- **Lossless export** (`LocalStore.exportData`): every collection (`content`, `schedules`,
+  `attempts`, `sessions`, `meta`) is snapshotted as its raw on-disk envelopes, wrapped in a
+  self-describing `chessreps-export` document (`formatVersion`, `exportedAt`, `backendKind`).
+- **Safe import** (`parseExport` in `storage/data-port.ts`): validates the format marker, rejects
+  unknown/newer versions, and runs sequential migrations to the current version. The Settings
+  screen shows a **preview summary** (timestamp + per-collection counts) and requires an explicit
+  confirm before replacing anything.
+- **Recovery** (`LocalStore.saveBackup`/`loadBackup`, `COLLECTION_BACKUPS`): every import first
+  snapshots current data under `pre-import-<ts>` (excluded from exports so it cannot recurse), and
+  the Settings screen lists snapshots with one-click **Restore**. Restoring itself backs up the
+  data being replaced. After any import/restore the training adapter is reset
+  (`reloadAfterDataChange`) so no stale attempt or progress key survives.
+- **Migration policy (Q12)** is documented in `storage/data-port.ts`: add a `Migration` per format
+  bump; never edit a shipped migration; per-record `schemaVersion` mismatches are already treated
+  as absent by the store, so a restore never misinterprets data.
+
+While verifying PB5 the smoke uncovered and fixed a **pre-existing seeding bug**: the bundled
+`pack.jsonl` predates the contract and omitted `contentSchemaVersion`, so its stored envelopes had
+`schemaVersion: undefined` and were silently dropped on the next load — the bundled 100-puzzle
+library vanished after any reload. `pack-loader.ts` now normalizes pack rows (stamps
+`contentSchemaVersion: '1.0.0'`, maps `original`→`originalFields`), and `LocalStore.savePuzzles`
+falls back to the expected version for any unstamped record. Regression test:
+`tests/pack-loader.node.test.ts`.
+
+Verified by coordinator: root `npm test` = **82** (7 contracts + 21 scheduler + 54 web); typecheck
+clean; production build succeeds (150 KB / 45 KB gzip). The smoke now also checks that the bundled
+library **survives reload**, then exercises the full Settings data-safety flow: export a file,
+preview it, import it (creating a recovery snapshot), and restore the snapshot — the library
+returns to exactly its pre-import size, with no page errors.
 
 ## Sources
 

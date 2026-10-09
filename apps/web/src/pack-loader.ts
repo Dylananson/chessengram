@@ -11,6 +11,24 @@ export interface LoadedPack {
 }
 
 /**
+ * The bundled pack predates the contract envelope and uses `original` instead
+ * of `originalFields`, and omits `contentSchemaVersion`. Normalize it here so
+ * the seeded content is schema-correct and round-trips through storage (an
+ * unstamped envelope version would otherwise be dropped on the next load).
+ */
+function normalizePackPuzzle(raw: Record<string, unknown>): NormalizedPuzzle {
+  const { original, ...rest } = raw;
+  return {
+    ...(rest as Omit<NormalizedPuzzle, 'contentSchemaVersion' | 'originalFields'>),
+    contentSchemaVersion: (rest.contentSchemaVersion as NormalizedPuzzle['contentSchemaVersion']) ?? '1.0.0',
+    originalFields:
+      (rest.originalFields as NormalizedPuzzle['originalFields']) ??
+      (original as NormalizedPuzzle['originalFields']) ??
+      {},
+  };
+}
+
+/**
  * Fetch and parse a JSONL content pack. Invalid lines are skipped (counted in
  * `parseErrors`) rather than failing the whole pack, so one bad row cannot brick
  * the player.
@@ -33,7 +51,7 @@ export async function loadPuzzlesFromPack(
   let parseErrors = 0;
   for (const line of lines) {
     try {
-      puzzles.push(JSON.parse(line) as NormalizedPuzzle);
+      puzzles.push(normalizePackPuzzle(JSON.parse(line) as Record<string, unknown>));
     } catch {
       parseErrors += 1;
     }

@@ -21,6 +21,7 @@ import {
 import type { ScreenFactory } from './router.ts';
 import { stubFactories } from './screens.ts';
 import { PuzzlesView } from './puzzles-view.ts';
+import { SettingsView } from './settings-view.ts';
 import { IndexedDbStorageBackend } from './storage/indexeddb-backend.ts';
 import { LocalStore } from './storage/local-store.ts';
 import { InMemoryStorageBackend } from './storage/memory-backend.ts';
@@ -74,6 +75,7 @@ function registerScreens(): void {
   const trainFactory: ScreenFactory = (ctx) => new TrainView(ctx);
   registerScreen('train', trainFactory);
   registerScreen('puzzles', (ctx) => new PuzzlesView(ctx));
+  registerScreen('settings', (ctx) => new SettingsView(ctx));
   for (const { id, factory } of stubFactories()) {
     registerScreen(id, factory);
   }

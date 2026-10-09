@@ -36,7 +36,7 @@ export function registerStubScreens(_ctx: AppContext): void {
 
 /** Factory registry used by app.ts. */
 export function stubFactories(): { id: ScreenId; factory: (ctx: AppContext) => Screen }[] {
-  return (['collections', 'settings', 'history'] as ScreenId[]).map((id) => ({
+  return (['collections', 'history'] as ScreenId[]).map((id) => ({
     id,
     factory: () => stub(id),
   }));

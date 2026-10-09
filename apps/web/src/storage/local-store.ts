@@ -21,6 +21,19 @@ export const COLLECTION_SCHEDULES = 'schedules';
 export const COLLECTION_ATTEMPTS = 'attempts';
 export const COLLECTION_SESSIONS = 'sessions';
 export const COLLECTION_META = 'meta';
+/** Pre-import recovery snapshots. Deliberately excluded from exports/imports. */
+export const COLLECTION_BACKUPS = 'backups';
+
+/** Collections that make up a full data export, in restore-safe order. */
+export const STORE_COLLECTIONS = [
+  COLLECTION_CONTENT,
+  COLLECTION_SCHEDULES,
+  COLLECTION_ATTEMPTS,
+  COLLECTION_SESSIONS,
+  COLLECTION_META,
+] as const;
+
+export type StoreCollection = (typeof STORE_COLLECTIONS)[number];
 
 export const META_CONTENT_SET = 'content-set';
 export const META_PUZZLE_ORDER = 'puzzle-order';
@@ -28,6 +41,10 @@ export const META_ACTIVE_SESSIONS = 'active-sessions';
 
 /** Current schema version for the local store's own envelopes. */
 export const LOCAL_STORE_SCHEMA_VERSION = '1.0.0';
+
+/** Export file format marker and version (PB5). */
+export const EXPORT_FORMAT = 'chessreps-export';
+export const EXPORT_FORMAT_VERSION = '1.0.0';
 
 /**
  * Expected persisted schema versions. These mirror the contract literal types
@@ -53,6 +70,28 @@ export interface ContentSetMeta {
   contentSchemaVersion: ContentSchemaVersion;
   count: number;
   loadedAt: number;
+}
+
+/**
+ * Self-describing, lossless snapshot of every persisted collection. Values are
+ * the raw on-disk envelopes (schemaVersion + savedAt + data) so a restore is
+ * byte-faithful and per-record versions stay intact.
+ */
+export interface StoreExport {
+  format: typeof EXPORT_FORMAT;
+  formatVersion: string;
+  exportedAt: number;
+  backendKind: string;
+  collections: Record<string, Record<string, unknown>>;
+}
+
+/** Per-collection record counts, used to preview an import before applying it. */
+export interface StoreExportSummary {
+  formatVersion: string;
+  exportedAt: number;
+  backendKind: string;
+  counts: Record<string, number>;
+  total: number;
 }
 
 function isEnvelope(value: unknown): value is Envelope<unknown> {
@@ -91,11 +130,10 @@ export class LocalStore {
 
   async savePuzzles(puzzles: readonly NormalizedPuzzle[]): Promise<void> {
     for (const puzzle of puzzles) {
-      await this.backend.set(
-        COLLECTION_CONTENT,
-        puzzle.id,
-        this.wrap(puzzle.contentSchemaVersion, puzzle),
-      );
+      const version =
+        (puzzle as { contentSchemaVersion?: string }).contentSchemaVersion ??
+        EXPECTED_CONTENT_SCHEMA_VERSION;
+      await this.backend.set(COLLECTION_CONTENT, puzzle.id, this.wrap(version, puzzle));
     }
   }
 
@@ -200,5 +238,60 @@ export class LocalStore {
   /** Remove all persisted data (documented reset path). */
   async reset(): Promise<void> {
     await this.backend.clear();
+  }
+
+  // --- export / import (PB5 data safety) ---------------------------------
+
+  /** Snapshot every persisted collection as a lossless, self-describing export. */
+  async exportData(): Promise<StoreExport> {
+    const collections: Record<string, Record<string, unknown>> = {};
+    for (const collection of STORE_COLLECTIONS) {
+      const records = await this.backend.getAll(collection);
+      const map: Record<string, unknown> = {};
+      for (const record of records) map[record.key] = record.value;
+      collections[collection] = map;
+    }
+    return {
+      format: EXPORT_FORMAT,
+      formatVersion: EXPORT_FORMAT_VERSION,
+      exportedAt: this.clock.now(),
+      backendKind: this.backend.kind,
+      collections,
+    };
+  }
+
+  /**
+   * Replace the entire store with an already-validated, migrated export.
+   * Callers MUST back up first (see `saveBackup`) — this clears each collection.
+   */
+  async applyExport(exported: StoreExport): Promise<void> {
+    for (const collection of STORE_COLLECTIONS) await this.backend.clear(collection);
+    for (const collection of STORE_COLLECTIONS) {
+      const records = exported.collections[collection] ?? {};
+      for (const [key, value] of Object.entries(records)) {
+        await this.backend.set(collection, key, value);
+      }
+    }
+  }
+
+  /** Store a recovery snapshot of the current data (kept out of exports). */
+  async saveBackup(snapshot: StoreExport, label: string): Promise<void> {
+    await this.backend.set(
+      COLLECTION_BACKUPS,
+      label,
+      this.wrap(LOCAL_STORE_SCHEMA_VERSION, snapshot),
+    );
+  }
+
+  /** Load a previously stored recovery snapshot, if any. */
+  async loadBackup(label: string): Promise<StoreExport | undefined> {
+    const raw = await this.backend.get(COLLECTION_BACKUPS, label);
+    return this.unwrap<StoreExport>(raw, LOCAL_STORE_SCHEMA_VERSION);
+  }
+
+  /** List available recovery snapshot labels, newest first when timestamped. */
+  async listBackups(): Promise<string[]> {
+    const records = await this.backend.getAll(COLLECTION_BACKUPS);
+    return records.map((record) => record.key).sort().reverse();
   }
 }

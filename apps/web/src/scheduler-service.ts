@@ -56,7 +56,8 @@ import type {
   TrainingService,
 } from '@chessreps/contracts';
 import { LocalStore, META_ACTIVE_SESSIONS, META_CONTENT_SET, META_PUZZLE_ORDER } from './storage/local-store.ts';
-import type { ContentSetMeta } from './storage/local-store.ts';
+import type { ContentSetMeta, StoreExport, StoreExportSummary } from './storage/local-store.ts';
+import { summarizeExport } from './storage/data-port.ts';
 
 export const DEFAULT_PROGRAM_ID = 'local-spaced-reps-v1';
 export const DEFAULT_COLLECTION_ID = 'lichess-900-1099-v1';
@@ -283,6 +284,44 @@ export class LocalTrainingService implements TrainingService {
     await this.store.deletePuzzle(puzzleId);
     await this.store.saveMeta(META_PUZZLE_ORDER, [...this.puzzleOrder]);
     await this.refreshContentMeta();
+  }
+
+  // --- data safety (PB5) --------------------------------------------------
+
+  /** Full, lossless snapshot of all persisted data (content, progress, history). */
+  async exportStore(): Promise<StoreExport> {
+    return this.store.exportData();
+  }
+
+  async exportStoreSummary(): Promise<StoreExportSummary> {
+    return summarizeExport(await this.store.exportData());
+  }
+
+  /**
+   * Replace the whole store with a validated export. The current data is
+   * snapshotted to the `backups` collection first, so the import is reversible.
+   */
+  async importStore(exported: StoreExport, label: string): Promise<StoreExportSummary> {
+    const current = await this.store.exportData();
+    await this.store.saveBackup(current, label);
+    await this.store.applyExport(exported);
+    await this.init();
+    return summarizeExport(exported);
+  }
+
+  listBackups(): Promise<string[]> {
+    return this.store.listBackups();
+  }
+
+  /** Restore a recovery snapshot; the data being replaced is itself backed up. */
+  async restoreBackup(label: string): Promise<StoreExportSummary | undefined> {
+    const backup = await this.store.loadBackup(label);
+    if (!backup) return undefined;
+    const current = await this.store.exportData();
+    await this.store.saveBackup(current, `pre-restore-${this.clock.now()}`);
+    await this.store.applyExport(backup);
+    await this.init();
+    return summarizeExport(backup);
   }
 
   private async refreshContentMeta(packId?: string): Promise<void> {

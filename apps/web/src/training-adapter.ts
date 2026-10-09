@@ -85,6 +85,21 @@ export class TrainingAdapter {
     return result.puzzle;
   }
 
+  /**
+   * Drop the in-memory attempt reservation and start a fresh session. Used after
+   * the underlying store is replaced (data import/restore) so no stale attempt
+   * or progress key survives (PB5).
+   */
+  async reloadAfterDataChange(
+    programId = DEFAULT_PROGRAM_ID,
+    collectionId: string | undefined = DEFAULT_COLLECTION_ID,
+  ): Promise<void> {
+    this.currentAttemptId = undefined;
+    this.currentProgressKey = undefined;
+    this.currentExpectedRevision = 0;
+    await this.startSession(programId, collectionId);
+  }
+
   async selectNext(): Promise<{ puzzleId: string | null; nextDueAt?: number; reason?: string }> {
     if (!this.currentSessionId) await this.startSession();
     return this.service.selectNext({
