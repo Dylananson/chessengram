@@ -57,3 +57,7 @@ Recovered agent session references for the original research wave:
 Statuses: Not started, In progress, In review, Done, Blocked. Checkbox ticks only after
 coordinator verifies acceptance. Shared interfaces get a single owner and a reviewed version
 before parallel implementation.
+
+## See also
+- [Project plan](../PROJECT_PLAN.md) — source of truth
+- [Backlog](./BACKLOG.md) — tasks to be done later (gaps and deferred items)
