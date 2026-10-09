@@ -176,6 +176,11 @@ export interface SelectNextRequest {
   programId: string;
   /** Collection ID */
   collectionId?: string;
+  /**
+   * Puzzle IDs to exclude from this selection call (e.g. skipped just now).
+   * Applies to this call only; callers may keep a session-scoped skip list.
+   */
+  excludedKeys?: string[];
 }
 
 /**

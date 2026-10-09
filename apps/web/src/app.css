@@ -187,3 +187,82 @@ h1 {
     max-width: none;
   }
 }
+.hidden {
+  display: none;
+}
+.screen {
+  margin-top: 14px;
+}
+.nav {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-top: 12px;
+}
+.nav-item {
+  padding: 8px 14px;
+  font-size: 14px;
+  font-weight: 600;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--panel);
+  color: var(--text);
+  cursor: pointer;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+.nav-item.nav-active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: white;
+}
+.button-row {
+  display: flex;
+  gap: 8px;
+}
+.button-row .button {
+  flex: 1 1 0;
+  width: auto;
+}
+.button-secondary {
+  background: #6c757d;
+}
+.button-secondary:hover:not(:disabled) {
+  background: #545b62;
+}
+.status.revealed {
+  background: #fff3cd;
+  color: #856404;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #1b1b1f;
+    --panel: #232327;
+    --text: #ececf1;
+    --muted: #b0b0b8;
+    --border: rgba(255, 255, 255, 0.1);
+  }
+  .status {
+    background: #303036;
+  }
+  .status.correct {
+    background: #134e23;
+    color: #b8e6c4;
+  }
+  .status.wrong {
+    background: #5a1d22;
+    color: #f3c1c5;
+  }
+  .status.completed {
+    background: #123f4a;
+    color: #bde4ee;
+  }
+  .status.failed-but-solving,
+  .status.revealed {
+    background: #5a4a12;
+    color: #f0e2b4;
+  }
+  .button:disabled {
+    background: #44444a;
+  }
+}

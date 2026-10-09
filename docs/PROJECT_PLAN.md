@@ -1,6 +1,6 @@
 # ChessReps working plan
 
-Status: research and proof-of-concept preparation. Initial audience: personal use.
+Status: product build-out in progress (spike promoted by ADR-005); personal use initially.
 
 ## Goal and delivery sequence
 
@@ -361,7 +361,7 @@ Constraints that must hold across every phase:
 |---|---|---|---|
 | PB0 | Rename `apps/player-spike` → `apps/web`; neutralize "spike" strings; preserve IDs/DB name | T12 | **Done 2026-10-09** |
 | PB1 | Monorepo hygiene: root workspaces, package exports, package imports, drop `fs.allow`, root scripts, CSS extraction | T12 | **Done 2026-10-09** |
-| PB2 | App shell: hash router, screens (Train/Puzzles/Collections/Settings/History); fix solution spoiler; wire Skip; due counts; split `main.ts` | T12 | Not started |
+| PB2 | App shell: hash router, screens (Train/Puzzles/Collections/Settings/History); fix solution spoiler; wire Skip; due counts; split `main.ts` | T12 | **Done 2026-10-09** |
 | PB3 | Puzzles screen: pack library + JSONL upload; puzzle creator (FEN+solution, chessops-validated); Lichess CSV import; PGN import with ambiguity preview | T13 | Not started |
 | PB4 | Settings screen (curated: failure preset, new-per-day, timing on/off, relearning delay) + versioned persisted settings store | T13/T12 | Not started |
 | PB5 | Data safety: full JSON export/import + migration policy + recovery | T14/Q12 | Not started |
@@ -371,6 +371,34 @@ Content-import scope agreed with user (2026-10-09): JSONL file upload first, a s
 creator (FEN + solution), then Lichess puzzle-CSV import (reusing `tools/puzzles` validation
 rules) and PGN import. A pack is content only; scheduling stays per program over the same
 `ProgressKey`. CSV/JSONL/PGN are ingestion formats, not a new content model.
+
+### Build-out handoff — 2026-10-09
+
+**PB2 done.** The spike is now an app shell with a hash router and five screens
+(Train/Puzzles/Collections/Settings/History); `main.ts` is split into `app.ts`, `app-context.ts`,
+`router.ts`, `screens.ts`, `train-view.ts`; a `training-adapter.ts` layer now owns session/resume
+and Skip semantics; the solution spoiler no longer leaks on the initial render.
+
+Verified by coordinator (not just code claims):
+
+- Root `npm test` = **58** (7 contracts + 21 scheduler + 30 web, incl. new `skip.node.test.ts`);
+  `tsc --noEmit` clean in `packages/*`; `npm run build` = 101 KB JS / 32 KB gzip.
+- **New automated browser smoke** (`apps/web/scripts/smoke.mjs`, `npm run smoke` via
+  `puppeteer-core` + system Chromium against `vite preview`): boots with no console errors; all
+  five nav screens mount; queue reports `100 puzzles · 100 new · 100 due now · 0 learned`; a
+  puzzle is selected and the board mounts; the solution is hidden until Reveal; Reveal abandons
+  without scoring ("no score recorded for this attempt"); Skip moves to a different puzzle
+  (`ID: 01q5Z -> ID: 02SDA`) with a fresh attempt; navigating away and back remounts the board.
+- A missing favicon (only boot-time 404) is fixed with a self-contained SVG data URI.
+
+Semantics locked for future phases: **Skip** = session-scoped exclusion
+(`SelectNextRequest.excludedKeys`) + abandon without scoring; **Reveal** = abandon without
+scoring and no exclusion; both release the reservation. The queue summary counts
+new/learned/due per program. Content/IDs/DB name/schema versions were untouched (data
+continuity held).
+
+Next: **PB3** (Puzzles screen) — pack library + JSONL upload + single-puzzle creator first,
+then Lichess puzzle-CSV and PGN import; keep `tools/puzzles` validation rules shared.
 
 ## Sources
 

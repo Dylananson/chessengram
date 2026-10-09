@@ -7,10 +7,12 @@
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview",
-    "test": "node --test --experimental-strip-types tests/*.node.test.ts"
+    "test": "node --test --experimental-strip-types tests/*.node.test.ts",
+    "smoke": "node scripts/smoke.mjs"
   },
   "devDependencies": {
     "fake-indexeddb": "^6.2.2",
+    "puppeteer-core": "^25.13.0",
     "typescript": "~6.0.2",
     "vite": "^8.3.0"
   },

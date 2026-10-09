@@ -104,6 +104,13 @@ export interface LocalTrainingServiceOptions {
   idFactory?: () => string;
 }
 
+export interface QueueSummary {
+  total: number;
+  learned: number;
+  newCount: number;
+  due: number;
+}
+
 export class LocalTrainingService implements TrainingService {
   private readonly scheduler: Scheduler;
   private readonly store: LocalStore;
@@ -487,8 +494,10 @@ export class LocalTrainingService implements TrainingService {
     const candidates: Candidate[] = [];
     const newOrder: string[] = [];
     const seen = new Set<string>();
+    const excluded = new Set(request.excludedKeys ?? []);
 
     for (const puzzleId of this.puzzleOrder) {
+      if (excluded.has(puzzleId)) continue;
       const key = `${programId}:${puzzleId}`;
       seen.add(key);
       const state = this.schedules.get(key)?.schedule ?? this.scheduler.createState().schedule;
@@ -518,6 +527,47 @@ export class LocalTrainingService implements TrainingService {
     }
 
     return { puzzleId: chosen.slice(programId.length + 1) };
+  }
+
+  /**
+   * Abandon the session's current attempt without scoring it (skip). The
+   * schedule is untouched; an `abandon` event is appended to the attempt's
+   * history so the skipped attempt is never lost. The attempt reservation is
+   * released so selection can proceed.
+   */
+  async abandonAttempt(sessionId: string): Promise<void> {
+    const session = this.sessions.get(sessionId);
+    const id = session?.activeAttemptId?.value;
+    const attempt = id ? this.attempts.get(id) : undefined;
+    if (attempt && attempt.outcome === undefined) {
+      attempt.events.push({
+        eventId: this.idFactory(),
+        type: 'abandon',
+        occurredAt: this.clock.now(),
+      });
+      this.attempts.set(attempt.attemptId.value, attempt);
+      await this.store.saveAttempt(attempt);
+    }
+    await this.clearActiveAttempt(sessionId);
+  }
+
+  queueSummary(programId: string): QueueSummary {
+    const now = this.clock.now();
+    const summary: QueueSummary = { total: 0, learned: 0, newCount: 0, due: 0 };
+    for (const puzzleId of this.puzzleOrder) {
+      summary.total += 1;
+      const key = `${programId}:${puzzleId}`;
+      const state = this.schedules.get(key)?.schedule;
+      const kind = state?.state;
+      if (!kind || kind === 'new') {
+        summary.newCount += 1;
+        summary.due += 1;
+        continue;
+      }
+      summary.learned += 1;
+      if (state!.dueAt !== undefined && state!.dueAt <= now) summary.due += 1;
+    }
+    return summary;
   }
 
   async getSession(request: GetSessionRequest): Promise<SessionState> {

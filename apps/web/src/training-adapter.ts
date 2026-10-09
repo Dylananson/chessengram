@@ -41,6 +41,7 @@ export class TrainingAdapter {
   private currentAttemptId?: string;
   private currentProgressKey?: ProgressKey;
   private currentExpectedRevision = 0;
+  private skipList = new Set<string>();
 
   constructor(service: LocalTrainingService) {
     this.service = service;
@@ -73,6 +74,7 @@ export class TrainingAdapter {
   ) {
     this.currentProgramId = programId;
     this.currentCollectionId = collectionId;
+    this.skipList.clear();
     const result = await this.service.startSession({ programId, collectionId });
     this.currentSessionId = result.session.sessionId;
     return result;
@@ -89,6 +91,7 @@ export class TrainingAdapter {
       sessionId: this.currentSessionId!,
       programId: this.currentProgramId,
       collectionId: this.currentCollectionId,
+      excludedKeys: this.skipList.size > 0 ? [...this.skipList] : undefined,
     });
   }
 
@@ -199,6 +202,35 @@ export class TrainingAdapter {
   releaseAttempt(): void {
     this.currentAttemptId = undefined;
     this.currentProgressKey = undefined;
+  }
+
+  /**
+   * Abandon the current attempt through the service: releases the reservation,
+   * appends an `abandon` event, and (optionally) skips this puzzle for the next
+   * selection call so the user moves on rather than immediately re-seeing it.
+   */
+  async abandonCurrentAttempt(opts: { skip?: boolean } = {}): Promise<void> {
+    if (this.currentProgressKey && opts.skip) {
+      this.skipList.add(this.currentProgressKey.puzzleId);
+    }
+    if (this.currentSessionId && this.currentAttemptId) {
+      await this.service.abandonAttempt(this.currentSessionId);
+    }
+    this.releaseAttempt();
+  }
+
+  /** Record a non-move assistance event (hint/reveal) for the current attempt. */
+  async recordAssistance(kind: 'hint' | 'reveal'): Promise<void> {
+    if (!this.currentAttemptId) return;
+    await this.service.recordEvent({
+      attemptId: { value: this.currentAttemptId },
+      event: {
+        eventId: `${this.currentAttemptId}-${kind}-${Math.random().toString(36).slice(2, 8)}`,
+        type: kind,
+        occurredAt: Date.now(),
+        payload: {},
+      },
+    });
   }
 
   describeCurrentAttempt(): { attemptId?: string; progressKey?: ProgressKey } {

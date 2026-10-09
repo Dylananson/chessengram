@@ -28,7 +28,11 @@ overwriting. Prefer pinned upstream revisions.
 - **No silent data loss:** export/import + migration policy (Q12) must land before the first new
   persisted schema (settings). Recorded-record version mismatches must surface, not drop silently.
 - **Verification each phase:** `npm test`, `npm run typecheck`, `npm run build` (from repo root)
-  must pass; user-visible phases also get a device/browser check.
+  must pass; user-visible phases also get a device/browser check. User-visible phases run
+  `npm run smoke` (`apps/web/scripts/smoke.mjs`): `puppeteer-core` + system Chromium against
+  `vite preview`, verifying boot without console errors, all five nav screens, queue counts,
+  board mount, no-solution-spoiler, Reveal and Skip, and screen round-trips. Set `CHROMIUM_PATH`
+  if Chromium is not on PATH.
 - No commits/pushes unless requested by the coordinator/user.
 
 ## Completed research and evidence tasks
