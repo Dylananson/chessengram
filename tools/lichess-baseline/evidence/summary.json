@@ -1,0 +1,116 @@
+{
+  "steps": [
+    {
+      "n": 1,
+      "title": "Puzzles • lichess.dev",
+      "queenOnH5": "white queen @col=7 row=3",
+      "blackKnights": [],
+      "feedback": "Your turnFind the best move for white.Get a hintView the solution"
+    },
+    {
+      "n": 3,
+      "feedbackText": "✗That's not the move!Try something else.Get a hintView the solution",
+      "msgs": [
+        "✗That's not the move!Try something else.",
+        "That's not the move!Try something else."
+      ],
+      "cgWrapClass": "cg-wrap cgv1 orientation-white manipulable",
+      "bodyClass": "coords-in simple-board zenable playing offline"
+    },
+    {
+      "n": 5,
+      "postWinFeedback": "Success!Continue training",
+      "postWinBody": "coords-in simple-board zenable playing offline",
+      "afterAdvance": "Success!Continue training",
+      "session": "",
+      "completePosts": [
+        {
+          "url": "http://localhost:9663/training/complete/mix/abcde",
+          "postData": "------WebKitFormBoundarybewFXDhZf8RG6Um2\r\nContent-Disposition: form-data; name=\"win\"\r\n\r\nfalse\r\n------WebKitFormBoundarybewFXDhZf8RG6Um2\r\nContent-Disposition: form-data; name=\"rated\"\r\n\r\ntrue\r\n------WebKitFormBoundarybewFXDhZf8RG6Um2--\r\n",
+          "encoded": "multipart/form-data; boundary=----WebKitFormBoundarybewFXDhZf8RG6Um2"
+        },
+        {
+          "url": "http://localhost:9663/training/complete/mix/abcde",
+          "postData": "------WebKitFormBoundaryCbnKQsB3O4AfCdTq\r\nContent-Disposition: form-data; name=\"win\"\r\n\r\ntrue\r\n------WebKitFormBoundaryCbnKQsB3O4AfCdTq\r\nContent-Disposition: form-data; name=\"rated\"\r\n\r\ntrue\r\n------WebKitFormBoundaryCbnKQsB3O4AfCdTq--\r\n",
+          "encoded": "multipart/form-data; boundary=----WebKitFormBoundaryCbnKQsB3O4AfCdTq"
+        }
+      ]
+    },
+    {
+      "n": 6,
+      "winFeedback": "Success!Continue training",
+      "clickedButton": "Continue training",
+      "afterAdvance": "Your turnFind the best move for white.Get a hintView the solution",
+      "afterAdvanceBody": "coords-in simple-board zenable playing offline",
+      "completeResponses": [
+        {
+          "url": "http://localhost:9663/training/complete/mix/abcde",
+          "status": 200,
+          "body": "{\"next\":{\"game\":{\"id\":\"aUSQLTrH\",\"perf\":{\"key\":\"correspondence\",\"name\":\"Correspondence\"},\"rated\":false,\"players\":[{\"name\":\"ghost\",\"id\":\"ghost\",\"color\":\"white\"},{\"name\":\"ghost\",\"id\":\"ghost\",\"color\":\"black\"}],\"pgn\":\"e4 e5 Qh5 Nc6 Bc4 Nf6\"},\"puzzle\":{\"id\":\"abcde\",\"rating\":1500,\"plays\":107,\"solution\":[\"h5f7\"],\"themes\":[],\"initialPly\":5},\"angle\":{\"key\":\"mix\",\"name\":\"Puzzle Themes\",\"desc\":\"A mix of everything. You don't know what to expect, so be ready for anything! Just like in real games.\"}}}"
+        }
+      ],
+      "completePostsTotal": [
+        {
+          "url": "http://localhost:9663/training/complete/mix/abcde",
+          "postData": "------WebKitFormBoundarybewFXDhZf8RG6Um2\r\nContent-Disposition: form-data; name=\"win\"\r\n\r\nfalse\r\n------WebKitFormBoundarybewFXDhZf8RG6Um2\r\nContent-Disposition: form-data; name=\"rated\"\r\n\r\ntrue\r\n------WebKitFormBoundarybewFXDhZf8RG6Um2--\r\n",
+          "encoded": "multipart/form-data; boundary=----WebKitFormBoundarybewFXDhZf8RG6Um2"
+        },
+        {
+          "url": "http://localhost:9663/training/complete/mix/abcde",
+          "postData": "------WebKitFormBoundaryCbnKQsB3O4AfCdTq\r\nContent-Disposition: form-data; name=\"win\"\r\n\r\ntrue\r\n------WebKitFormBoundaryCbnKQsB3O4AfCdTq\r\nContent-Disposition: form-data; name=\"rated\"\r\n\r\ntrue\r\n------WebKitFormBoundaryCbnKQsB3O4AfCdTq--\r\n",
+          "encoded": "multipart/form-data; boundary=----WebKitFormBoundaryCbnKQsB3O4AfCdTq"
+        }
+      ]
+    }
+  ],
+  "completePosts": [
+    {
+      "url": "http://localhost:9663/training/complete/mix/abcde",
+      "postData": "------WebKitFormBoundarybewFXDhZf8RG6Um2\r\nContent-Disposition: form-data; name=\"win\"\r\n\r\nfalse\r\n------WebKitFormBoundarybewFXDhZf8RG6Um2\r\nContent-Disposition: form-data; name=\"rated\"\r\n\r\ntrue\r\n------WebKitFormBoundarybewFXDhZf8RG6Um2--\r\n",
+      "encoded": "multipart/form-data; boundary=----WebKitFormBoundarybewFXDhZf8RG6Um2"
+    },
+    {
+      "url": "http://localhost:9663/training/complete/mix/abcde",
+      "postData": "------WebKitFormBoundaryCbnKQsB3O4AfCdTq\r\nContent-Disposition: form-data; name=\"win\"\r\n\r\ntrue\r\n------WebKitFormBoundaryCbnKQsB3O4AfCdTq\r\nContent-Disposition: form-data; name=\"rated\"\r\n\r\ntrue\r\n------WebKitFormBoundaryCbnKQsB3O4AfCdTq--\r\n",
+      "encoded": "multipart/form-data; boundary=----WebKitFormBoundaryCbnKQsB3O4AfCdTq"
+    }
+  ],
+  "console": [
+    "[info] Lichess is open source! See https://lichess.org/source",
+    "[error] WebSocket connection to 'ws://localhost:9664/socket/v5?sri=zEg8EcSZ8_Hq&from=website' failed: Error in connection establishment: net::ERR_CONNECTION_REFUSED",
+    "[debug] error: [object Event] {\"isTrusted\":true}",
+    "[debug] Will autoreconnect in 3500",
+    "[debug] Disconnect",
+    "[debug] connection attempt to ws://localhost:9664/socket/v5?sri=zEg8EcSZ8_Hq&from=website",
+    "[error] WebSocket connection to 'ws://localhost:9664/socket/v5?sri=zEg8EcSZ8_Hq&from=website' failed: Error in connection establishment: net::ERR_CONNECTION_REFUSED",
+    "[debug] error: [object Event] {\"isTrusted\":true}",
+    "[debug] Will autoreconnect in 3500",
+    "[debug] Disconnect",
+    "[debug] connection attempt to ws://localhost:9664/socket/v5?sri=zEg8EcSZ8_Hq&from=website",
+    "[error] WebSocket connection to 'ws://localhost:9664/socket/v5?sri=zEg8EcSZ8_Hq&from=website' failed: Error in connection establishment: net::ERR_CONNECTION_REFUSED",
+    "[debug] error: [object Event] {\"isTrusted\":true}",
+    "[debug] Will autoreconnect in 3500",
+    "[info] Lichess is open source! See https://lichess.org/source",
+    "[error] WebSocket connection to 'ws://localhost:9664/socket/v5?sri=1OrSQ3r3R_XD&from=website' failed: Error in connection establishment: net::ERR_CONNECTION_REFUSED",
+    "[debug] error: [object Event] {\"isTrusted\":true}",
+    "[debug] Will autoreconnect in 3500",
+    "[debug] Disconnect",
+    "[debug] connection attempt to ws://localhost:9664/socket/v5?sri=1OrSQ3r3R_XD&from=website",
+    "[error] WebSocket connection to 'ws://localhost:9664/socket/v5?sri=1OrSQ3r3R_XD&from=website' failed: Error in connection establishment: net::ERR_CONNECTION_REFUSED",
+    "[debug] error: [object Event] {\"isTrusted\":true}",
+    "[debug] Will autoreconnect in 3500",
+    "[debug] Disconnect",
+    "[debug] connection attempt to ws://localhost:9664/socket/v5?sri=1OrSQ3r3R_XD&from=website",
+    "[error] WebSocket connection to 'ws://localhost:9664/socket/v5?sri=1OrSQ3r3R_XD&from=website' failed: Error in connection establishment: net::ERR_CONNECTION_REFUSED",
+    "[debug] error: [object Event] {\"isTrusted\":true}",
+    "[debug] Will autoreconnect in 3500"
+  ],
+  "errors": [],
+  "completeResponses": [
+    {
+      "url": "http://localhost:9663/training/complete/mix/abcde",
+      "status": 200,
+      "body": "{\"next\":{\"game\":{\"id\":\"aUSQLTrH\",\"perf\":{\"key\":\"correspondence\",\"name\":\"Correspondence\"},\"rated\":false,\"players\":[{\"name\":\"ghost\",\"id\":\"ghost\",\"color\":\"white\"},{\"name\":\"ghost\",\"id\":\"ghost\",\"color\":\"black\"}],\"pgn\":\"e4 e5 Qh5 Nc6 Bc4 Nf6\"},\"puzzle\":{\"id\":\"abcde\",\"rating\":1500,\"plays\":107,\"solution\":[\"h5f7\"],\"themes\":[],\"initialPly\":5},\"angle\":{\"key\":\"mix\",\"name\":\"Puzzle Themes\",\"desc\":\"A mix of everything. You don't know what to expect, so be ready for anything! Just like in real games.\"}}}"
+    }
+  ]
+}
