@@ -22,18 +22,24 @@ A phone/desktop chess trainer with curated exercise collections and interchangea
 | D10 | Source rated starter puzzles from existing databases, initially Lichess, including around rating 1000. Support PGN import as well. |
 | D11 | Prefer substantial Lichess code reuse. Investigate a full fork and adapting/extracting its puzzle player fairly. |
 | D12 | Investigate common interfaces with online and bundled local implementations. Prove the local boundary before broad feature expansion. |
+| D13 | Do not fork Lila. Reuse Lichess libraries (chessground, chessops) and content, and own the training service with a local adapter now and a remote adapter later. Resolves Q01 (see ADR-005). |
 
-## Architectural direction versus unresolved choices
+## Architectural direction (decided 2026-10-09)
 
-Agreed direction: inspect a Lila-based online POC, introduce a training-service boundary, then test a minimal local adapter. No final fork/extraction choice has been made.
+**Decided: no Lila fork — extract and reuse (ADR-005).** Build a focused app that reuses
+Lichess libraries (`chessground`, `chessops`) and CC0 content, and owns the training-service
+boundary with a local adapter now and a remote adapter later. The requirement for
+online **and** offline operation is the deciding factor: a fork is server-authoritative and
+makes offline a second app, while the extracted path is offline-first and gains online via a
+drop-in remote adapter. The table below records why the rejected candidates lost.
 
-| Candidate | Benefit | Cost / uncertainty |
+| Candidate | Benefit | Why rejected |
 |---|---|---|
-| Full Lila fork | Preserve existing puzzle UI, services, preferences, and analysis | Operate server stack; introduce offline path; upstream merge maintenance |
-| Extract/adapt puzzle player | Substantial reuse in focused offline app | Untangle application services, views, styles, bootstrap |
-| Focused player using Lichess libraries | Simpler local-first boundaries | More interaction and validation to implement |
-| Lichess Flutter app fork | Native foundation | Separate stack; desktop/web suitability needs investigation |
-| Service-worker HTTP interception | Preserve existing request sites | Lifecycle complexity; does not solve server bootstrap alone |
+| Full Lila fork | Preserve puzzle UI, services, analysis | Server stack (Mongo/Redis/sbt); no clean offline path; "online" is just self-hosted Lichess; merge maintenance |
+| Extract/adapt puzzle player | Substantial reuse in focused offline app | Accepted as the direction, realized as library reuse rather than copying Lila's server-coupled controller |
+| Focused player using Lichess libraries | Simpler local-first boundaries | **Chosen approach** |
+| Lichess Flutter app fork | Native foundation | Separate stack; same server-authority problem |
+| Service-worker HTTP interception | Preserve existing request sites | Lifecycle complexity; does not solve server bootstrap |
 
 Proposed, not confirmed: installable web app, browser database, interval ladder, short relearning step, about 100 puzzles per rating pack, client-side TypeScript scheduling, explicit Next button, illegal drops not counted as failed solution moves. Research must distinguish defaults from user decisions.
 
@@ -82,7 +88,7 @@ Preserve IDs and dated ratings; validate every position/solution; respect Liches
 
 | ID | Issue | Resolution gate |
 |---|---|---|
-| Q01 | Full fork or extracted frontend? | G1 after online/local spikes |
+| Q01 | Full fork or extracted frontend? | **Resolved 2026-10-09 → extract/reuse, no fork (ADR-005)** |
 | Q02 | Authoritative scheduling location online? | T04 |
 | Q03 | Preserve which Lichess response contracts? | T01/T04 |
 | Q04 | Interval ladder and bounded timing formula? | T03/T06 |
@@ -106,8 +112,7 @@ flowchart TD
  T03 --> T04
  T01 --> T05["T05 Runnable Lila baseline"]
  T04 --> T06["T06 Scheduler and attempt core"]
- T04 --> T07["T07 Online adapter"]
- T05 --> T07
+ T04 --> T07["T07 Remote adapter"]
  T02 --> T07
  T04 --> T08["T08 Player integration"]
  T05 --> T08
@@ -118,7 +123,7 @@ flowchart TD
  T02 --> T10
  T09 --> T11["T11 Offline vertical slice"]
  T10 --> T11
- T11 --> G1{"G1 Architecture decision"}
+ T11 --> G1{"G1 Architecture decision (resolved: extract)"}
  G1 --> T12["T12 Harden app structure"]
  T12 --> T13["T13 Collections and PGN"]
  T12 --> T14["T14 Backup and resume"]
@@ -143,12 +148,12 @@ Checkbox means acceptance verified, not merely code written. Status: Not started
 - [x] **T04 — Contracts and schemas.** Status: Done for architecture-neutral contracts. `packages/contracts/` defines the UI↔training-service boundary, attempt identity, idempotent outcome commits, immutable scored failure, correction separation, and versioned content/progress schemas. Reference in-memory test double + 7 passing contract tests; fixtures use real pack entries. Coordinator reran tests (`node --test --experimental-strip-types`) and typecheck (`tsc --noEmit`), both clean. Q02/Q09 recorded as **Proposed** ADRs ([ADR-001](decisions/ADR-001-training-service-boundary.md), [ADR-002](decisions/ADR-002-progress-scope-and-authority.md)), not accepted. Q03 remains open. See [contracts design](research/contracts-design.md). Real scheduler is T06.
 - [x] **T05 — Runnable Lila baseline.** Status: Done (measured reference). The unchanged Lila at pinned SHA `f5b261e3d8ece6f511484e398cb8d81e37735bea` was compiled (Scala 3.8.4, sbt 2.0.10, 169 s), run on :9663 (native mongod 7.0.14 + redis 7.2.5, since Docker was inaccessible), seeded with one puzzle + source game, and the real puzzle page driven headlessly: wrong move → failure feedback → continued solving → `win=true` → continue → next round. Evidence in `tools/lichess-baseline/evidence/`. All servers stopped; no system-wide installs. See [baseline report](research/lichess-baseline.md).
 - [x] **T06 — Scheduler/attempt core.** Status: Done. `packages/scheduler/` implements the T03 model as a pure, clock-injectable projection on `ScheduleStateDetails`: New/Learning/Review/Relearning, an 8-rung ladder, `retry-reset`/`retry-retain`/`step-back` failure presets, bounded isolated timing (±10%, capped), idempotent commits and stale-revision rejection. All **21 T03 acceptance scenarios** pass as named tests; typecheck clean (coordinator reran). Defaults recorded as **Proposed** [ADR-003](decisions/ADR-003-scheduler-defaults.md). See [scheduler implementation](research/scheduler-implementation.md). Numeric defaults remain unvalidated proposals.
-- [ ] **T07 — Online adapter.** Depends T02/T04/T05. API/session/attempt persistence. Acceptance: session start, recording, selection and resume meet contracts.
+- [ ] **T07 — Remote adapter (online mode).** Depends T02/T04 (Lila itself no longer a dependency per ADR-005). Implement the T04 `TrainingService` against a thin API of our own, for eventual online/sync. Acceptance: session start, recording, selection and resume meet contracts; offline→online reconciliation uses idempotency keys and revision guards. Does not depend on Lila web-internal endpoints as durable storage.
 - [x] **T08 — Player integration.** Status: Done (extracted-library path). `apps/player-spike/` is a runnable Vite app using Lichess' own `chessground` + `chessops` (not the Lichess controller): starts from `solverFen` (+ optional setup animation), enforces failure-and-continue (wrong move commits one immutable scored failure without advancing), supports correction and explicit Next, pawn promotion with a role picker, active/correction timing with hidden-time exclusion, responsive/touch layout and a tiny i18n layer, and reports attempts through the T04 `TrainingService` now backed by the real T06 scheduler. 26 tests pass; build succeeds. See [player spike](research/player-spike.md). Preserving the Lichess *controller* itself was deliberately not done (extraction path).
 - [ ] **T09 — Online POC integration.** Depends T06/T07/T08. Acceptance: actual rated collection trained, corrected, scheduled and resumed through UI.
 - [x] **T10 — Local persistence adapter.** Status: Done. `apps/player-spike/src/storage/` provides a storage seam (IndexedDB + in-memory fallback) with versioned envelopes; content, per-program scheduler state, raw attempt history and sessions persist separately. A reload restores content, order, schedules and an open attempt (replays logged moves; a scored failure resumes as correction). `?reset=1` clears state. Coordinator reran 26 tests including IndexedDB (fake-indexeddb) + reload round-trip; build succeeds. See [local persistence](research/local-persistence.md) and [ADR-004](decisions/ADR-004-local-storage-and-selection.md) (Proposed).
 - [ ] **T11 — Offline vertical slice.** Status: **Partial**. The local player now runs entirely from bundled pack content with no server and persists across reload (schedules, history, open attempt), and the app shell is a static Vite bundle. Acceptance not yet *verified* end-to-end in a real browser/phone: disable network, reload, solve multiple puzzles, record failure, resume; record hidden dependencies and real-device results. The reload/selection/resume logic is covered by headless tests, but this needs a manual device pass.
-- [ ] **G1 — Architecture decision.** Depends T11. Compare observed costs and behavior; record chosen structure, rejected alternatives, rationale. Not predetermined.
+- [x] **G1 — Architecture decision.** Resolved early (2026-10-09) by user decision: **extract/reuse, no Lila fork**. Rationale, rejected alternatives and measured evidence in [ADR-005](decisions/ADR-005-architecture-extraction-not-fork.md); Q01 closed. T11 remains an offline *verification* task, not a decision gate. T12 still depends on this decision and is now unblocked architecturally.
 - [ ] **T12 — Harden app structure.** Depends G1. Reproducible build, boundaries, attribution and deployment.
 - [ ] **T13 — Collection UI/PGN import.** Depends T12. Create collections, preview/import supported PGNs, report ambiguity, preserve original content. Never silently accept explanatory mistake branches.
 - [ ] **T14 — Backup/restore/recovery.** Depends T12. Content/progress round-trip; resume interruptions without losing failure or duplicating results; versioned format.
@@ -160,7 +165,7 @@ Checkbox means acceptance verified, not merely code written. Status: Not started
 - Wave 1: T01 audit, T02 content, T03 scheduling design.
 - Wave 2: T04 contracts and T05 baseline.
 - Wave 3 after contract stabilization: T06 core, T07 online, T08 player, T10 local.
-- Integration gates: T09, T11, G1; do not skip offline proof.
+- Integration gates: T09, T11 (G1 resolved 2026-10-09, ADR-005); do not skip offline proof.
 - Completion wave: T13, T14, T15 after T12, with shared UI files coordinated.
 
 No concurrent edits to shared contracts or the master plan. Integration owner manages both. Agents may edit only assigned paths, report needed cross-boundary changes, and provide evidence with handoffs. No commits/pushes unless requested. Do not delete others' work. Research may recommend decisions but must not silently turn proposals into user-approved requirements.
@@ -305,6 +310,35 @@ Recommended next:
 - **T09-lite → T09:** wire the same contracts to an online adapter (T07) or add feedback/UX polish.
 - **G1 decision:** once T11 is verified, record the fork-vs-extraction architecture decision with the
   Wave 4 evidence.
+
+## Architecture decision — 2026-10-09
+
+**Decision (user): no Lila fork — continue from the extraction path.** Recorded as
+[ADR-005](decisions/ADR-005-architecture-extraction-not-fork.md) (Accepted). This resolves
+**Q01** and **G1** ahead of the T11 manual pass.
+
+Rationale:
+
+1. **Online + offline is a hard requirement**, and it is the deciding factor. A Lila fork is
+   server-authoritative (Mongo/Redis/websocket) and would make offline a second app inside the
+   fork, while its "online" mode is essentially self-hosted Lichess. The extracted path is
+   offline-first and gains online later via a drop-in remote adapter over the T04 contract.
+2. **Both paths are now measured.** T05 baseline (heavy, no durable attempt state) vs. the
+   spike (no server, static bundle, 26 tests green, scheduler + IndexedDB persistence).
+3. **Reuse is kept where it is safe.** Lichess's `chessground`/`chessops` libraries and CC0
+   content are reused; Lichess's server-coupled controller and web-internal endpoints are not.
+
+Consequences reflected on the board:
+
+- **G1 → Done.** **T12** is architecturally unblocked (still depends on finishing T11's
+  verification for release readiness).
+- **T07 re-scoped** as a *remote adapter* to our own thin API over the T04 contract; Lila is no
+  longer a dependency and its HTTP is not used as durable scheduling storage.
+- **T11 remains** an offline *verification* task (real browser/phone pass), not a decision gate.
+- Licensing: reused libraries are GPL; fine for personal use, revisit before public distribution (Q11).
+
+Still open/unconfirmed: Q02/Q03/Q12 (Q04/Q05/Q06/Q07 now covered by ADR-003 defaults, Proposed);
+ADR-001/002/003/004 remain Proposed implementation defaults, not architecture blockers.
 
 ## Sources
 
