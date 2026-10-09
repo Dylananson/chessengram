@@ -1,208 +1,370 @@
+import 'chessground/assets/chessground.base.css';
+import 'chessground/assets/chessground.brown.css';
+import 'chessground/assets/chessground.cburnett.css';
+
 import { Chessground } from 'chessground';
 import type { Api } from 'chessground/api';
-import { parseUci } from 'chessops/util';
-import type { NormalizedPuzzle } from './types.js';
-import { gradeMove, createInitialGradingState, type GradingState } from './grading.js';
-import { TrainingAdapter } from './training-adapter.js';
+import type { Dests, Key } from 'chessground/types';
+import type { SquareName } from 'chessops/types';
+
+import { PuzzleGame, type PromotionRole } from './puzzle-game.ts';
+import { AttemptTimer } from './timing.ts';
+import { applyTranslations, detectLocale, setLocale, t } from './i18n.ts';
+import {
+  DEFAULT_COLLECTION_ID,
+  DEFAULT_PROGRAM_ID,
+  LocalTrainingService,
+  type LocalTrainingServiceOptions,
+} from './scheduler-service.ts';
+import { TrainingAdapter } from './training-adapter.ts';
+import { LocalStore } from './storage/local-store.ts';
+import { IndexedDbStorageBackend } from './storage/indexeddb-backend.ts';
+import { InMemoryStorageBackend } from './storage/memory-backend.ts';
+import type { StorageBackend } from './storage/backend.ts';
+import { loadPuzzlesFromPack } from './pack-loader.ts';
+import type { AttemptRecord, NormalizedPuzzle } from '../../../packages/contracts/src/types.ts';
+
+const START_FEN = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
 
 let ground: Api;
-let puzzle: NormalizedPuzzle | null = null;
-let gradingState: GradingState = createInitialGradingState();
-let trainingAdapter: TrainingAdapter;
-let setupPlayed = false;
-let puzzleIndex = 0;
-let cachedPuzzles: NormalizedPuzzle[] = [];
-let attemptStartedAt = 0;
+let service: LocalTrainingService;
+let adapter: TrainingAdapter;
+let game: PuzzleGame | null = null;
+let timer = new AttemptTimer();
 let scoredCommitted = false;
+let pendingPromotion: { from: Key; to: Key } | null = null;
 
-async function init() {
-  const boardEl = document.getElementById('board')!;
-  ground = Chessground(boardEl, {
-    fen: 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1',
-    orientation: 'white',
-    coordinates: true,
+function $<T extends HTMLElement>(id: string): T {
+  return document.getElementById(id) as T;
+}
+
+// --- screen state ---------------------------------------------------------
+
+function renderPosition(opts: { fen?: string; lastMove?: Key[]; interactive?: boolean } = {}): void {
+  if (!game) return;
+  const interactive = opts.interactive ?? game.solverTurn;
+  ground.set({
+    fen: opts.fen ?? game.fen,
+    orientation: game.orientation,
+    turnColor: game.turn,
+    lastMove: opts.lastMove,
     movable: {
       free: false,
-      color: 'both',
+      color: interactive ? game.orientation : undefined,
+      dests: (interactive ? game.legalDests() : new Map()) as Dests,
       showDests: true,
+      events: { after: onUserMove },
     },
+    draggable: { enabled: true, showGhost: true },
+    selectable: { enabled: true },
   });
-
-  trainingAdapter = new TrainingAdapter();
-  await trainingAdapter.startSession();
-
-  const nextBtn = document.getElementById('next-btn') as HTMLButtonElement;
-  nextBtn.addEventListener('click', loadNextPuzzle);
-
-  await loadNextPuzzle();
 }
 
-async function loadNextPuzzle() {
-  if (cachedPuzzles.length === 0) {
-    cachedPuzzles = await loadPuzzlesFromPublic();
-  }
-  puzzle = cachedPuzzles[puzzleIndex % cachedPuzzles.length];
-  puzzleIndex++;
-
-  await trainingAdapter.startAttempt(puzzle);
-
-  gradingState = createInitialGradingState();
-  setupPlayed = false;
-  scoredCommitted = false;
-  attemptStartedAt = Date.now();
-
-  document.getElementById('puzzle-id')!.textContent = `ID: ${puzzle.id}`;
-  document.getElementById('rating')!.textContent = `Rating: ${puzzle.rating}`;
-  document.getElementById('themes')!.textContent = `Themes: ${puzzle.themes.slice(0, 4).join(', ')}`;
-  document.getElementById('solver-color')!.textContent = `Solver: ${puzzle.solverColor}`;
-  document.getElementById('solution')!.textContent = puzzle.solution.join(' ');
-  updateStatus('Playing setup...');
-
-  setupBoardAndInitialize();
+function setStatus(key: string, className?: string, params?: Record<string, string | number>): void {
+  const el = $('status');
+  el.textContent = t(key, params);
+  el.className = 'status';
+  if (className) el.classList.add(className);
+  if (game?.failedState && !game.isCompleted) el.classList.add('failed-but-solving');
 }
 
-async function loadPuzzlesFromPublic(): Promise<NormalizedPuzzle[]> {
-  const response = await fetch('/data/puzzles/lichess-900-1099-v1/pack.jsonl');
-  const text = await response.text();
-  const lines = text.trim().split('\n');
-  const puzzles: NormalizedPuzzle[] = [];
-  for (let i = 0; i < Math.min(10, lines.length); i++) {
-    try {
-      puzzles.push(JSON.parse(lines[i]));
-    } catch (e) {
-      console.warn(e);
-    }
-  }
-  return puzzles;
+function updatePuzzleInfo(p: NormalizedPuzzle): void {
+  $('puzzle-id').textContent = `${t('puzzle.id')}: ${p.id}`;
+  $('rating').textContent = `${t('puzzle.rating')}: ${p.rating}`;
+  $('themes').textContent = `${t('puzzle.themes')}: ${p.themes.slice(0, 4).join(', ') || t('puzzle.none')}`;
+  $('solver-color').textContent = `${t('puzzle.solver')}: ${t(`color.${p.solverColor}`)}`;
+  $('solution').textContent = p.solution.join(' ');
 }
 
-function setupBoardAndInitialize() {
-  if (!puzzle) return;
-
-  if (puzzle.setupMove && !setupPlayed) {
-    setupPlayed = true;
-    ground.set({ fen: puzzle.sourceFen });
-    const setupUci = puzzle.setupMove;
-    const moveObj = parseUci(setupUci);
-    if (moveObj && 'from' in moveObj && 'to' in moveObj) {
-      (ground as any).move(moveObj.from, moveObj.to);
-      setTimeout(() => {
-        ground.set({
-          fen: puzzle!.solverFen,
-          orientation: puzzle!.solverColor === 'white' ? 'white' : 'black',
-          movable: {
-            free: false,
-            color: puzzle!.solverColor === 'white' ? 'white' : 'black',
-            showDests: true,
-          },
-        });
-        updateStatus(`Your turn (${puzzle!.solverColor}) - solve the puzzle`);
-        (ground as any).set({ events: { move: onUserMove } });
-      }, 500);
-    } else {
-      ground.set({
-        fen: puzzle.solverFen,
-        orientation: puzzle.solverColor === 'white' ? 'white' : 'black',
-        movable: {
-          free: false,
-          color: puzzle.solverColor === 'white' ? 'white' : 'black',
-          showDests: true,
-        },
-      });
-      updateStatus(`Your turn (${puzzle.solverColor})`);
-      (ground as any).set({ events: { move: onUserMove } });
-    }
-  } else {
-    ground.set({
-      fen: puzzle.solverFen,
-      orientation: puzzle.solverColor === 'white' ? 'white' : 'black',
-      movable: {
-        free: false,
-        color: puzzle.solverColor === 'white' ? 'white' : 'black',
-        showDests: true,
-      },
-    });
-    updateStatus(`Your turn (${puzzle.solverColor})`);
-    (ground as any).set({ events: { move: onUserMove } });
-  }
+function updateProgressInfo(): void {
+  $('progress').textContent = t('progress.summary', {
+    attempts: service.getAttemptCount(),
+    total: service.listPuzzleIds().length,
+  });
+  $('storage').textContent = t('progress.storage', {
+    backend: t(service.getBackendKind() === 'indexeddb' ? 'storage.indexeddb' : 'storage.memory'),
+  });
 }
 
-function elapsedSeconds(): number {
-  return Math.max(0, Math.round((Date.now() - attemptStartedAt) / 1000));
-}
+// --- move handling --------------------------------------------------------
 
-async function onUserMove(from: any, to: any, promotion?: any) {
-  if (!puzzle) return;
-
-  const uci = from + to + (promotion || '');
-  await trainingAdapter.recordMove(uci);
-
-  const wasFailed = gradingState.failed;
-  const result = gradeMove(puzzle, gradingState, uci);
-  gradingState = result.state;
-
-  if (result.verdict === 'wrong') {
-    await trainingAdapter.recordWrongMove(uci);
-    if (!wasFailed && !scoredCommitted) {
-      scoredCommitted = true;
-      await trainingAdapter.commitFailure(puzzle, elapsedSeconds());
-    }
-    updateStatus('Wrong move - but keep solving the same puzzle', 'wrong');
-    (ground as any).undo();
+async function onUserMove(orig: Key, dest: Key): Promise<void> {
+  if (!game) return;
+  if (game.requiresPromotion(orig as SquareName, dest as SquareName)) {
+    pendingPromotion = { from: orig, to: dest };
+    renderPosition();
+    showPromotion(game.orientation);
     return;
-  } else if (result.verdict === 'correct') {
-    if (gradingState.completed) {
+  }
+  await resolveUserMove(orig as SquareName, dest as SquareName);
+}
+
+async function resolveUserMove(
+  from: SquareName,
+  to: SquareName,
+  promotion?: PromotionRole,
+): Promise<void> {
+  if (!game) return;
+  const result = game.playUserMove(from, to, promotion);
+
+  if (result.kind === 'illegal' || result.kind === 'ignored' || result.kind === 'needs-promotion') {
+    renderPosition();
+    return;
+  }
+
+  if (result.kind === 'wrong') {
+    await adapter.recordWrongMove(result.uci);
+    if (!scoredCommitted) {
+      scoredCommitted = true;
+      timer.markFailure();
+      await adapter.commitFailure(timer.snapshot());
+    }
+    setStatus('status.wrong', 'wrong');
+    renderPosition();
+    return;
+  }
+
+  await adapter.recordMove(result.uci, true);
+  renderPosition({ fen: result.fenAfterSolver, lastMove: [from as Key, to as Key], interactive: false });
+
+  const settle = async (): Promise<void> => {
+    if (result.completed) {
       await completePuzzle();
     } else {
-      updateStatus('Correct! Keep going...', 'correct');
-      playOpponentMove();
+      setStatus('status.correct', 'correct');
+      renderPosition();
+    }
+  };
+
+  if (result.fenAfterOpponent) {
+    window.setTimeout(() => {
+      void settle();
+    }, 260);
+  } else {
+    await settle();
+  }
+}
+
+async function completePuzzle(): Promise<void> {
+  if (!game) return;
+  if (game.failedState) {
+    await adapter.finishCorrection(timer.snapshot());
+    setStatus('status.correctionComplete', 'completed');
+  } else {
+    if (!scoredCommitted) {
+      scoredCommitted = true;
+      await adapter.commitSuccess(timer.snapshot());
+    }
+    setStatus('status.completed', 'completed');
+  }
+  renderPosition({ interactive: false });
+  $<HTMLButtonElement>('next-btn').disabled = false;
+  updateProgressInfo();
+}
+
+// --- promotion overlay ----------------------------------------------------
+
+const PROMOTION_GLYPHS: Record<'white' | 'black', Record<PromotionRole, string>> = {
+  white: { q: '♕', r: '♖', b: '♗', n: '♘' },
+  black: { q: '♛', r: '♜', b: '♝', n: '♞' },
+};
+
+function showPromotion(color: 'white' | 'black'): void {
+  const overlay = $('promotion');
+  overlay.querySelectorAll<HTMLButtonElement>('[data-promotion]').forEach((btn) => {
+    const role = btn.getAttribute('data-promotion') as PromotionRole;
+    btn.textContent = PROMOTION_GLYPHS[color][role];
+    btn.setAttribute('aria-label', t(`promotion.${roleName(role)}`));
+  });
+  overlay.classList.remove('hidden');
+}
+
+function roleName(role: PromotionRole): string {
+  return role === 'q' ? 'queen' : role === 'r' ? 'rook' : role === 'b' ? 'bishop' : 'knight';
+}
+
+function hidePromotion(): void {
+  $('promotion').classList.add('hidden');
+}
+
+function onPromotionChoice(role: PromotionRole): void {
+  const pending = pendingPromotion;
+  pendingPromotion = null;
+  hidePromotion();
+  if (!pending) {
+    renderPosition();
+    return;
+  }
+  void resolveUserMove(pending.from as SquareName, pending.to as SquareName, role);
+}
+
+// --- attempt lifecycle ----------------------------------------------------
+
+async function beginAttempt(p: NormalizedPuzzle): Promise<void> {
+  game = new PuzzleGame(p);
+  timer = new AttemptTimer();
+  scoredCommitted = false;
+  pendingPromotion = null;
+  hidePromotion();
+
+  await adapter.startAttempt(p);
+  timer.start();
+
+  $<HTMLButtonElement>('next-btn').disabled = true;
+  updatePuzzleInfo(p);
+  setStatus('status.yourTurn', undefined, { color: t(`color.${p.solverColor}`) });
+  renderPosition();
+  updateProgressInfo();
+}
+
+async function loadNext(): Promise<void> {
+  if (!game?.isCompleted) return;
+  $<HTMLButtonElement>('next-btn').disabled = true;
+  const selection = await adapter.selectNext();
+  if (!selection.puzzleId) {
+    const when = selection.nextDueAt
+      ? new Date(selection.nextDueAt).toLocaleString()
+      : t('puzzle.none');
+    setStatus('status.noDue', undefined, { when });
+    $<HTMLButtonElement>('next-btn').disabled = false;
+    return;
+  }
+  await beginAttempt(await adapter.loadPuzzle(selection.puzzleId));
+}
+
+/** Rebuild the current attempt after a reload, if one is still open. */
+async function resumeIfPossible(): Promise<boolean> {
+  const sessionId = adapter.getSessionId();
+  if (!sessionId) return false;
+  const attempt: AttemptRecord | undefined = service.getActiveAttempt(sessionId);
+  if (!attempt) return false;
+
+  try {
+    const p = await adapter.loadPuzzle(attempt.progressKey.puzzleId);
+    game = new PuzzleGame(p);
+
+    const correctUcis = attempt.events
+      .filter((event) => event.type === 'move' && event.payload?.correct === true)
+      .map((event) => String(event.payload?.uci ?? event.payload?.move ?? ''))
+      .filter((uci) => uci.length > 0);
+    game.replaySolverMoves(correctUcis);
+
+    const failed = attempt.outcome === 'failure';
+    if (failed) {
+      game.markFailed();
+      scoredCommitted = true;
+      timer.markFailure();
+    }
+    adapter.resumeAttempt(attempt);
+    timer.start();
+    hidePromotion();
+    updatePuzzleInfo(p);
+
+    if (game.isCompleted) {
+      $<HTMLButtonElement>('next-btn').disabled = false;
+      await completePuzzle();
+    } else if (failed) {
+      $<HTMLButtonElement>('next-btn').disabled = true;
+      setStatus('status.failedButSolving', 'wrong');
+    } else {
+      $<HTMLButtonElement>('next-btn').disabled = true;
+      setStatus('status.yourTurn', undefined, { color: t(`color.${p.solverColor}`) });
+    }
+    renderPosition();
+    updateProgressInfo();
+    return true;
+  } catch (err) {
+    console.warn('Resume failed; starting a fresh attempt', err);
+    adapter.releaseAttempt();
+    return false;
+  }
+}
+
+// --- bootstrap ------------------------------------------------------------
+
+async function createService(): Promise<LocalTrainingService> {
+  let backend: StorageBackend;
+  if (typeof indexedDB !== 'undefined') {
+    try {
+      backend = new IndexedDbStorageBackend();
+    } catch {
+      backend = new InMemoryStorageBackend();
+    }
+  } else {
+    backend = new InMemoryStorageBackend();
+  }
+  const options: LocalTrainingServiceOptions = { store: new LocalStore(backend) };
+  const svc = new LocalTrainingService(options);
+  await svc.init();
+
+  const params = new URLSearchParams(window.location.search);
+  if (params.get('reset') === '1') {
+    await svc.reset();
+  }
+  return svc;
+}
+
+async function init(): Promise<void> {
+  const locale = detectLocale();
+  setLocale(locale);
+  document.documentElement.lang = locale;
+  applyTranslations(document);
+
+  $('promotion').querySelectorAll<HTMLButtonElement>('[data-promotion]').forEach((btn) => {
+    btn.addEventListener('click', () => onPromotionChoice(btn.getAttribute('data-promotion') as PromotionRole));
+  });
+  $('promotion').addEventListener('click', (event) => {
+    if (event.target === $('promotion')) {
+      pendingPromotion = null;
+      hidePromotion();
+      renderPosition();
+    }
+  });
+
+  const boardEl = $('board');
+  ground = Chessground(boardEl, {
+    fen: START_FEN,
+    orientation: 'white',
+    coordinates: true,
+    animation: { enabled: true, duration: 180 },
+    movable: { free: false, showDests: true, events: { after: onUserMove } },
+  });
+
+  try {
+    service = await createService();
+    if (!service.hasContent()) {
+      const pack = await loadPuzzlesFromPack();
+      await service.seedContent(pack.puzzles, { packId: pack.packId });
+    }
+  } catch (err) {
+    console.error(err);
+    setStatus('status.loadError', 'wrong');
+    return;
+  }
+
+  adapter = new TrainingAdapter(service);
+  await adapter.startSession(DEFAULT_PROGRAM_ID, DEFAULT_COLLECTION_ID);
+  updateProgressInfo();
+
+  $<HTMLButtonElement>('next-btn').addEventListener('click', () => void loadNext());
+
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) timer.interrupt();
+    else timer.resume();
+  });
+  window.addEventListener('beforeunload', () => timer.interrupt());
+
+  const resumed = await resumeIfPossible();
+  if (!resumed) {
+    const selection = await adapter.selectNext();
+    if (selection.puzzleId) {
+      await beginAttempt(await adapter.loadPuzzle(selection.puzzleId));
+    } else {
+      setStatus('status.noDue', undefined, {
+        when: selection.nextDueAt ? new Date(selection.nextDueAt).toLocaleString() : t('puzzle.none'),
+      });
     }
   }
 }
 
-async function completePuzzle() {
-  if (!puzzle) return;
-  if (gradingState.failed) {
-    await trainingAdapter.finishCorrection(elapsedSeconds());
-  } else if (!scoredCommitted) {
-    scoredCommitted = true;
-    await trainingAdapter.commitSuccess(puzzle, elapsedSeconds());
-  }
-  updateStatus(
-    gradingState.failed ? 'Solved after a mistake (correction complete)' : 'Puzzle completed!',
-    'completed'
-  );
-  (document.getElementById('next-btn') as HTMLButtonElement).disabled = false;
-  ground.set({ movable: { color: undefined } });
-}
-
-function playOpponentMove() {
-  if (!puzzle || gradingState.solutionIndex >= puzzle.solution.length) {
-    return;
-  }
-  const oppMoveUci = puzzle.solution[gradingState.solutionIndex];
-  gradingState.solutionIndex++;
-  const moveObj = parseUci(oppMoveUci);
-  if (moveObj && 'from' in moveObj && 'to' in moveObj) {
-    setTimeout(() => {
-      (ground as any).move(moveObj.from, moveObj.to);
-      if (gradingState.solutionIndex >= puzzle!.solution.length) {
-        void completePuzzle();
-      }
-    }, 300);
-  }
-}
-
-function updateStatus(text: string, className?: string) {
-  const statusEl = document.getElementById('status')!;
-  statusEl.textContent = text;
-  statusEl.className = 'status';
-  if (className) {
-    statusEl.classList.add(className);
-  }
-  if (gradingState.failed && !gradingState.completed) {
-    statusEl.classList.add('failed-but-solving');
-  }
-}
-
-init();
+void init();

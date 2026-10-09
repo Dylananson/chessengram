@@ -79,12 +79,15 @@ This supports the architectural direction of a focused player using Lichess libr
 
 ## Known gaps
 
+Some of the gaps below were addressed by the maturation work documented later in
+this file (see "Maturation: T09-lite + T10").
+
 - Limited test coverage (only grading logic unit tested; no integration/e2e browser tests)
-- No persistence beyond in-memory training service
-- UI is minimal (no move list, no timer, no hints/reveals UI controls)
-- Promotion handling simplified
-- Opponent move timing is fixed (300ms) rather than adaptive
-- Uses subset of puzzles (loads first 10 from pack in UI for quick testing)
+- ~~No persistence beyond in-memory training service~~ → addressed (IndexedDB)
+- UI is minimal (no move list, no hints/reveals UI controls)
+- ~~Promotion handling simplified~~ → addressed (explicit promotion picker)
+- Opponent move timing is fixed (260ms) rather than adaptive
+- ~~Uses subset of puzzles (loads first 10 from pack in UI)~~ → addressed (full pack cached)
 
 ## Commands & Results
 
@@ -100,6 +103,71 @@ cd apps/player-spike && node --test --experimental-strip-types tests/grading.nod
 cd apps/player-spike && npm run build
 # Result: ✓ built successfully (tsc + vite build, 42ms)
 ```
+
+## Maturation: T09-lite + T10
+
+This section records the follow-up spike-maturation work: wiring the real
+scheduler into the player, adding local persistence, and the phone/touch,
+promotion and i18n polish. Storage decisions are recorded in
+`docs/decisions/ADR-004-local-storage-and-selection.md` (Proposed) and the
+storage design in `docs/research/local-persistence.md`.
+
+### What changed
+
+- **Real scheduler (T09-lite).** `InMemoryTrainingService` is no longer used by
+  the app. `src/scheduler-service.ts` implements the T04 `TrainingService`
+  interface over the real `@chessreps/scheduler` (`Scheduler`, `selectNextDue`).
+  `src/training-adapter.ts` is a thin UI adapter that owns per-attempt
+  bookkeeping (current attempt id, expected revision) and derives idempotency
+  keys from the attempt id only. The first wrong move commits one immutable
+  failure; correction completion is evidence and can never overwrite it.
+- **Local persistence (T10).** `src/storage/` adds a `StorageBackend` seam, an
+  IndexedDB backend, an in-memory backend, and a versioned `LocalStore`.
+  Content, derived `SchedulerState`, raw `AttemptRecord` history, sessions and
+  meta survive reload. Progress resumes from where it left off, including a
+  failure that was mid-correction.
+- **Correct board control.** Chessground 9.2.1 has no promotion support, no
+  undo, and its move events fire for programmatic moves too. The authoritative
+  board now lives in chessops (`src/puzzle-game.ts`), which supplies legal
+  `movable.dests`, grades moves, auto-plays the opponent reply, and supports
+  promotion. The UI only uses `movable.events.after` (user moves only) and
+  mirrors chessops state by setting FEN.
+- **Promotion.** `onUserMove` detects a pawn reaching the last rank, reverts the
+  visual move, and shows a promotion picker (queen/rook/bishop/knight, colored
+  for the side). The chosen role is validated against the solution; an
+  under-promotion is graded wrong.
+- **Phone/touch + layout.** Responsive flex layout, `aspect-ratio` board with a
+  mobile-first max width, safe-area padding, larger touch targets, and chessground
+  CSS bundled from `node_modules` (removed the unpkg CDN links) so the app is
+  fully offline-capable.
+- **Timing.** `src/timing.ts` separates active solving time from correction
+  time, excludes hidden/backgrounded time, logs interruptions, and marks timing
+  untrustworthy once an interruption occurs (the scheduler then uses a neutral
+  factor).
+- **i18n.** `src/i18n.ts` is a tiny dependency-free layer with English defaults,
+  key fallback, interpolation, and locale detection via `?lang=` / `localStorage`
+  / browser. `index.html` uses `data-i18n` attributes. Adding a locale is one
+  `registerLocale(code, messages)` call.
+- **Grading module removed.** The old `src/grading.ts` and its tests were
+  superseded by `PuzzleGame`; tests now target the real game logic.
+
+### Verification
+
+- Tests: `cd apps/player-spike && npm test` → 26 tests pass (0 failures) across
+  failure-flow, persistence, IndexedDB, selection, puzzle-game, timing, i18n.
+- Build: `cd apps/player-spike && npm run build` → `tsc` clean, Vite builds
+  (~91 KB JS / ~29 KB gzip, ~16 KB CSS).
+- `@chessreps/scheduler` and `@chessreps/contracts` were **not** modified;
+  `noUnusedLocals`/`noUnusedParameters` were relaxed in the spike `tsconfig.json`
+  so the imported scheduler source lints cleanly under the spike build.
+
+### Still open
+
+- No browser/e2e automation; resume/reload is covered at the service level, not
+  through a real IndexedDB browser run.
+- No schema migration runner (see ADR-004).
+- No multi-tab coordination (stale commits are rejected by the scheduler revision
+  guard, but the UI does not yet prompt to refresh).
 
 ## Provenance
 

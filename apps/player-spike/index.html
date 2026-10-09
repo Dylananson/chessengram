@@ -2,63 +2,100 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="theme-color" content="#f5f5f5" />
     <title>ChessReps Player Spike</title>
-    <link rel="stylesheet" href="https://unpkg.com/chessground@9.2.1/assets/chessground.base.css" />
-    <link rel="stylesheet" href="https://unpkg.com/chessground@9.2.1/assets/chessground.brown.css" />
-    <link rel="stylesheet" href="https://unpkg.com/chessground@9.2.1/assets/chessground.cburnett.css" />
     <style>
+      :root {
+        color-scheme: light dark;
+        --bg: #f5f5f5;
+        --panel: #ffffff;
+        --text: #1a1a1a;
+        --muted: #555555;
+        --border: rgba(0, 0, 0, 0.08);
+        --accent: #007bff;
+        --accent-dark: #0056b3;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      html,
       body {
         margin: 0;
-        padding: 20px;
-        font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
-        background: #f5f5f5;
+        padding: 0;
+      }
+      body {
+        min-height: 100dvh;
+        padding: max(12px, env(safe-area-inset-top)) max(12px, env(safe-area-inset-right))
+          max(12px, env(safe-area-inset-bottom)) max(12px, env(safe-area-inset-left));
+        font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+        background: var(--bg);
+        color: var(--text);
+        -webkit-text-size-adjust: 100%;
+        overscroll-behavior-y: contain;
       }
       .container {
-        max-width: 800px;
+        max-width: 960px;
         margin: 0 auto;
       }
       h1 {
-        margin: 0 0 20px 0;
-        font-size: 24px;
+        margin: 0 0 4px 0;
+        font-size: clamp(18px, 4.5vw, 24px);
       }
-      .board-container {
+      .subtitle {
+        margin: 0 0 16px 0;
+        color: var(--muted);
+        font-size: 13px;
+      }
+      .layout {
         display: flex;
         gap: 20px;
         flex-wrap: wrap;
+        align-items: flex-start;
+      }
+      .board-wrap {
+        flex: 1 1 320px;
+        min-width: 0;
       }
       .board {
-        width: 480px;
-        max-width: 100%;
-        aspect-ratio: 1;
+        width: 100%;
+        max-width: 560px;
+        margin: 0 auto;
+        aspect-ratio: 1 / 1;
+        border-radius: 6px;
+        overflow: hidden;
+        box-shadow: 0 2px 10px rgba(0, 0, 0, 0.12);
+        touch-action: manipulation;
       }
       .controls {
-        flex: 1;
-        min-width: 280px;
+        flex: 1 1 300px;
+        min-width: 0;
         display: flex;
         flex-direction: column;
-        gap: 16px;
+        gap: 14px;
       }
       .info {
-        background: white;
-        padding: 16px;
+        background: var(--panel);
+        padding: 14px 16px;
         border-radius: 8px;
-        box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+        border: 1px solid var(--border);
       }
       .info h2 {
         margin: 0 0 8px 0;
-        font-size: 16px;
+        font-size: 15px;
       }
       .info p {
         margin: 4px 0;
         font-size: 14px;
-        color: #555;
+        color: var(--muted);
+        word-break: break-word;
       }
       .status {
-        font-weight: bold;
-        padding: 8px 12px;
-        border-radius: 4px;
+        font-weight: 600;
+        padding: 10px 12px;
+        border-radius: 6px;
         background: #eee;
+        font-size: 14px;
       }
       .status.correct {
         background: #d4edda;
@@ -77,54 +114,126 @@
         color: #0c5460;
       }
       .button {
-        padding: 10px 16px;
-        font-size: 14px;
+        width: 100%;
+        padding: 14px 16px;
+        font-size: 16px;
+        font-weight: 600;
         border: none;
-        border-radius: 4px;
-        background: #007bff;
+        border-radius: 8px;
+        background: var(--accent);
         color: white;
         cursor: pointer;
-        transition: background 0.2s;
+        transition: background 0.15s;
+        touch-action: manipulation;
+        -webkit-tap-highlight-color: transparent;
       }
-      .button:hover {
-        background: #0056b3;
+      .button:hover:not(:disabled) {
+        background: var(--accent-dark);
       }
       .button:disabled {
         background: #ccc;
         cursor: not-allowed;
       }
       .solution-preview {
-        font-family: monospace;
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
         font-size: 12px;
-        background: #f8f9fa;
+        background: rgba(127, 127, 127, 0.1);
         padding: 8px;
         border-radius: 4px;
         overflow-x: auto;
+        white-space: nowrap;
+      }
+      .progress-note {
+        font-size: 12px;
+        color: var(--muted);
+      }
+      .promotion {
+        position: fixed;
+        inset: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: rgba(0, 0, 0, 0.5);
+        z-index: 1000;
+        padding: 16px;
+      }
+      .promotion.hidden {
+        display: none;
+      }
+      .promotion-inner {
+        background: var(--panel);
+        border-radius: 12px;
+        padding: 16px;
+        display: flex;
+        gap: 8px;
+        box-shadow: 0 8px 30px rgba(0, 0, 0, 0.3);
+      }
+      .promotion-inner button {
+        width: 64px;
+        height: 64px;
+        font-size: 40px;
+        line-height: 1;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        background: #f0d9b5;
+        cursor: pointer;
+        touch-action: manipulation;
+        -webkit-tap-highlight-color: transparent;
+      }
+      .promotion-inner button:hover {
+        background: #e8c99b;
+      }
+      @media (max-width: 640px) {
+        body {
+          padding: max(8px, env(safe-area-inset-top)) max(8px, env(safe-area-inset-right))
+            max(8px, env(safe-area-inset-bottom)) max(8px, env(safe-area-inset-left));
+        }
+        .layout {
+          gap: 12px;
+        }
+        .board {
+          max-width: none;
+        }
       }
     </style>
   </head>
   <body>
+    <div id="promotion" class="promotion hidden" role="dialog" aria-modal="true" data-i18n-title="promotion.title">
+      <div class="promotion-inner">
+        <button data-promotion="q" type="button"></button>
+        <button data-promotion="r" type="button"></button>
+        <button data-promotion="b" type="button"></button>
+        <button data-promotion="n" type="button"></button>
+      </div>
+    </div>
     <div class="container">
-      <h1>ChessReps Player Spike (FEN-rooted)</h1>
-      <div class="board-container">
-        <div id="board" class="board"></div>
+      <h1 data-i18n="app.title">ChessReps Player</h1>
+      <p class="subtitle" data-i18n="app.subtitle"></p>
+      <div class="layout">
+        <div class="board-wrap">
+          <div id="board" class="board" aria-label="Chess board"></div>
+        </div>
         <div class="controls">
           <div class="info">
-            <h2>Puzzle Info</h2>
-            <p id="puzzle-id">ID: -</p>
-            <p id="rating">Rating: -</p>
-            <p id="themes">Themes: -</p>
-            <p id="solver-color">Solver: -</p>
+            <h2 data-i18n="puzzle.info">Puzzle</h2>
+            <p id="puzzle-id">-</p>
+            <p id="rating">-</p>
+            <p id="themes">-</p>
+            <p id="solver-color">-</p>
           </div>
           <div class="info">
-            <h2>Status</h2>
-            <div id="status" class="status">Loading...</div>
+            <h2 data-i18n="status.title">Status</h2>
+            <div id="status" class="status" data-i18n="status.loading">Loading…</div>
           </div>
           <div class="info">
-            <h2>Solution</h2>
+            <h2 data-i18n="solution.title">Solution</h2>
             <div id="solution" class="solution-preview">-</div>
           </div>
-          <button id="next-btn" class="button" disabled>Next Puzzle</button>
+          <button id="next-btn" class="button" type="button" disabled data-i18n="next.label">Next puzzle</button>
+          <div>
+            <p id="progress" class="progress-note"></p>
+            <p id="storage" class="progress-note"></p>
+          </div>
         </div>
       </div>
     </div>

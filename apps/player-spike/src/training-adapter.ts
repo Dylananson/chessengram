@@ -1,17 +1,79 @@
-import type { NormalizedPuzzle } from './types.js';
-import { InMemoryTrainingService } from '../../../packages/contracts/src/reference-implementation.ts';
+/**
+ * UI-facing adapter over the local training service.
+ *
+ * Keeps the small amount of per-attempt UI bookkeeping (current attempt id and
+ * the schedule revision to expect at commit time) out of the screen code. All
+ * scheduling/scoring authority stays in `LocalTrainingService` / the scheduler.
+ *
+ * Idempotency keys are derived from the attempt id only (never the clock), so a
+ * double-submit, retry, or reload maps to the same key and the scheduler
+ * answers with the original receipt instead of double-applying.
+ */
+
+import type {
+  AttemptRecord,
+  FailureReason,
+  NormalizedPuzzle,
+  ProgressKey,
+  TimingSegments,
+} from '../../../packages/contracts/src/types.ts';
+import {
+  DEFAULT_COLLECTION_ID,
+  DEFAULT_PROGRAM_ID,
+  LocalTrainingService,
+  progressKeyToString,
+  type LocalTrainingServiceOptions,
+} from './scheduler-service.ts';
+import { LocalStore } from './storage/local-store.ts';
+import { InMemoryStorageBackend } from './storage/memory-backend.ts';
+
+export interface StartAttemptResult {
+  attemptId: string;
+  startingFen: string;
+  scheduleRevision: number;
+}
 
 export class TrainingAdapter {
-  private service: InMemoryTrainingService;
+  private readonly service: LocalTrainingService;
   private currentSessionId?: string;
+  private currentProgramId = DEFAULT_PROGRAM_ID;
+  private currentCollectionId: string | undefined = DEFAULT_COLLECTION_ID;
   private currentAttemptId?: string;
+  private currentProgressKey?: ProgressKey;
+  private currentExpectedRevision = 0;
 
-  constructor() {
-    this.service = new InMemoryTrainingService();
+  constructor(service: LocalTrainingService) {
+    this.service = service;
   }
 
-  async startSession(programId = 'player-spike-v1') {
-    const result = await this.service.startSession({ programId });
+  /** Convenience constructor for tests: an in-memory, isolated service. */
+  static withInMemoryStore(
+    options: Omit<LocalTrainingServiceOptions, 'store'> = {},
+  ): TrainingAdapter {
+    return new TrainingAdapter(
+      new LocalTrainingService({ store: new LocalStore(new InMemoryStorageBackend()), ...options }),
+    );
+  }
+
+  getService(): LocalTrainingService {
+    return this.service;
+  }
+
+  getSessionId(): string | undefined {
+    return this.currentSessionId;
+  }
+
+  getActiveAttemptId(): string | undefined {
+    return this.currentAttemptId;
+  }
+
+  async startSession(
+    programId = DEFAULT_PROGRAM_ID,
+    collectionId: string | undefined = DEFAULT_COLLECTION_ID,
+  ) {
+    this.currentProgramId = programId;
+    this.currentCollectionId = collectionId;
+    const result = await this.service.startSession({ programId, collectionId });
     this.currentSessionId = result.session.sessionId;
     return result;
   }
@@ -21,14 +83,21 @@ export class TrainingAdapter {
     return result.puzzle;
   }
 
-  async startAttempt(puzzle: NormalizedPuzzle, progressKey?: any) {
-    if (!this.currentSessionId) {
-      await this.startSession();
-    }
+  async selectNext(): Promise<{ puzzleId: string | null; nextDueAt?: number; reason?: string }> {
+    if (!this.currentSessionId) await this.startSession();
+    return this.service.selectNext({
+      sessionId: this.currentSessionId!,
+      programId: this.currentProgramId,
+      collectionId: this.currentCollectionId,
+    });
+  }
 
-    const pk = progressKey || {
-      programId: 'player-spike-v1',
+  async startAttempt(puzzle: NormalizedPuzzle, progressKey?: ProgressKey): Promise<StartAttemptResult> {
+    if (!this.currentSessionId) await this.startSession();
+    const pk: ProgressKey = progressKey ?? {
+      programId: this.currentProgramId,
       puzzleId: puzzle.id,
+      collectionId: this.currentCollectionId,
     };
 
     const result = await this.service.startAttempt({
@@ -38,89 +107,108 @@ export class TrainingAdapter {
     });
 
     this.currentAttemptId = result.attemptId.value;
-    return result;
+    this.currentProgressKey = pk;
+    this.currentExpectedRevision = result.scheduleRevision;
+    return {
+      attemptId: result.attemptId.value,
+      startingFen: result.startingFen,
+      scheduleRevision: result.scheduleRevision,
+    };
   }
 
-  async recordMove(moveUci: string) {
+  /** Adopt an attempt loaded from persistence (reload resume). */
+  resumeAttempt(attempt: AttemptRecord): void {
+    this.currentAttemptId = attempt.attemptId.value;
+    this.currentProgressKey = attempt.progressKey;
+    this.currentExpectedRevision = attempt.scheduleRevisionBefore;
+  }
+
+  async recordMove(moveUci: string, correct: boolean): Promise<void> {
     if (!this.currentAttemptId) return;
     await this.service.recordEvent({
       attemptId: { value: this.currentAttemptId },
       event: {
-        eventId: `move-${Date.now()}`,
+        eventId: `${this.currentAttemptId}-move-${moveUci}-${correct ? 'ok' : 'bad'}`,
         type: 'move',
         occurredAt: Date.now(),
-        payload: { move: moveUci },
+        payload: { move: moveUci, uci: moveUci, correct },
       },
     });
   }
 
-  async recordWrongMove(moveUci: string) {
+  async recordWrongMove(moveUci: string): Promise<void> {
     if (!this.currentAttemptId) return;
     await this.service.recordEvent({
       attemptId: { value: this.currentAttemptId },
       event: {
-        eventId: `wrong-${Date.now()}`,
+        eventId: `${this.currentAttemptId}-wrong-${moveUci}`,
         type: 'wrong-move',
         occurredAt: Date.now(),
-        payload: { move: moveUci },
+        payload: { move: moveUci, uci: moveUci },
       },
     });
   }
 
-  async commitSuccess(_puzzle: NormalizedPuzzle, activeSolvingSeconds = 0) {
+  async commitSuccess(timing: TimingSegments): Promise<void> {
     if (!this.currentAttemptId) return;
+    const attemptId = this.currentAttemptId;
     await this.service.commitOutcome({
-      attemptId: { value: this.currentAttemptId },
+      attemptId: { value: attemptId },
       outcome: 'success',
-      timing: {
-        activeSolvingSeconds,
-        correctionSeconds: 0,
-        interruptionSeconds: 0,
-        hiddenSeconds: 0,
-        timingTrustworthy: true,
-      },
-      idempotencyKey: `success-${this.currentAttemptId}-${Date.now()}`,
-      expectedScheduleRevision: 0,
+      timing,
+      idempotencyKey: `success-${attemptId}`,
+      expectedScheduleRevision: this.currentExpectedRevision,
+      finalEvents: [
+        { eventId: `${attemptId}-complete`, type: 'complete', occurredAt: Date.now() },
+      ],
     });
     this.currentAttemptId = undefined;
   }
 
-  async commitFailure(_puzzle: NormalizedPuzzle, activeSolvingSeconds = 0) {
+  async commitFailure(timing: TimingSegments, reason: FailureReason = 'wrong-move'): Promise<void> {
     if (!this.currentAttemptId) return;
+    const attemptId = this.currentAttemptId;
     await this.service.commitOutcome({
-      attemptId: { value: this.currentAttemptId },
+      attemptId: { value: attemptId },
       outcome: 'failure',
-      failureReason: 'wrong-move',
-      timing: {
-        activeSolvingSeconds,
-        correctionSeconds: 0,
-        interruptionSeconds: 0,
-        hiddenSeconds: 0,
-        timingTrustworthy: true,
-      },
-      idempotencyKey: `fail-${this.currentAttemptId}-${Date.now()}`,
-      expectedScheduleRevision: 0,
+      failureReason: reason,
+      timing,
+      idempotencyKey: `fail-${attemptId}`,
+      expectedScheduleRevision: this.currentExpectedRevision,
     });
-    // Don't clear attemptId - need to finish correction
+    // Keep the attempt reserved so correction completion can be recorded.
   }
 
-  async finishCorrection(activeSolvingSeconds = 0) {
+  async finishCorrection(timing: TimingSegments): Promise<void> {
     if (!this.currentAttemptId) return;
+    const attemptId = this.currentAttemptId;
     await this.service.finishCorrection({
-      attemptId: { value: this.currentAttemptId },
-      timing: {
-        activeSolvingSeconds,
-        correctionSeconds: 0,
-        interruptionSeconds: 0,
-        hiddenSeconds: 0,
-        timingTrustworthy: true,
+      attemptId: { value: attemptId },
+      timing,
+      idempotencyKey: `correction-${attemptId}`,
+      correctionEvent: {
+        eventId: `${attemptId}-correction-complete`,
+        type: 'correction-complete',
+        occurredAt: Date.now(),
       },
-      idempotencyKey: `corr-${this.currentAttemptId}-${Date.now()}`,
     });
     this.currentAttemptId = undefined;
   }
 
-  getService() {
-    return this.service;
+  /** Drop the current attempt without scoring (used when skipping). */
+  releaseAttempt(): void {
+    this.currentAttemptId = undefined;
+    this.currentProgressKey = undefined;
+  }
+
+  describeCurrentAttempt(): { attemptId?: string; progressKey?: ProgressKey } {
+    return {
+      attemptId: this.currentAttemptId,
+      progressKey: this.currentProgressKey ? { ...this.currentProgressKey } : undefined,
+    };
+  }
+
+  keyOf(key: ProgressKey): string {
+    return progressKeyToString(key);
   }
 }

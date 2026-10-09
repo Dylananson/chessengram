@@ -10,10 +10,12 @@
     "test": "node --test --experimental-strip-types tests/*.node.test.ts"
   },
   "devDependencies": {
+    "fake-indexeddb": "^6.2.2",
     "typescript": "~6.0.2",
     "vite": "^8.3.0"
   },
   "dependencies": {
+    "@chessreps/scheduler": "file:../../packages/scheduler",
     "chessground": "^9.2.1",
     "chessops": "^0.15.1"
   }
