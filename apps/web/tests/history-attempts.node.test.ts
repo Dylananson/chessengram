@@ -1,15 +1,32 @@
 import { test } from 'node:test';
 import { strict as assert } from 'node:assert';
-import { classifyAttemptOutcome, HistoryView, summarizeHistory } from '../src/history-view.ts';
+import type { VNode } from 'snabbdom/build/vnode.js';
+import { HistoryCtrl, classifyAttemptOutcome, summarizeHistory, view } from '../src/history-view.ts';
 import { DEFAULT_PROGRAM_ID, LocalTrainingService } from '../src/scheduler-service.ts';
 import { LocalStore } from '../src/storage/local-store.ts';
 import { InMemoryStorageBackend } from '../src/storage/memory-backend.ts';
 import { setLocale, t } from '../src/i18n.ts';
 import { makePuzzle, timing } from './fixtures.ts';
 
+/** Collect every text node in a vnode tree (snabbdom sets cell copy as text). */
+function collectText(node: VNode | string | null | undefined): string[] {
+  if (node === null || node === undefined) return [];
+  if (typeof node === 'string') return [node];
+  const out: string[] = [];
+  if (typeof node.text === 'string') out.push(node.text);
+  for (const child of node.children ?? []) out.push(...collectText(child as VNode | string));
+  return out;
+}
+
+/** True when any vnode in the tree matches the selector predicate. */
+function hasSelector(node: VNode | string | null | undefined, match: (sel: string) => boolean): boolean {
+  if (node === null || node === undefined || typeof node === 'string') return false;
+  if (typeof node.sel === 'string' && match(node.sel)) return true;
+  return (node.children ?? []).some((child) => hasSelector(child as VNode | string, match));
+}
+
 /** Manual clock so `startedAt` ordering is deterministic. */
-function manualClock(start = 1_000_000): { clock: { now: () => number }; tick: (ms?: number) => void } {
-  let now = start;
+function manualClock(start = 1_000_000): { clock: { now: () => number }; tick: (ms?: number) => void } {  let now = start;
   return {
     clock: { now: () => now },
     tick: (ms = 1000) => {
@@ -178,15 +195,17 @@ test('HistoryView renders the per-attempt table without touching service state',
   await service.abandonAttempt(sessionId);
   void doomed;
 
-  const view = new HistoryView({ service, adapter: undefined as never });
-  const host = { innerHTML: '' } as unknown as HTMLElement;
+  const ctrl = new HistoryCtrl(service);
   const before = service.getAttemptCount();
-  view.mount(host);
+  const rendered = view(ctrl);
+  const texts = collectText(rendered);
 
-  assert.ok(host.innerHTML.includes(t('history.attempts.title')));
-  assert.ok(host.innerHTML.includes(t('history.outcome.success')));
-  assert.ok(host.innerHTML.includes(t('history.outcome.abandoned')));
-  assert.match(host.innerHTML, /attempt-table/);
-  assert.equal(service.getAttemptCount(), before, 'mount performs no writes');
-  view.unmount();
+  assert.ok(texts.includes(t('history.attempts.title')));
+  assert.ok(texts.includes(t('history.outcome.success')));
+  assert.ok(texts.includes(t('history.outcome.abandoned')));
+  assert.ok(
+    hasSelector(rendered, (sel) => sel.startsWith('table.attempt-table')),
+    'per-attempt table renders',
+  );
+  assert.equal(service.getAttemptCount(), before, 'render performs no writes');
 });

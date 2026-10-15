@@ -1,9 +1,27 @@
 import { test } from 'node:test';
 import { strict as assert } from 'node:assert';
-import { HistoryView, summarizeHistory } from '../src/history-view.ts';
+import type { VNode } from 'snabbdom/build/vnode.js';
+import { HistoryCtrl, HistoryView, summarizeHistory, view } from '../src/history-view.ts';
 import { DEFAULT_PROGRAM_ID } from '../src/scheduler-service.ts';
 import { setLocale, t } from '../src/i18n.ts';
 import { makePuzzle, makeService, timing } from './fixtures.ts';
+
+/** Collect every text node in a vnode tree (snabbdom sets cell copy as text). */
+function collectText(node: VNode | string | null | undefined): string[] {
+  if (node === null || node === undefined) return [];
+  if (typeof node === 'string') return [node];
+  const out: string[] = [];
+  if (typeof node.text === 'string') out.push(node.text);
+  for (const child of node.children ?? []) out.push(...collectText(child as VNode | string));
+  return out;
+}
+
+/** True when any vnode in the tree matches the selector predicate. */
+function hasSelector(node: VNode | string | null | undefined, match: (sel: string) => boolean): boolean {
+  if (node === null || node === undefined || typeof node === 'string') return false;
+  if (typeof node.sel === 'string' && match(node.sel)) return true;
+  return (node.children ?? []).some((child) => hasSelector(child as VNode | string, match));
+}
 
 test('empty library yields an empty read-only snapshot', async () => {
   const service = await makeService();
@@ -68,30 +86,55 @@ test('snapshot lists per-puzzle state, queue counts and the attempt total', asyn
   assert.deepEqual(service.listPuzzleIds(), before.ids);
 });
 
-test('HistoryView mounts read-only HTML without touching service state', async () => {
+test('HistoryView renders read-only content without touching service state', async () => {
   setLocale('en');
   const service = await makeService();
   await service.upsertPuzzles([makePuzzle({ id: 'a', rating: 1234 })]);
-  const view = new HistoryView({ service, adapter: undefined as never });
-  const host = { innerHTML: '' } as unknown as HTMLElement;
+  const ctrl = new HistoryCtrl(service);
 
   const attemptsBefore = service.getAttemptCount();
-  view.mount(host);
-  assert.match(host.innerHTML, /a/);
-  assert.match(host.innerHTML, /1234/);
-  assert.ok(host.innerHTML.includes(t('history.title')));
-  assert.equal(service.getAttemptCount(), attemptsBefore, 'mount performs no writes');
-  assert.match(host.innerHTML, /<table/, 'per-puzzle status list renders');
-
-  view.unmount();
+  const texts = collectText(view(ctrl));
+  const joined = texts.join('\n');
+  assert.ok(joined.includes('a'));
+  assert.ok(joined.includes('1234'));
+  assert.ok(texts.includes(t('history.title')));
+  assert.equal(service.getAttemptCount(), attemptsBefore, 'render performs no writes');
+  assert.ok(
+    hasSelector(view(ctrl), (sel) => sel.startsWith('table.puzzle-table')),
+    'per-puzzle status list renders',
+  );
 });
 
 test('empty library renders the empty-list message', async () => {
   setLocale('en');
   const service = await makeService();
-  const view = new HistoryView({ service, adapter: undefined as never });
-  const host = { innerHTML: '' } as unknown as HTMLElement;
-  view.mount(host);
-  assert.ok(host.innerHTML.includes(t('history.list.empty')));
-  view.unmount();
+  const ctrl = new HistoryCtrl(service);
+  const texts = collectText(view(ctrl));
+  assert.ok(texts.includes(t('history.list.empty')));
+  assert.ok(texts.includes(t('history.attempts.empty')));
+});
+
+test('ctrl.refresh re-reads service getters without writes', async () => {
+  setLocale('en');
+  const service = await makeService();
+  let redraws = 0;
+  const ctrl = new HistoryCtrl(service, DEFAULT_PROGRAM_ID, () => {
+    redraws += 1;
+  });
+  assert.equal(ctrl.snapshot.rows.length, 0);
+
+  await service.upsertPuzzles([makePuzzle({ id: 'a' })]);
+  const before = service.getAttemptCount();
+  ctrl.refresh();
+
+  assert.equal(ctrl.snapshot.rows.length, 1);
+  assert.equal(ctrl.snapshot.total, 1);
+  assert.equal(redraws, 1, 'refresh ends in redraw');
+  assert.equal(service.getAttemptCount(), before, 'refresh performs no writes');
+});
+
+test('unmount without mount is safe', async () => {
+  const service = await makeService();
+  const screen = new HistoryView({ service, adapter: undefined as never });
+  screen.unmount();
 });

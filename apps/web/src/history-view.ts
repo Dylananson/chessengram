@@ -7,21 +7,36 @@
  * per-attempt table (via the read-only `listAttempts` getter).
  *
  * Strictly read-only: no grading, no scheduler writes, no storage mutations.
+ *
+ * Rendering (UI-001 S2 pilot — the ctrl/view/redraw pattern every later
+ * screen copies): mutable state lives in {@link HistoryCtrl} (the current
+ * `summarizeHistory` snapshot; History has no UI toggles), {@link view} is a
+ * pure `(ctrl) => VNode` function built from the S1 primitives, and
+ * {@link HistoryView} mounts once via snabbdom `patch` then re-patches
+ * through a `redraw` closure. `h`/`init` come from DOM-free
+ * `snabbdom/build/*` deep subpaths (never the package root, which touches
+ * `window` at load), so this module — ctrl, snapshot helpers, and `view` —
+ * stays importable under Node. Only `mount` touches the DOM.
  */
 
+import { h } from 'snabbdom/build/h.js';
+import { init } from 'snabbdom/build/init.js';
+import type { VNode } from 'snabbdom/build/vnode.js';
 import type { AttemptRecord, ScheduleState } from '@chessreps/contracts';
 import type { AppContext } from './app-context.ts';
 import { t } from './i18n.ts';
 import type { Screen } from './router.ts';
 import { DEFAULT_PROGRAM_ID, type LocalTrainingService } from './scheduler-service.ts';
+import { emptyState, panel } from './ui/primitives.ts';
 
-function escapeHtml(value: string): string {
-  return value
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;');
-}
+/**
+ * snabbdom patch function for this screen. The module set is intentionally
+ * empty: History renders static selectors + text only (no listeners, no
+ * dynamic classes/attrs/props). Screens that need more add the corresponding
+ * `snabbdom/build/modules/*` deep-subpath modules here (all Node-safe except
+ * `style`, which reads `window` at load and must stay out).
+ */
+const patch = init([]);
 
 export interface HistoryRow {
   puzzleId: string;
@@ -108,10 +123,144 @@ export function summarizeHistory(
   };
 }
 
+function dueText(dueAt: number | undefined): string {
+  if (dueAt === undefined) return t('history.due.never');
+  return dueAt <= Date.now() ? t('history.due.now') : new Date(dueAt).toLocaleString();
+}
+
+function timeText(value: number | undefined): string {
+  if (value === undefined) return t('history.attempts.unfinished');
+  return new Date(value).toLocaleString();
+}
+
+/**
+ * Per-screen controller: owns the current read-only snapshot plus the
+ * `redraw` closure the mount site installs. `refresh()` re-runs the pure
+ * projection over the service read getters and re-renders; History has no
+ * writers today, so nothing calls it yet — it exists as the seam later
+ * screens copy (every mutation path ends in `redraw()`).
+ */
+export class HistoryCtrl {
+  snapshot: HistorySnapshot;
+  private readonly service: LocalTrainingService;
+  private readonly programId: string;
+  redraw: () => void;
+
+  constructor(
+    service: LocalTrainingService,
+    programId: string = DEFAULT_PROGRAM_ID,
+    redraw: () => void = () => {},
+  ) {
+    this.service = service;
+    this.programId = programId;
+    this.redraw = redraw;
+    this.snapshot = summarizeHistory(service, programId);
+  }
+
+  /** Re-read service getters and re-render. Performs no writes. */
+  refresh(): void {
+    this.snapshot = summarizeHistory(this.service, this.programId);
+    this.redraw();
+  }
+}
+
+function puzzleTable(rows: HistoryRow[]): VNode {
+  if (rows.length === 0) return emptyState(t('history.list.empty'));
+  return h('div.table-wrap', [
+    h('table.puzzle-table', [
+      h('thead', [
+        h('tr', [
+          h('th', t('puzzle.id')),
+          h('th', t('puzzle.rating')),
+          h('th', t('status.title')),
+          h('th', t('history.list.due')),
+        ]),
+      ]),
+      h(
+        'tbody',
+        rows.map((row) =>
+          h('tr', [
+            h('td', row.puzzleId),
+            h('td', String(row.rating)),
+            h('td', t(`history.state.${row.state}`)),
+            h('td.muted', dueText(row.dueAt)),
+          ]),
+        ),
+      ),
+    ]),
+  ]);
+}
+
+function attemptTable(attempts: HistoryAttemptRow[]): VNode {
+  if (attempts.length === 0) return emptyState(t('history.attempts.empty'));
+  return h('div.table-wrap', [
+    h('table.attempt-table', [
+      h('thead', [
+        h('tr', [
+          h('th', t('history.attempts.puzzle')),
+          h('th', t('history.attempts.outcome')),
+          h('th', t('history.attempts.active')),
+          h('th', t('history.attempts.correction')),
+          h('th', t('history.attempts.events')),
+          h('th', t('history.attempts.started')),
+          h('th', t('history.attempts.finished')),
+        ]),
+      ]),
+      h(
+        'tbody',
+        attempts.map((row) =>
+          h('tr', [
+            h('td', row.puzzleId),
+            h('td', t(`history.outcome.${row.outcome}`)),
+            h('td', String(row.activeSolvingSeconds)),
+            h('td', String(row.correctionSeconds)),
+            h('td', String(row.eventCount)),
+            h('td.muted', timeText(row.startedAt)),
+            h('td.muted', timeText(row.completedAt)),
+          ]),
+        ),
+      ),
+    ]),
+  ]);
+}
+
+/**
+ * Pure view: same information and same strings as the pre-Snabbdom template
+ * (summary counts, per-puzzle status list + note, per-attempt table), composed
+ * from the S1 `panel`/`emptyState` primitives. Snabbdom sets cell content as
+ * text, so no manual HTML escaping is needed.
+ */
+export function view(ctrl: HistoryCtrl): VNode {
+  const snapshot = ctrl.snapshot;
+  return h('div.history-screen', [
+    panel(t('history.title'), [
+      h('p', t('history.subtitle')),
+      h(
+        'p',
+        t('history.queue', {
+          total: snapshot.total,
+          newCount: snapshot.newCount,
+          due: snapshot.due,
+          learned: snapshot.learned,
+        }),
+      ),
+      h('p', t('history.attempts', { count: snapshot.attemptCount })),
+    ]),
+    panel(t('history.list.title'), [
+      puzzleTable(snapshot.rows),
+      h('p.muted', t('history.note')),
+    ]),
+    panel(t('history.attempts.title'), attemptTable(snapshot.attempts)),
+  ]);
+}
+
 export class HistoryView implements Screen {
   readonly id = 'history' as const;
 
   private host: HTMLElement | null = null;
+  private root: HTMLElement | null = null;
+  private ctrl: HistoryCtrl | null = null;
+  private vnode: VNode | null = null;
   private readonly ctx: AppContext;
 
   constructor(ctx: AppContext) {
@@ -120,91 +269,28 @@ export class HistoryView implements Screen {
 
   mount(host: HTMLElement): void {
     this.host = host;
-    const snapshot = summarizeHistory(this.ctx.service);
-    this.host.innerHTML = this.template(snapshot);
+    const placeholder = document.createElement('div');
+    host.appendChild(placeholder);
+    const ctrl = new HistoryCtrl(this.ctx.service);
+    this.ctrl = ctrl;
+    this.vnode = patch(placeholder, view(ctrl));
+    // The patch replaces the placeholder; track the live root so unmount
+    // removes exactly what snabbdom inserted.
+    this.root = this.vnode.elm as HTMLElement;
+    ctrl.redraw = () => {
+      if (this.ctrl === null || this.vnode === null) return;
+      this.vnode = patch(this.vnode, view(this.ctrl));
+      this.root = this.vnode.elm as HTMLElement;
+    };
   }
 
   unmount(): void {
+    // Guarded: safe to call without a prior mount, and drops the vnode ref
+    // so any late redraw after teardown is a no-op instead of a crash.
+    this.root?.remove();
+    this.root = null;
     this.host = null;
-  }
-
-  private dueText(dueAt: number | undefined): string {
-    if (dueAt === undefined) return t('history.due.never');
-    return dueAt <= Date.now() ? t('history.due.now') : new Date(dueAt).toLocaleString();
-  }
-
-  private timeText(value: number | undefined): string {
-    if (value === undefined) return t('history.attempts.unfinished');
-    return new Date(value).toLocaleString();
-  }
-
-  private attemptTable(attempts: HistoryAttemptRow[]): string {
-    if (attempts.length === 0) return `<p class="muted">${t('history.attempts.empty')}</p>`;
-    const rows = attempts
-      .map(
-        (row) => `<tr>
-          <td>${escapeHtml(row.puzzleId)}</td>
-          <td>${t(`history.outcome.${row.outcome}`)}</td>
-          <td>${row.activeSolvingSeconds}</td>
-          <td>${row.correctionSeconds}</td>
-          <td>${row.eventCount}</td>
-          <td class="muted">${escapeHtml(this.timeText(row.startedAt))}</td>
-          <td class="muted">${escapeHtml(this.timeText(row.completedAt))}</td>
-        </tr>`,
-      )
-      .join('');
-    return `<div class="table-wrap"><table class="attempt-table">
-        <thead><tr>
-          <th>${t('history.attempts.puzzle')}</th><th>${t('history.attempts.outcome')}</th>
-          <th>${t('history.attempts.active')}</th><th>${t('history.attempts.correction')}</th>
-          <th>${t('history.attempts.events')}</th><th>${t('history.attempts.started')}</th>
-          <th>${t('history.attempts.finished')}</th>
-        </tr></thead>
-        <tbody>${rows}</tbody>
-      </table></div>`;
-  }
-
-  private template(snapshot: HistorySnapshot): string {
-    const rows = snapshot.rows
-      .map(
-        (row) => `<tr>
-          <td>${escapeHtml(row.puzzleId)}</td>
-          <td>${row.rating}</td>
-          <td>${t(`history.state.${row.state}`)}</td>
-          <td class="muted">${escapeHtml(this.dueText(row.dueAt))}</td>
-        </tr>`,
-      )
-      .join('');
-    const table = snapshot.rows.length
-      ? `<div class="table-wrap"><table class="puzzle-table">
-          <thead><tr>
-            <th>${t('puzzle.id')}</th><th>${t('puzzle.rating')}</th>
-            <th>${t('status.title')}</th><th>${t('history.list.due')}</th>
-          </tr></thead>
-          <tbody>${rows}</tbody>
-        </table></div>`
-      : `<p class="muted">${t('history.list.empty')}</p>`;
-    return `
-      <div class="panel">
-        <h3>${t('history.title')}</h3>
-        <p>${t('history.subtitle')}</p>
-        <p>${escapeHtml(t('history.queue', {
-          total: snapshot.total,
-          newCount: snapshot.newCount,
-          due: snapshot.due,
-          learned: snapshot.learned,
-        }))}</p>
-        <p>${escapeHtml(t('history.attempts', { count: snapshot.attemptCount }))}</p>
-      </div>
-      <div class="panel">
-        <h3>${t('history.list.title')}</h3>
-        ${table}
-        <p class="muted">${t('history.note')}</p>
-      </div>
-      <div class="panel">
-        <h3>${t('history.attempts.title')}</h3>
-        ${this.attemptTable(snapshot.attempts)}
-      </div>
-    `;
+    this.ctrl = null;
+    this.vnode = null;
   }
 }
