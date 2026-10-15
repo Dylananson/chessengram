@@ -20,6 +20,7 @@
     "@chessreps/contracts": "*",
     "@chessreps/scheduler": "*",
     "chessground": "^9.2.1",
-    "chessops": "^0.15.1"
+    "chessops": "^0.15.1",
+    "snabbdom": "^3.6.4"
   }
 }

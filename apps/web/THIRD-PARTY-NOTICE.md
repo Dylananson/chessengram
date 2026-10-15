@@ -17,6 +17,12 @@ This personal-use application includes the following third-party libraries:
 Both libraries are used under GPL-3.0. For personal use, license texts are
 naturally preserved in node_modules as installed by npm.
 
+## snabbdom
+- License: MIT
+- Copyright: Simon Friis Vindum
+- Source: https://github.com/snabbdom/snabbdom
+- Purpose: Virtual-DOM view rendering for training screens (bundled dependency)
+
 ## Lichess Puzzle Data
 - License: CC0-1.0 (Creative Commons Zero)
 - Source: https://database.lichess.org/#puzzles

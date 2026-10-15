@@ -1,0 +1,259 @@
+/**
+ * ChessReps shared theme layer (UI-001 S1).
+ *
+ * Token organization mirrors the shape inventoried in the S0 spike
+ * (`--c-bg*`, `--c-font*`, action/feedback colors, link, border vars) with
+ * clean-room values taken from this app's existing palette. Dark scheme
+ * follows the app's current model: light defaults on `:root`, dark
+ * overrides under `prefers-color-scheme`.
+ *
+ * Component classes below reuse this app's existing class names (extended,
+ * never renamed) and resolve to the same computed values as `app.css`.
+ * `app.ts` imports this file BEFORE `app.css`, so `app.css` wins any
+ * overlapping rule and this round stays visually behavior-neutral.
+ */
+
+:root {
+  color-scheme: light dark;
+
+  /* Surfaces: page background, cards/panels, form fields, zebra rows. */
+  --c-bg-page: #f5f5f5;
+  --c-bg-box: #ffffff;
+  --c-bg-input: #f5f5f5;
+  --c-bg-zebra: rgba(0, 0, 0, 0.03);
+
+  /* Text: default and dimmed. */
+  --c-font: #1a1a1a;
+  --c-font-dim: #555555;
+
+  /* Primary action + link. */
+  --c-primary: #007bff;
+  --c-primary-dark: #0056b3;
+  --c-link: #007bff;
+
+  /* Feedback tones: text on tinted background. */
+  --c-good: #155724;
+  --c-good-bg: #d4edda;
+  --c-bad: #721c24;
+  --c-bad-bg: #f8d7da;
+  --c-warn: #856404;
+  --c-warn-bg: #fff3cd;
+  --c-info: #0c5460;
+  --c-info-bg: #d1ecf1;
+
+  /* Lines + shape. */
+  --c-border: rgba(0, 0, 0, 0.08);
+  --c-radius: 8px;
+  --c-radius-small: 6px;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --c-bg-page: #1b1b1f;
+    --c-bg-box: #232327;
+    --c-bg-input: #1b1b1f;
+    --c-bg-zebra: rgba(255, 255, 255, 0.04);
+    --c-font: #ececf1;
+    --c-font-dim: #b0b0b8;
+    --c-good: #b8e6c4;
+    --c-good-bg: #134e23;
+    --c-bad: #f3c1c5;
+    --c-bad-bg: #5a1d22;
+    --c-warn: #f0e2b4;
+    --c-warn-bg: #5a4a12;
+    --c-info: #bde4ee;
+    --c-info-bg: #123f4a;
+    --c-border: rgba(255, 255, 255, 0.1);
+  }
+}
+
+/* --- Buttons (same vocabulary as app.css) --- */
+
+.button {
+  width: 100%;
+  padding: 14px 16px;
+  font-size: 16px;
+  font-weight: 600;
+  border: none;
+  border-radius: var(--c-radius);
+  background: var(--c-primary);
+  color: #ffffff;
+  cursor: pointer;
+  transition: background 0.15s;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.button:hover:not(:disabled) {
+  background: var(--c-primary-dark);
+}
+
+.button:disabled {
+  background: #cccccc;
+  cursor: not-allowed;
+}
+
+.button-secondary {
+  background: #6c757d;
+}
+
+.button-secondary:hover:not(:disabled) {
+  background: #545b62;
+}
+
+.button-tertiary {
+  background: transparent;
+  color: var(--c-link);
+  border: 1px solid var(--c-border);
+}
+
+.button-tertiary:hover:not(:disabled) {
+  background: rgba(127, 127, 127, 0.1);
+}
+
+.button.compact {
+  width: auto;
+  padding: 8px 14px;
+  font-size: 14px;
+}
+
+.button-row {
+  display: flex;
+  gap: 8px;
+}
+
+.button-row .button {
+  flex: 1 1 0;
+  width: auto;
+}
+
+@media (prefers-color-scheme: dark) {
+  .button:disabled {
+    background: #44444a;
+  }
+}
+
+/* --- Panels --- */
+
+.panel {
+  background: var(--c-bg-box);
+  border: 1px solid var(--c-border);
+  border-radius: var(--c-radius);
+  padding: 14px 16px;
+  margin-bottom: 14px;
+}
+
+.panel h3 {
+  margin: 0 0 8px 0;
+  font-size: 15px;
+}
+
+.panel p {
+  margin: 4px 0;
+  font-size: 14px;
+  color: var(--c-font-dim);
+  word-break: break-word;
+}
+
+/* --- Status lines --- */
+
+.status {
+  font-weight: 600;
+  padding: 10px 12px;
+  border-radius: var(--c-radius-small);
+  background: #eeeeee;
+  font-size: 14px;
+}
+
+.status.correct {
+  background: var(--c-good-bg);
+  color: var(--c-good);
+}
+
+.status.wrong {
+  background: var(--c-bad-bg);
+  color: var(--c-bad);
+}
+
+.status.failed-but-solving,
+.status.revealed {
+  background: var(--c-warn-bg);
+  color: var(--c-warn);
+}
+
+.status.completed {
+  background: var(--c-info-bg);
+  color: var(--c-info);
+}
+
+@media (prefers-color-scheme: dark) {
+  .status {
+    background: #303036;
+  }
+}
+
+/* --- Form rows --- */
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 10px;
+}
+
+.field label {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--c-font-dim);
+}
+
+.field input,
+.field textarea {
+  font: inherit;
+  font-size: 14px;
+  padding: 8px 10px;
+  border: 1px solid var(--c-border);
+  border-radius: var(--c-radius-small);
+  background: var(--c-bg-input);
+  color: var(--c-font);
+}
+
+.field textarea {
+  min-height: 44px;
+  resize: vertical;
+}
+
+/* --- Feedback + helpers --- */
+
+.error {
+  background: var(--c-bad-bg);
+  color: var(--c-bad);
+  border-radius: var(--c-radius-small);
+  padding: 8px 12px;
+  font-size: 13px;
+}
+
+.ok {
+  background: var(--c-good-bg);
+  color: var(--c-good);
+  border-radius: var(--c-radius-small);
+  padding: 8px 12px;
+  font-size: 13px;
+}
+
+.muted {
+  color: var(--c-font-dim);
+}
+
+/* --- Empty state (new in S1; no app.css counterpart) --- */
+
+.empty-state {
+  padding: 24px 16px;
+  text-align: center;
+}
+
+.empty-state p {
+  margin: 4px 0;
+  font-size: 14px;
+  color: var(--c-font-dim);
+}
