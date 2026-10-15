@@ -129,10 +129,10 @@ function showUpdateToast(worker: ServiceWorker): void {
     'background:#222;color:#fff;border-radius:8px;z-index:1000;' +
     'box-shadow:0 2px 8px rgba(0,0,0,0.3);font-size:14px;';
   const label = document.createElement('span');
-  label.textContent = 'Update available';
+  label.textContent = t('app.update.available');
   const button = document.createElement('button');
   button.type = 'button';
-  button.textContent = 'Reload';
+  button.textContent = t('app.update.reload');
   button.style.cssText = 'cursor:pointer;padding:4px 12px;border-radius:4px;border:none;';
   button.addEventListener('click', () => {
     worker.postMessage({ type: 'SKIP_WAITING' });

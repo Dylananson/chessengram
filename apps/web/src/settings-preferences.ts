@@ -37,7 +37,7 @@ export const CURATED_DEFAULTS: CuratedSettings = {
   failurePreset: 'retry-reset',
   stepBackAmount: 1,
   retryRetainAmount: 0,
-  newIntroductionLimitPerDay: 10,
+  newIntroductionLimitPerDay: 100,
   timingEnabled: true,
   relearningMinutes: 10,
 };

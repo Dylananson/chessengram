@@ -37,6 +37,12 @@ test('parseCurated clamps out-of-range values and rejects unknown presets', () =
   assert.equal(parsed.timingEnabled, CURATED_DEFAULTS.timingEnabled);
 });
 
+test('the new-per-day default is 100 and an explicitly stored 10 survives', () => {
+  assert.equal(CURATED_DEFAULTS.newIntroductionLimitPerDay, 100);
+  assert.equal(parseCurated({}).newIntroductionLimitPerDay, 100);
+  assert.equal(parseCurated({ newIntroductionLimitPerDay: 10 }).newIntroductionLimitPerDay, 10);
+});
+
 test('fromCurated only toggles timing.enabled and keeps the rest of the policy', () => {
   const settings = fromCurated({ ...CURATED_DEFAULTS, timingEnabled: false });
   assert.equal(settings.timing.enabled, false);

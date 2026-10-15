@@ -800,22 +800,43 @@ export function view(ctrl: TrainCtrl): VNode {
           ? t('review.position', { index: review.position, total: review.count - 1 })
           : '',
       ),
-      h('div.button-row', [
+      h('div.button-row.review-nav', [
         actionButton(t('review.first'), 'secondary', {
           id: 'review-first',
           disabled: !review?.canBack,
           onClick: () => ctrl.stepReview('first'),
         }),
-        actionButton(t('review.back'), 'secondary', {
-          id: 'review-back',
-          disabled: !review?.canBack,
-          onClick: () => ctrl.stepReview('back'),
-        }),
-        actionButton(t('review.forward'), 'secondary', {
-          id: 'review-forward',
-          disabled: !review?.canForward,
-          onClick: () => ctrl.stepReview('forward'),
-        }),
+        // MOB-001: Back/Forward render as small triangle symbols on all
+        // screens. Raw vnodes (same `button.button.button-secondary` shape,
+        // ids, and conditional `disabled` attrs `actionButton` would emit)
+        // because the shared helper has no aria-label slot; the accessible
+        // names reuse the existing `review.back` / `review.forward` strings.
+        h(
+          'button.button.button-secondary',
+          {
+            attrs: {
+              type: 'button',
+              id: 'review-back',
+              'aria-label': t('review.back'),
+              ...(review?.canBack ? {} : { disabled: true }),
+            },
+            on: { click: () => ctrl.stepReview('back') },
+          },
+          '◀',
+        ),
+        h(
+          'button.button.button-secondary',
+          {
+            attrs: {
+              type: 'button',
+              id: 'review-forward',
+              'aria-label': t('review.forward'),
+              ...(review?.canForward ? {} : { disabled: true }),
+            },
+            on: { click: () => ctrl.stepReview('forward') },
+          },
+          '▶',
+        ),
         actionButton(t('review.last'), 'secondary', {
           id: 'review-last',
           disabled: !review?.canForward,

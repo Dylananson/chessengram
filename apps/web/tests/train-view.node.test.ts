@@ -367,3 +367,101 @@ test('collection change restarts the session in the new scope', async () => {
   assert.notEqual(before, other);
   assert.equal(ctrl.activeCollectionId, other, 'picker follows the service');
 });
+
+// --- 9. MOB-001: arrow steppers + mobile order ---------------------------------
+
+function findById(vnode: VNode, id: string): VNode | null {
+  let found: VNode | null = null;
+  walkVNode(vnode, (node) => {
+    if (found !== null) return;
+    const fromAttrs = (node.data as { attrs?: { id?: string } } | undefined)?.attrs?.id;
+    const match = typeof node.sel === 'string' && /#([A-Za-z0-9_-]+)/.exec(node.sel);
+    if (fromAttrs === id || match?.[1] === id) found = node;
+  });
+  return found;
+}
+
+function buttonText(node: VNode): string {
+  if (typeof node.text === 'string') return node.text;
+  return (node.children ?? [])
+    .map((child) =>
+      typeof child === 'object' && child !== null && 'text' in child
+        ? String((child as { text?: unknown }).text ?? '')
+        : '',
+    )
+    .join('');
+}
+
+async function makeCompletedReview(): Promise<TrainCtrl> {
+  const service = await makeService();
+  await service.seedContent([makePuzzle({ id: 'mob-a', solution: ['e2e4', 'e7e5'] })]);
+  const adapter = new TrainingAdapter(service);
+  await adapter.startSession('test-program', 'test-collection');
+  const ctrl = new TrainCtrl(service, adapter, makeRecordingBoard().port);
+  await ctrl.beginAttempt(await adapter.loadPuzzle('mob-a'));
+  await ctrl.resolveUserMove('d2', 'd4');
+  await ctrl.resolveUserMove('e2', 'e4');
+  await new Promise((resolve) => setTimeout(resolve, 450));
+  assert.ok(ctrl.review !== null, 'review line built for the completed puzzle');
+  return ctrl;
+}
+
+test('MOB-001: Back/Forward are ◀ ▶ symbols with aria-labels, ids and end-states kept', async () => {
+  const c = await makeCompletedReview();
+
+  // Entry sits at the final position: back enabled, forward disabled.
+  let back = findById(view(c), 'review-back');
+  let forward = findById(view(c), 'review-forward');
+  assert.ok(back && forward, 'both steppers rendered');
+  assert.equal(buttonText(back), '◀');
+  assert.equal(buttonText(forward), '▶');
+  assert.equal(
+    (back.data as { attrs?: Record<string, unknown> } | undefined)?.attrs?.['aria-label'],
+    'Back',
+  );
+  assert.equal(
+    (forward.data as { attrs?: Record<string, unknown> } | undefined)?.attrs?.['aria-label'],
+    'Forward',
+  );
+  assert.ok(back.sel.includes('button'), 'back keeps the button shape');
+  assert.equal(
+    (back.data as { attrs?: Record<string, unknown> } | undefined)?.attrs?.disabled,
+    undefined,
+    'back enabled at the line end',
+  );
+  assert.equal(
+    (forward.data as { attrs?: Record<string, unknown> } | undefined)?.attrs?.disabled,
+    true,
+    'forward disabled at the line end',
+  );
+
+  // Step to the start: the disabled states flip to the other end.
+  c.stepReview('first');
+  back = findById(view(c), 'review-back');
+  forward = findById(view(c), 'review-forward');
+  assert.equal(
+    (back?.data as { attrs?: Record<string, unknown> } | undefined)?.attrs?.disabled,
+    true,
+    'back disabled at the line start',
+  );
+  assert.equal(
+    (forward?.data as { attrs?: Record<string, unknown> } | undefined)?.attrs?.disabled,
+    undefined,
+    'forward enabled at the line start',
+  );
+
+  // First/Last stay text buttons with their ids.
+  assert.equal(buttonText(findById(view(c), 'review-first')!), 'Start');
+  assert.equal(buttonText(findById(view(c), 'review-last')!), 'End');
+});
+
+test('MOB-001: mobile CSS orders the review section above the detail panels', async () => {
+  const { readFileSync } = await import('node:fs');
+  const css = readFileSync(new URL('../src/app.css', import.meta.url), 'utf8');
+  const mobile = css.match(/@media\s*\(\s*max-width:\s*640px\s*\)\s*\{([\s\S]*?)\n\}/);
+  assert.ok(mobile, 'narrow-screen media block present');
+  assert.ok(
+    /\.controls\s+#review-section\s*\{[^}]*order:\s*-1/.test(mobile![1]!),
+    'review section ordered first inside .controls on mobile',
+  );
+});

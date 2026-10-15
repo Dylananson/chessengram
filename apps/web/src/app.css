@@ -186,6 +186,13 @@ h1 {
   .board {
     max-width: none;
   }
+  /* MOB-001: mobile review order is board → review arrows → details. The
+     vnode tree is untouched (board host stays outside the patched subtree);
+     `.controls` is already a flex column, so `order` pulls the review
+     section above the puzzle-detail panels on narrow screens only. */
+  .controls #review-section {
+    order: -1;
+  }
 }
 .hidden {
   display: none;
@@ -223,6 +230,13 @@ h1 {
 .button-row .button {
   flex: 1 1 0;
   width: auto;
+}
+/* MOB-001: review steppers stay compact so the ◀ ▶ symbols read as small
+   arrow buttons next to the text first/last controls (all screens). */
+.review-nav .button {
+  flex: 0 0 auto;
+  width: auto;
+  padding: 10px 14px;
 }
 .button-secondary {
   background: #6c757d;

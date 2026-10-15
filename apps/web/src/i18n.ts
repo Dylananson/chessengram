@@ -15,6 +15,8 @@ export type LocaleMessages = Record<string, string>;
 const en: LocaleMessages = {
   'app.title': 'ChessReps',
   'app.subtitle': 'Spaced-repetition puzzle training',
+  'app.update.available': 'Update available',
+  'app.update.reload': 'Reload',
   'nav.train': 'Train',
   'nav.puzzles': 'Puzzles',
   'nav.collections': 'Collections',
