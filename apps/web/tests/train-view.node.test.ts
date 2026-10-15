@@ -574,6 +574,139 @@ test('BRD-001: selection survives the opponent reply render', async () => {
   assert.equal(after.selected, undefined, 'invalid selection not re-asserted');
 });
 
+// --- 11. BRD-003: restart after completion -------------------------------------
+
+async function makeRestartWorld(
+  id: string,
+  solution: string[],
+): Promise<{ service: LocalTrainingService; adapter: TrainingAdapter }> {
+  const service = await makeService();
+  await service.seedContent([makePuzzle({ id, solution })]);
+  const adapter = new TrainingAdapter(service);
+  await adapter.startSession('test-program', 'test-collection');
+  return { service, adapter };
+}
+
+test('BRD-003: restart after success starts a new scored attempt, old outcome untouched', async () => {
+  const { service, adapter } = await makeRestartWorld('rs-a', ['e2e4']);
+  const board = makeRecordingBoard();
+  const ctrl = new TrainCtrl(service, adapter, board.port);
+
+  await ctrl.beginAttempt(await adapter.loadPuzzle('rs-a'));
+  await ctrl.resolveUserMove('e2', 'e4');
+  assert.equal(ctrl.game?.isCompleted, true);
+  assert.equal(ctrl.status.key, 'status.completed');
+  assert.ok(ctrl.review !== null, 'review entered on completion');
+
+  const [first] = adapter.listAttemptsForPuzzle('rs-a', 5);
+  assert.ok(first, 'finished attempt recorded');
+  assert.equal(first.outcome, 'success');
+  const firstId = first.attemptId.value;
+  const firstEvents = first.events.length;
+  assert.equal(adapter.getActiveAttemptId(), undefined, 'finished attempt closed');
+
+  // Restart button visible at completion with the ↻ symbol.
+  const atCompletion = findById(view(ctrl), 'restart-btn');
+  assert.ok(atCompletion, 'restart button rendered');
+  assert.ok(!atCompletion.sel.includes('hidden'), 'restart visible after success');
+  assert.equal(buttonText(atCompletion), '↻');
+  assert.equal(
+    (atCompletion.data as { attrs?: Record<string, unknown> } | undefined)?.attrs?.[
+      'aria-label'
+    ],
+    'Try again',
+  );
+
+  await ctrl.onRestart();
+  assert.equal(ctrl.game?.isCompleted, false, 'fresh game at the starting position');
+  assert.equal(ctrl.status.key, 'status.yourTurn');
+  assert.equal(ctrl.scoredCommitted, false, 'scoring state reset');
+  assert.equal(ctrl.review, null, 'review section reset');
+  assert.equal(ctrl.solutionHidden, true);
+  assert.equal(ctrl.nextDisabled, true);
+  assert.equal(ctrl.skipDisabled, false);
+  const activeId = adapter.getActiveAttemptId();
+  assert.ok(activeId, 'new attempt started');
+  assert.notEqual(activeId, firstId, 'new attemptId via the normal startAttempt path');
+  assert.ok(!vnodeIds(view(ctrl)).includes('board'), 'no board host vnode after restart');
+  const afterRestart = findById(view(ctrl), 'restart-btn');
+  assert.ok(afterRestart?.sel.includes('hidden'), 'restart hidden again mid-attempt');
+
+  // The finished attempt is immutable: same outcome and event history.
+  // (`listAttempts` is newest-first, so locate the finished attempt by id.)
+  const stillFirst = adapter
+    .listAttemptsForPuzzle('rs-a', 5)
+    .find((a) => a.attemptId.value === firstId);
+  assert.equal(stillFirst?.outcome, 'success');
+  assert.equal(stillFirst?.events.length, firstEvents);
+
+  // The restarted attempt scores ordinarily: solve it and see two attempts.
+  await ctrl.resolveUserMove('e2', 'e4');
+  assert.equal(ctrl.status.key, 'status.completed');
+  const attempts = adapter.listAttemptsForPuzzle('rs-a', 5);
+  assert.equal(attempts.length, 2, 'restart recorded as a separate ordinary attempt');
+  assert.ok(attempts.every((a) => a.outcome === 'success'));
+  assert.notEqual(attempts[0]?.attemptId.value, attempts[1]?.attemptId.value);
+});
+
+test('BRD-003: restart after correction-complete also starts a fresh attempt', async () => {
+  const { service, adapter } = await makeRestartWorld('rs-b', ['e2e4', 'e7e5']);
+  const ctrl = new TrainCtrl(service, adapter, makeRecordingBoard().port);
+
+  await ctrl.beginAttempt(await adapter.loadPuzzle('rs-b'));
+  await ctrl.resolveUserMove('d2', 'd4');
+  assert.equal(ctrl.status.key, 'status.wrong');
+  await ctrl.resolveUserMove('e2', 'e4');
+  await new Promise((resolve) => setTimeout(resolve, 450));
+  assert.equal(ctrl.game?.isCompleted, true);
+  assert.equal(ctrl.status.key, 'status.correctionComplete');
+
+  const [first] = adapter.listAttemptsForPuzzle('rs-b', 5);
+  assert.ok(first, 'correction attempt recorded');
+  const firstOutcome = first.outcome;
+  const firstEvents = first.events.length;
+  const restartVisible = findById(view(ctrl), 'restart-btn');
+  assert.ok(restartVisible && !restartVisible.sel.includes('hidden'), 'restart visible after correction');
+
+  await ctrl.onRestart();
+  assert.equal(ctrl.game?.isCompleted, false);
+  assert.equal(ctrl.game?.failedState, false, 'fresh game is not failed');
+  assert.equal(ctrl.status.key, 'status.yourTurn');
+  assert.equal(ctrl.review, null);
+  assert.ok(adapter.getActiveAttemptId(), 'new attempt started');
+
+  const unchanged = adapter
+    .listAttemptsForPuzzle('rs-b', 5)
+    .find((a) => a.attemptId.value === first.attemptId.value);
+  assert.equal(unchanged?.outcome, firstOutcome, 'finished correction outcome untouched');
+  assert.equal(unchanged?.events.length, firstEvents, 'finished correction history untouched');
+
+  // The restarted attempt is an ordinary attempt: a clean solve succeeds.
+  await ctrl.resolveUserMove('e2', 'e4');
+  await new Promise((resolve) => setTimeout(resolve, 450));
+  assert.equal(ctrl.status.key, 'status.completed');
+  assert.equal(adapter.listAttemptsForPuzzle('rs-b', 5).length, 2);
+});
+
+test('BRD-003: restart is a no-op before completion', async () => {
+  const { service, adapter } = await makeRestartWorld('rs-c', ['e2e4', 'e7e5']);
+  const ctrl = new TrainCtrl(service, adapter, makeRecordingBoard().port);
+
+  await ctrl.beginAttempt(await adapter.loadPuzzle('rs-c'));
+  const hidden = findById(view(ctrl), 'restart-btn');
+  assert.ok(hidden?.sel.includes('hidden'), 'restart hidden mid-attempt');
+
+  const activeBefore = adapter.getActiveAttemptId();
+  await ctrl.onRestart();
+  assert.equal(adapter.getActiveAttemptId(), activeBefore, 'no new attempt started');
+  assert.equal(ctrl.status.key, 'status.yourTurn', 'status untouched');
+  assert.equal(ctrl.game?.isCompleted, false);
+
+  // Same guard on a fresh ctrl with no puzzle at all.
+  const empty = new TrainCtrl(service, adapter, makeRecordingBoard().port);
+  await empty.onRestart();
+  assert.equal(empty.game, null);
+});
 test('BRD-001: promotion premove goes through the picker and executes', async () => {
   const { service, adapter } = await makePremoveWorld(['e2e4', 'e7e5', 'b7b8q'], {
     solverFen: '7k/1P2p3/8/8/8/8/4P3/K7 w - - 0 1',

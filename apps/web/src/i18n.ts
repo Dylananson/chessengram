@@ -154,6 +154,7 @@ const en: LocaleMessages = {
   'board.title': 'Board',
   'next.label': 'Next puzzle',
   'next.none': 'No puzzle due',
+  'restart.label': 'Try again',
   'promotion.title': 'Choose a promotion piece',
   'promotion.queen': 'Promote to queen',
   'promotion.rook': 'Promote to rook',

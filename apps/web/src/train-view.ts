@@ -791,6 +791,21 @@ export class TrainCtrl {
 
   // --- actions -------------------------------------------------------------
 
+  /**
+   * BRD-003: restart the completed puzzle as a NEW scored attempt. Only
+   * available once the game is completed (success or correction-complete);
+   * reuses `beginAttempt`, so the finished attempt's immutable outcome and
+   * event history are never touched — `startAttempt` mints a fresh attemptId
+   * and the scheduler sees an ordinary attempt on the same puzzle.
+   */
+  async onRestart(): Promise<void> {
+    if (this.disposed) return;
+    if (!this.game?.isCompleted) return;
+    const puzzle = this.currentPuzzle ?? this.infoPuzzle;
+    if (!puzzle) return;
+    await this.beginAttempt(puzzle);
+  }
+
   async onSkip(): Promise<void> {
     if (this.disposed) return;
     if (!this.adapter.getActiveAttemptId()) return;
@@ -1017,6 +1032,19 @@ export function view(ctrl: TrainCtrl): VNode {
         disabled: ctrl.nextDisabled,
         onClick: () => void ctrl.loadNext(),
       }),
+      // BRD-003: restart affordance. Hidden until the puzzle completes
+      // (success or correction-complete); the ↻ symbol keeps the button
+      // compact (TRN-001) with the accessible name on `restart.label`.
+      // Raw vnode (same `button.button.button-secondary` shape) because the
+      // conditional `.hidden` class has no `actionButton` expression.
+      h(
+        `button#restart-btn.button.button-secondary${ctrl.game?.isCompleted ? '' : '.hidden'}`,
+        {
+          attrs: { type: 'button', 'aria-label': t('restart.label') },
+          on: { click: () => void ctrl.onRestart() },
+        },
+        '↻',
+      ),
       // Raw vnode: the conditional `.hidden` class has no `actionButton`
       // expression (same id/classes/strings in the DOM).
       h(
