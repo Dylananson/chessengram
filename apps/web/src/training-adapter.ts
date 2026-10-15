@@ -255,6 +255,16 @@ export class TrainingAdapter {
     };
   }
 
+  /**
+   * Read-only: newest recorded attempts for a puzzle (for post-completion
+   * review). Delegates to the service's read API; no writes, no grading, no
+   * reservation changes. Returns defensive copies (the service clones).
+   */
+  listAttemptsForPuzzle(puzzleId: string, limit = 5): AttemptRecord[] {
+    const programId = this.currentProgressKey?.programId ?? this.currentProgramId;
+    return this.service.listAttempts({ programId, puzzleId, limit });
+  }
+
   keyOf(key: ProgressKey): string {
     return progressKeyToString(key);
   }

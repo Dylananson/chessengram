@@ -31,5 +31,5 @@ flowchart TD
 | T16 | First usable release | B1 B2 B3 B5 B6 B4 HW | — | **Blocked: user sign-off** |
 
 Round log:
-- R1: B1 + B2 + B3 (disjoint paths).
-- R2 (planned): B5 + B6 (disjoint paths). B4 waits on user scope.
+- R1: B1 + B2 + B3 (disjoint paths) — Done 2026-10-15 (`a328313`). 111 tests green (7+35+69), typecheck + build clean. B1: behavior unchanged, tiebreaker locked by comment + 10 fairness tests. B2: `listAttempts` + per-attempt rows. B3: header fix + adr-sweep note (recommends accept 001/004 for local scope, defer 002/003; T13 reword proposed).
+- R2 (planned): B5 + B6 (B6 barred from `i18n.ts` so both run parallel). B4 waits on user scope.

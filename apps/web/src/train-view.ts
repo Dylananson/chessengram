@@ -17,7 +17,7 @@ import type { SquareName } from 'chessops/types';
 
 import type { AppContext } from './app-context.ts';
 import { t } from './i18n.ts';
-import { PuzzleGame, type PromotionRole } from './puzzle-game.ts';
+import { PuzzleGame, ReviewNavigator, buildReviewLine, type PromotionRole } from './puzzle-game.ts';
 import type { Screen } from './router.ts';
 import { DEFAULT_PROGRAM_ID } from './scheduler-service.ts';
 import { AttemptTimer } from './timing.ts';
@@ -38,6 +38,8 @@ export class TrainView implements Screen {
   private scoredCommitted = false;
   private pendingPromotion: { from: Key; to: Key } | null = null;
   private revealed = false;
+  private currentPuzzle: NormalizedPuzzle | null = null;
+  private review: ReviewNavigator | null = null;
 
   private el: {
     status?: HTMLElement;
@@ -54,6 +56,12 @@ export class TrainView implements Screen {
     storage?: HTMLElement;
     queue?: HTMLElement;
     board?: HTMLElement;
+    reviewSection?: HTMLElement;
+    reviewLabel?: HTMLElement;
+    reviewFirst?: HTMLButtonElement;
+    reviewBack?: HTMLButtonElement;
+    reviewForward?: HTMLButtonElement;
+    reviewLast?: HTMLButtonElement;
   } = {};
 
   private readonly onVisibility = (): void => {
@@ -116,6 +124,8 @@ export class TrainView implements Screen {
     this.ground?.destroy();
     this.ground = null;
     this.game = null;
+    this.currentPuzzle = null;
+    this.review = null;
     this.host = null;
   }
 
@@ -137,6 +147,12 @@ export class TrainView implements Screen {
     this.el.storage = h.querySelector('#storage') ?? undefined;
     this.el.queue = h.querySelector('#queue') ?? undefined;
     this.el.board = h.querySelector('#board') ?? undefined;
+    this.el.reviewSection = h.querySelector('#review-section') ?? undefined;
+    this.el.reviewLabel = h.querySelector('#review-label') ?? undefined;
+    this.el.reviewFirst = h.querySelector('#review-first') ?? undefined;
+    this.el.reviewBack = h.querySelector('#review-back') ?? undefined;
+    this.el.reviewForward = h.querySelector('#review-forward') ?? undefined;
+    this.el.reviewLast = h.querySelector('#review-last') ?? undefined;
   }
 
   private text(id: keyof typeof this.el): HTMLElement {
@@ -292,6 +308,77 @@ export class TrainView implements Screen {
     this.nextBtn().disabled = false;
     this.btn('skip').disabled = true;
     this.updateProgress();
+    this.enterReview();
+  }
+
+  // --- attempt review (read-only, completed puzzles only) -------------------
+  //
+  // B5/AN-001a: after a puzzle completes, the user can step back/forward
+  // through their own attempt (solver plies + auto-played opponent replies,
+  // wrong attempts included) with the board rendered at each step. Review is
+  // entered only from the completed state, renders non-interactively, and
+  // performs no schedule or attempt writes (read via `listAttemptsForPuzzle`).
+
+  /** Drop review state and hide the review controls (new attempt starting). */
+  private resetReview(): void {
+    this.review = null;
+    this.el.reviewSection?.classList.add('hidden');
+  }
+
+  /**
+   * Build the review line from the recorded attempt events and show the
+   * controls at the final position. No-op unless the puzzle is completed.
+   */
+  private enterReview(): void {
+    if (!this.game?.isCompleted || !this.currentPuzzle) {
+      this.resetReview();
+      return;
+    }
+    const [latest] = this.adapter.listAttemptsForPuzzle(this.currentPuzzle.id, 1);
+    const events = latest?.events ?? [];
+    const line = buildReviewLine(this.currentPuzzle, events);
+    if (line.length < 2) {
+      this.resetReview();
+      return;
+    }
+    this.review = new ReviewNavigator(line);
+    this.el.reviewSection?.classList.remove('hidden');
+    this.renderReviewStep();
+  }
+
+  /** Render the navigator's current step. Non-interactive; no state writes. */
+  private renderReviewStep(): void {
+    if (!this.review || !this.game?.isCompleted) return;
+    const step = this.review.current();
+    this.renderPosition({
+      fen: step.fen,
+      lastMove: step.uci ? uciToKeys(step.uci) : undefined,
+      interactive: false,
+    });
+    this.updateReviewControls();
+  }
+
+  private updateReviewControls(): void {
+    if (!this.review) return;
+    if (this.el.reviewLabel) {
+      this.el.reviewLabel.textContent = t('review.position', {
+        index: this.review.position,
+        total: this.review.count - 1,
+      });
+    }
+    if (this.el.reviewFirst) this.el.reviewFirst.disabled = !this.review.canBack;
+    if (this.el.reviewBack) this.el.reviewBack.disabled = !this.review.canBack;
+    if (this.el.reviewForward) this.el.reviewForward.disabled = !this.review.canForward;
+    if (this.el.reviewLast) this.el.reviewLast.disabled = !this.review.canForward;
+  }
+
+  private stepReview(direction: 'first' | 'back' | 'forward' | 'last'): void {
+    if (!this.review || !this.game?.isCompleted) return;
+    if (direction === 'first') this.review.first();
+    else if (direction === 'back') this.review.back();
+    else if (direction === 'forward') this.review.forward();
+    else this.review.last();
+    this.renderReviewStep();
   }
 
   // --- promo overlay -------------------------------------------------------
@@ -330,6 +417,8 @@ export class TrainView implements Screen {
 
   private async beginAttempt(p: NormalizedPuzzle): Promise<void> {
     this.game = new PuzzleGame(p);
+    this.currentPuzzle = p;
+    this.resetReview();
     this.timer = new AttemptTimer();
     this.scoredCommitted = false;
     this.pendingPromotion = null;
@@ -542,6 +631,10 @@ export class TrainView implements Screen {
     this.btn('practice').addEventListener('click', () => void this.onPractice());
     this.btn('skip').addEventListener('click', () => void this.onSkip());
     this.btn('reveal').addEventListener('click', () => void this.onReveal());
+    this.el.reviewFirst?.addEventListener('click', () => this.stepReview('first'));
+    this.el.reviewBack?.addEventListener('click', () => this.stepReview('back'));
+    this.el.reviewForward?.addEventListener('click', () => this.stepReview('forward'));
+    this.el.reviewLast?.addEventListener('click', () => this.stepReview('last'));
 
     const overlay = document.getElementById('promotion')!;
     const onChoice = (e: Event): void => {
@@ -574,6 +667,13 @@ function roleName(role: PromotionRole): string {
   return role === 'q' ? 'queen' : role === 'r' ? 'rook' : role === 'b' ? 'bishop' : 'knight';
 }
 
+/** Last-move highlight squares for a review step (`e2e4` → `['e2', 'e4']`). */
+function uciToKeys(uci: string): Key[] | undefined {
+  const match = /^[a-h][1-8][a-h][1-8][qrbn]?$/.exec(uci);
+  if (!match) return undefined;
+  return [uci.slice(0, 2) as Key, uci.slice(2, 4) as Key];
+}
+
 function template(): string {
   return `
     <div class="layout">
@@ -601,6 +701,17 @@ function template(): string {
             <button id="reveal-btn" class="button button-secondary" type="button">${t('reveal.show')}</button>
           </div>
           <div id="solution" class="solution-preview hidden">-</div>
+        </div>
+        <div class="info hidden" id="review-section">
+          <h2 data-i18n="review.title"></h2>
+          <p class="progress-note">${t('review.hint')}</p>
+          <p id="review-label"></p>
+          <div class="button-row">
+            <button id="review-first" class="button button-secondary" type="button">${t('review.first')}</button>
+            <button id="review-back" class="button button-secondary" type="button">${t('review.back')}</button>
+            <button id="review-forward" class="button button-secondary" type="button">${t('review.forward')}</button>
+            <button id="review-last" class="button button-secondary" type="button">${t('review.last')}</button>
+          </div>
         </div>
         <div class="button-row">
           <button id="skip-btn" class="button button-secondary" type="button">${t('skip.label')}</button>

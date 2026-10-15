@@ -107,13 +107,65 @@ async function init(): Promise<void> {
 /**
  * Register the offline app-shell service worker (production builds only).
  * Called before any awaited work so it does not depend on the page load event.
+ *
+ * REL-001 remainder: when a new worker finishes installing while this page is
+ * still controlled by the old one, show a minimal "update available — reload"
+ * toast. Clicking reload posts SKIP_WAITING to the waiting worker; the page
+ * reloads on `controllerchange`. Pure progressive enhancement: failures are
+ * ignored and boot never depends on it.
+ * NOTE I18N-FOLLOWUP: strings below are hardcoded English until `review.*`
+ * work lands; add keys `app.update.available` / `app.update.reload` in i18n.ts
+ * and swap `textContent` for `t(...)` then.
  */
+function showUpdateToast(worker: ServiceWorker): void {
+  if (document.getElementById('update-toast')) return;
+  const toast = document.createElement('div');
+  toast.id = 'update-toast';
+  toast.setAttribute('role', 'status');
+  toast.style.cssText =
+    'position:fixed;left:50%;bottom:16px;transform:translateX(-50%);' +
+    'display:flex;gap:12px;align-items:center;padding:10px 14px;' +
+    'background:#222;color:#fff;border-radius:8px;z-index:1000;' +
+    'box-shadow:0 2px 8px rgba(0,0,0,0.3);font-size:14px;';
+  const label = document.createElement('span');
+  label.textContent = 'Update available';
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.textContent = 'Reload';
+  button.style.cssText = 'cursor:pointer;padding:4px 12px;border-radius:4px;border:none;';
+  button.addEventListener('click', () => {
+    worker.postMessage({ type: 'SKIP_WAITING' });
+  });
+  toast.append(label, button);
+  document.body.appendChild(toast);
+}
+
 function registerServiceWorker(): void {
   if (!import.meta.env.PROD) return;
   if (!('serviceWorker' in navigator)) return;
-  navigator.serviceWorker.register('/sw.js').catch(() => {
-    // Offline caching is a progressive enhancement; ignore registration failures.
+  let refreshing = false;
+  navigator.serviceWorker.addEventListener('controllerchange', () => {
+    if (refreshing) return;
+    refreshing = true;
+    window.location.reload();
   });
+  navigator.serviceWorker
+    .register('/sw.js')
+    .then((registration) => {
+      if (registration.waiting) showUpdateToast(registration.waiting);
+      registration.addEventListener('updatefound', () => {
+        const worker = registration.installing;
+        if (!worker) return;
+        worker.addEventListener('statechange', () => {
+          if (worker.state === 'installed' && navigator.serviceWorker.controller) {
+            showUpdateToast(worker);
+          }
+        });
+      });
+    })
+    .catch(() => {
+      // Offline caching is a progressive enhancement; ignore registration failures.
+    });
 }
 
 registerServiceWorker();
