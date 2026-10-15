@@ -328,6 +328,15 @@ try {
     cacheKeys.includes('/index.html') && cacheKeys.some((k) => k.startsWith('/assets/')),
     `${cacheKeys.length} keys`,
   );
+  // REL-001: versioned-cache discipline — activate must leave exactly one
+  // chessreps-shell-* cache so a version bump can never strand a stale shell.
+  const shellCaches = await page.evaluate(async () =>
+    (await caches.keys()).filter((k) => k.startsWith('chessreps-shell-')));
+  check(
+    'single versioned shell cache (no stale shell)',
+    shellCaches.length === 1 && shellCaches[0] === 'chessreps-shell-v1',
+    shellCaches.join(', '),
+  );
   await page.setOfflineMode(true);
   try {
     await page.reload({ waitUntil: 'domcontentloaded', timeout: 20000 });

@@ -18,6 +18,7 @@
 import {
   Scheduler,
   resolveSettings,
+  selectEarliestFutureDue,
   selectNextDue,
   type Candidate,
   type Clock,
@@ -634,12 +635,19 @@ export class LocalTrainingService implements TrainingService {
     const excluded = new Set(request.excludedKeys ?? []);
     const newIntroductionsAllowed =
       this.countIntroducedToday(programId, now) < this.settings.newIntroductionLimitPerDay;
+    // UX-001: remember new puzzles suppressed by the daily cap so the
+    // no-eligible fallback can report `daily-limit-reached` distinctly from
+    // plain all-future-due (`no-due-work`).
+    let newCappedOut = false;
 
     for (const puzzleId of this.puzzleOrder) {
       if (excluded.has(puzzleId)) continue;
       const key = `${programId}:${puzzleId}`;
       const state = this.schedules.get(key)?.schedule ?? this.scheduler.createState().schedule;
-      if (state.state === 'new' && !newIntroductionsAllowed) continue;
+      if (state.state === 'new' && !newIntroductionsAllowed) {
+        newCappedOut = true;
+        continue;
+      }
       seen.add(key);
       candidates.push({ progressKey: key, state, orderKey: puzzleId });
       if (state.state === 'new') newOrder.push(key);
@@ -656,14 +664,16 @@ export class LocalTrainingService implements TrainingService {
 
     const chosen = selectNextDue(candidates, { now, reservedKeys: reserved, newOrder });
     if (!chosen) {
-      let nextDueAt: number | undefined;
-      for (const candidate of candidates) {
-        const due = candidate.state.dueAt;
-        if (due !== undefined && due > now) {
-          nextDueAt = nextDueAt === undefined ? due : Math.min(nextDueAt, due);
-        }
-      }
-      return { puzzleId: null, reason: 'no-due-work', nextDueAt };
+      // UX-001: non-empty library with nothing eligible. Surface the
+      // earliest future due time (for the opt-in "practice ahead" action in
+      // the UI) and report the daily new-puzzle cap distinctly. Practice
+      // itself stays opt-in: selection never auto-starts future-due work.
+      const fallback = selectEarliestFutureDue(candidates, { now, reservedKeys: reserved });
+      return {
+        puzzleId: null,
+        reason: newCappedOut ? 'daily-limit-reached' : 'no-due-work',
+        nextDueAt: fallback?.state.dueAt,
+      };
     }
 
     return { puzzleId: chosen.slice(programId.length + 1) };

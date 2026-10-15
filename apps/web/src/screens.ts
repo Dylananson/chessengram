@@ -34,9 +34,9 @@ export function registerStubScreens(_ctx: AppContext): void {
   // Registration happens in app.ts; the map below is the single source of ids.
 }
 
-/** Factory registry used by app.ts. */
+/** Factory registry used by app.ts. The collections stub stays until T13-followup. */
 export function stubFactories(): { id: ScreenId; factory: (ctx: AppContext) => Screen }[] {
-  return (['collections', 'history'] as ScreenId[]).map((id) => ({
+  return (['collections'] as ScreenId[]).map((id) => ({
     id,
     factory: () => stub(id),
   }));

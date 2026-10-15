@@ -21,6 +21,7 @@ import { PuzzleGame, type PromotionRole } from './puzzle-game.ts';
 import type { Screen } from './router.ts';
 import { DEFAULT_PROGRAM_ID } from './scheduler-service.ts';
 import { AttemptTimer } from './timing.ts';
+import { selectEarliestFutureDue, type Candidate } from '@chessreps/scheduler';
 import type { NormalizedPuzzle } from '@chessreps/contracts';
 
 const START_FEN = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
@@ -48,6 +49,7 @@ export class TrainView implements Screen {
     reveal?: HTMLButtonElement;
     skip?: HTMLButtonElement;
     next?: HTMLButtonElement;
+    practice?: HTMLButtonElement;
     progress?: HTMLElement;
     storage?: HTMLElement;
     queue?: HTMLElement;
@@ -98,12 +100,7 @@ export class TrainView implements Screen {
         if (selection.puzzleId) {
           await this.beginAttempt(await this.adapter.loadPuzzle(selection.puzzleId));
         } else {
-          this.setStatus('status.noDue', undefined, {
-            when: selection.nextDueAt
-              ? new Date(selection.nextDueAt).toLocaleString()
-              : t('puzzle.none'),
-          });
-          this.nextBtn().disabled = false;
+          this.showNoDue(selection);
         }
       }
       this.updateProgress();
@@ -135,6 +132,7 @@ export class TrainView implements Screen {
     this.el.reveal = h.querySelector('#reveal-btn') ?? undefined;
     this.el.skip = h.querySelector('#skip-btn') ?? undefined;
     this.el.next = h.querySelector('#next-btn') ?? undefined;
+    this.el.practice = h.querySelector('#practice-btn') ?? undefined;
     this.el.progress = h.querySelector('#progress') ?? undefined;
     this.el.storage = h.querySelector('#storage') ?? undefined;
     this.el.queue = h.querySelector('#queue') ?? undefined;
@@ -145,7 +143,7 @@ export class TrainView implements Screen {
     return this.el[id] as HTMLElement;
   }
 
-  private btn(id: 'reveal' | 'skip' | 'next'): HTMLButtonElement {
+  private btn(id: 'reveal' | 'skip' | 'next' | 'practice'): HTMLButtonElement {
     return this.el[id] as HTMLButtonElement;
   }
 
@@ -344,6 +342,7 @@ export class TrainView implements Screen {
     this.nextBtn().disabled = true;
     this.btn('skip').disabled = false;
     this.btn('reveal').disabled = false;
+    this.btn('practice').classList.add('hidden');
     this.updatePuzzleInfo(p);
     this.setStatus('status.yourTurn', undefined, { color: t(`color.${p.solverColor}`) });
     this.renderPosition();
@@ -353,16 +352,108 @@ export class TrainView implements Screen {
   private async loadNext(): Promise<void> {
     if (this.game?.isCompleted === false && this.adapter.getActiveAttemptId()) return;
     this.nextBtn().disabled = true;
+    this.btn('practice').classList.add('hidden');
     const selection = await this.adapter.selectNext();
     if (!selection.puzzleId) {
-      const when = selection.nextDueAt
-        ? new Date(selection.nextDueAt).toLocaleString()
-        : t('puzzle.none');
-      this.setStatus('status.noDue', undefined, { when });
-      this.nextBtn().disabled = false;
+      this.showNoDue(selection);
       return;
     }
     await this.beginAttempt(await this.adapter.loadPuzzle(selection.puzzleId));
+  }
+
+  /**
+   * UX-001 no-due UI: never strand the user with a non-empty library.
+   * - `queue-empty` (no puzzles at all) shows the empty-library status.
+   * - `daily-limit-reached` (new-per-day cap) is shown distinctly from plain
+   *   `no-due-work` (everything due in the future), both with the earliest
+   *   due time when known.
+   * - When a practice target exists, an explicit opt-in button starts it:
+   *   the earliest future-due puzzle ("practice ahead"), or — only when the
+   *   cap is the blocker and nothing is due in the future — a new puzzle
+   *   anyway. Practice attempts are scored normally; nothing is auto-started
+   *   and no schedule state is fabricated.
+   */
+  private showNoDue(selection: {
+    puzzleId: string | null;
+    nextDueAt?: number;
+    reason?: string;
+  }): void {
+    const when = selection.nextDueAt
+      ? new Date(selection.nextDueAt).toLocaleString()
+      : t('puzzle.none');
+    const practiceBtn = this.btn('practice');
+    if (selection.reason === 'queue-empty') {
+      this.setStatus('status.queueEmpty');
+      practiceBtn.classList.add('hidden');
+    } else {
+      if (selection.reason === 'daily-limit-reached') {
+        this.setStatus('status.dailyLimit', undefined, { when });
+      } else {
+        this.setStatus('status.noDue', undefined, { when });
+      }
+      const target = this.findPracticeTarget(selection.reason);
+      if (target) {
+        practiceBtn.textContent = t(
+          target.kind === 'ahead' ? 'practiceAhead.label' : 'practiceNew.label',
+        );
+        practiceBtn.classList.remove('hidden');
+      } else {
+        practiceBtn.classList.add('hidden');
+      }
+    }
+    this.nextBtn().disabled = false;
+  }
+
+  /** Resolve the opt-in practice target, if any. Pure read of service state. */
+  private findPracticeTarget(reason?: string): { puzzleId: string; kind: 'ahead' | 'new' } | null {
+    const active = this.adapter.describeCurrentAttempt().progressKey;
+    const programId = active?.programId ?? DEFAULT_PROGRAM_ID;
+    const reserved = new Set<string>();
+    if (active) reserved.add(`${active.programId}:${active.puzzleId}`);
+    const ids = this.service.listPuzzleIds();
+    const candidates: Candidate[] = [];
+    for (const id of ids) {
+      const state = this.service.getScheduleState(`${programId}:${id}`);
+      if (!state) continue;
+      candidates.push({ progressKey: `${programId}:${id}`, state, orderKey: id });
+    }
+    const ahead = selectEarliestFutureDue(candidates, { now: Date.now(), reservedKeys: reserved });
+    if (ahead) return { puzzleId: ahead.progressKey.slice(programId.length + 1), kind: 'ahead' };
+    // Cap is the only blocker and nothing is due in the future: offer one
+    // new puzzle anyway (explicit opt-in; the cap still gates auto-selection).
+    if (reason === 'daily-limit-reached') {
+      for (const id of ids) {
+        if (reserved.has(`${programId}:${id}`)) continue;
+        const state = this.service.getScheduleState(`${programId}:${id}`);
+        if (!state || state.state === 'new') return { puzzleId: id, kind: 'new' };
+      }
+    }
+    return null;
+  }
+
+  /** Start the opt-in practice target resolved by `findPracticeTarget`. */
+  private async onPractice(): Promise<void> {
+    if (this.adapter.getActiveAttemptId()) return;
+    const selection = await this.adapter.selectNext();
+    if (selection.puzzleId) {
+      await this.beginAttempt(await this.adapter.loadPuzzle(selection.puzzleId));
+      return;
+    }
+    const target = this.findPracticeTarget(selection.reason);
+    if (!target) {
+      this.showNoDue(selection);
+      return;
+    }
+    const whenValue = this.service.getScheduleState(
+      `${this.adapter.describeCurrentAttempt().progressKey?.programId ?? DEFAULT_PROGRAM_ID}:${target.puzzleId}`,
+    )?.dueAt;
+    await this.beginAttempt(await this.adapter.loadPuzzle(target.puzzleId));
+    if (target.kind === 'ahead') {
+      this.setStatus('status.practiceAhead', undefined, {
+        id: target.puzzleId,
+        when: whenValue ? new Date(whenValue).toLocaleString() : t('puzzle.none'),
+      });
+    }
   }
 
   /** Rebuild the current attempt after a reload, if one is still open. */
@@ -448,6 +539,7 @@ export class TrainView implements Screen {
 
   private bindEvents(): void {
     this.btn('next').addEventListener('click', () => void this.loadNext());
+    this.btn('practice').addEventListener('click', () => void this.onPractice());
     this.btn('skip').addEventListener('click', () => void this.onSkip());
     this.btn('reveal').addEventListener('click', () => void this.onReveal());
 
@@ -513,6 +605,7 @@ function template(): string {
         <div class="button-row">
           <button id="skip-btn" class="button button-secondary" type="button">${t('skip.label')}</button>
           <button id="next-btn" class="button" type="button" disabled>${t('next.label')}</button>
+          <button id="practice-btn" class="button button-secondary hidden" type="button">${t('practiceAhead.label')}</button>
         </div>
         <div class="info">
           <h2 data-i18n="queue.title"></h2>

@@ -22,6 +22,12 @@ export interface SelectNextEligibleOptions {
   newOrder?: readonly string[];
 }
 
+export interface EarliestFutureDueOptions {
+  now: number;
+  /** Progress keys that currently have an active attempt reservation. */
+  reservedKeys?: Set<string>;
+}
+
 export function isEligibleForSelection(candidate: Candidate, now: number, reserved?: Set<string>): boolean {
   if (reserved?.has(candidate.progressKey)) return false;
   if (candidate.state.state === "new") return true;
@@ -90,4 +96,34 @@ export function selectNextDue(
     return newEligible[0]?.progressKey ?? null;
   }
   return null;
+}
+
+/**
+ * UX-001 fallback: earliest future-due candidate for explicit opt-in
+ * "practice ahead" (never auto-selected by `selectNextDue`).
+ *
+ * Returns the candidate with the smallest `dueAt` strictly after `now`,
+ * skipping reserved keys and anything without a future due time (new
+ * puzzles and due-now work are never practice-ahead targets). Ties break by
+ * `dueAt` then `orderKey`, mirroring `byDueThenKey` above without changing
+ * it: due-priority ordering in `selectNextDue` is intentionally untouched.
+ */
+export function selectEarliestFutureDue(
+  candidates: readonly Candidate[],
+  options: EarliestFutureDueOptions,
+): Candidate | null {
+  const now = options.now;
+  const reserved = options.reservedKeys;
+  let best: Candidate | null = null;
+  let bestDue = Number.POSITIVE_INFINITY;
+  for (const candidate of candidates) {
+    if (reserved?.has(candidate.progressKey)) continue;
+    const due = candidate.state.dueAt;
+    if (due === undefined || due <= now) continue;
+    if (due < bestDue || (due === bestDue && best !== null && candidate.orderKey < best.orderKey)) {
+      best = candidate;
+      bestDue = due;
+    }
+  }
+  return best;
 }

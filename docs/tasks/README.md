@@ -4,9 +4,21 @@ Source of truth: ../PROJECT_PLAN.md. Only the coordinator edits its status, deci
 
 ## Current phase: product build-out (PB0–PB7)
 
-The architecture decision (ADR-005) is made: extract/reuse, no Lila fork. Work now moves the
-runnable app (`apps/web`, formerly `apps/player-spike`) into a real product. See the
+The architecture decision (ADR-005) is made: extract/reuse, no Lila fork. PB0–PB6
+code is done (PWA offline boot verified headlessly); T11 real-device pass remains.
+Work now converges on release readiness before new features. See the
 "Product build-out" table in ../PROJECT_PLAN.md for scope and status.
+
+## Next focus (recommendations — see BACKLOG.md for tracked items)
+
+Proposed build order, highest value first; `PROJECT_PLAN.md` status stays
+coordinator-owned:
+1. UX-001 queue dead-ends (P0 release blocker).
+2. UX-002/UX-003 Progress + History (replace stubs, D09 visibility).
+3. T13-followup Collections scope confirmation (T13 marked Done but screen is a stub).
+4. AN-001a attempt review (no engine) if wanted pre-T16.
+5. T11/T15 hardware matrix + REL-001 PWA update policy + DOC-001 docs/ADR sweep → T16.
+6. Deferred: T07/T09 online, AN-001b Stockfish, F-series.
 
 | Phase | Scope | Allowed output paths | Depends |
 |---|---|---|---|

@@ -8,7 +8,13 @@
  *     filling the cache from the network
  *
  * The app itself is already serverless (bundled content + IndexedDB), so once
- * the shell is cached it starts fully offline. Bump CACHE_VERSION to invalidate.
+ * the shell is cached it starts fully offline.
+ *
+ * Cache versioning rule (REL-001): bump CACHE_VERSION on every release that
+ * changes the shell or hashed bundles. The old versioned cache is deleted on
+ * activate, so only one `chessreps-shell-*` cache ever survives. Training
+ * data lives in IndexedDB (never in this cache), so activation never
+ * destroys user data. smoke.mjs asserts the single-version invariant.
  */
 
 const CACHE_VERSION = 'chessreps-shell-v1';
