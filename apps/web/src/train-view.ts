@@ -56,7 +56,9 @@ import { t } from './i18n.ts';
 import {
   PuzzleGame,
   ReviewNavigator,
+  buildPlaybackSteps,
   buildReviewLine,
+  type PlaybackStep,
   type PromotionRole,
 } from './puzzle-game.ts';
 import type { Screen } from './router.ts';
@@ -171,6 +173,18 @@ export class TrainCtrl {
   infoPuzzle: NormalizedPuzzle | null = null;
   currentPuzzle: NormalizedPuzzle | null = null;
   review: ReviewNavigator | null = null;
+  /**
+   * BRD-004 reveal playback: paced, read-only replay of the solution line
+   * after a reveal-abandon. Steps are precomputed FENs (never graded, never
+   * written to attempt history); the board renders non-interactively and any
+   * navigation stops the timer. `playbackPaceMs` is a public field so Node
+   * tests can speed the clock without touching the production pace.
+   */
+  playingBack = false;
+  playbackPaceMs = 650;
+  private playbackSteps: PlaybackStep[] = [];
+  private playbackIndex = 0;
+  private playbackTimer: ReturnType<typeof setTimeout> | null = null;
 
   status: TrainStatus = { key: 'status.loading', tone: 'info' };
   solutionHidden = true;
@@ -216,6 +230,7 @@ export class TrainCtrl {
   /** Mark torn down: late async continuations become no-ops. */
   dispose(): void {
     this.disposed = true;
+    this.stopPlayback();
     this.board = NoopBoard;
     this.promotionUi = NoopPromotionUi;
     this.redraw = () => {};
@@ -289,7 +304,7 @@ export class TrainCtrl {
   // --- move handling -------------------------------------------------------
 
   async onUserMove(orig: Key, dest: Key): Promise<void> {
-    if (!this.game || this.disposed) return;
+    if (!this.game || this.disposed || this.playingBack) return;
     // BRD-001: moves during the reply window become the queued premove.
     if (this.awaitingReply) {
       this.queuePremove(orig as SquareName, dest as SquareName);
@@ -312,7 +327,7 @@ export class TrainCtrl {
    * here — chessground already shows the selection natively.
    */
   onBoardSelect(key: Key): void {
-    if (this.disposed) return;
+    if (this.disposed || this.playingBack) return;
     this.selectedKey = key;
   }
 
@@ -408,6 +423,14 @@ export class TrainCtrl {
     const attemptGame = this.game;
     const settle = async (): Promise<void> => {
       if (this.disposed) return;
+      // BRD-004: a reveal-abandon during the reply window leaves a stale
+      // settle behind. It must not grade, complete, or re-enable input —
+      // playback owns the board now, and the attempt is already abandoned.
+      if (this.revealed) {
+        this.renderPosition({ interactive: false });
+        this.redraw();
+        return;
+      }
       this.awaitingReply = false;
       this.board.cancelPremove?.();
       // BRD-001: run the queued premove only for the same attempt while it
@@ -523,6 +546,77 @@ export class TrainCtrl {
     this.redraw();
   }
 
+  // --- reveal playback (BRD-004, read-only, unscored) --------------------------
+  //
+  // After a reveal-abandon (assistance `reveal` recorded, attempt abandoned
+  // unscored — unchanged), the solution auto-plays on the board at a
+  // watchable pace with last-move highlights. On-path (only correct moves so
+  // far) the remaining plies play from the current board; off-line (a wrong
+  // move went first) the board resets to the solver position, then the full
+  // line plays. Steps render through the same non-interactive `renderPosition`
+  // primitive as review stepping, but are driven by the solution — never by
+  // attempt records, and never graded or written anywhere.
+
+  /** Stop paced playback and drop its timer (any navigation, teardown). */
+  stopPlayback(): void {
+    if (this.playbackTimer !== null) {
+      clearTimeout(this.playbackTimer);
+      this.playbackTimer = null;
+    }
+    this.playbackSteps = [];
+    this.playbackIndex = 0;
+    this.playingBack = false;
+  }
+
+  /** Start paced solution playback after a reveal-abandon. */
+  startPlayback(): void {
+    const game = this.game;
+    if (!game || game.isCompleted || this.disposed) return;
+    const line = game.solutionPlaybackLine();
+    const steps = buildPlaybackSteps(line.startFen, line.plies);
+    this.stopPlayback();
+    if (steps.length === 0) return;
+    if (line.fromStart) {
+      this.renderPosition({ fen: line.startFen, interactive: false });
+    }
+    this.playbackSteps = steps;
+    this.playbackIndex = 0;
+    this.playingBack = true;
+    this.schedulePlaybackStep();
+    this.redraw();
+  }
+
+  private schedulePlaybackStep(): void {
+    if (!this.playingBack || this.disposed) return;
+    this.playbackTimer = setTimeout(() => {
+      this.playbackTimer = null;
+      this.advancePlayback();
+    }, this.playbackPaceMs);
+  }
+
+  /** Render the next playback ply with last-move highlights. */
+  advancePlayback(): void {
+    if (!this.playingBack || !this.game || this.disposed) return;
+    const step = this.playbackSteps[this.playbackIndex];
+    if (!step) {
+      this.stopPlayback();
+      this.redraw();
+      return;
+    }
+    this.playbackIndex += 1;
+    this.renderPosition({
+      fen: step.fen,
+      lastMove: uciToKeys(step.uci),
+      interactive: false,
+    });
+    if (this.playbackIndex >= this.playbackSteps.length) {
+      this.stopPlayback();
+    } else {
+      this.schedulePlaybackStep();
+    }
+    this.redraw();
+  }
+
   // --- promotion picker -----------------------------------------------------
 
   choosePromotion(role: PromotionRole): void {
@@ -561,6 +655,7 @@ export class TrainCtrl {
   // --- attempt lifecycle ---------------------------------------------------
 
   async beginAttempt(p: NormalizedPuzzle): Promise<void> {
+    this.stopPlayback();
     this.game = new PuzzleGame(p);
     this.infoPuzzle = p;
     this.currentPuzzle = p;
@@ -594,6 +689,7 @@ export class TrainCtrl {
 
   async loadNext(): Promise<void> {
     if (this.disposed) return;
+    this.stopPlayback();
     if (this.game?.isCompleted === false && this.adapter.getActiveAttemptId()) return;
     this.nextDisabled = true;
     this.practiceHidden = true;
@@ -808,6 +904,7 @@ export class TrainCtrl {
 
   async onSkip(): Promise<void> {
     if (this.disposed) return;
+    this.stopPlayback();
     if (!this.adapter.getActiveAttemptId()) return;
     this.clearPremoveState();
     this.timer.interrupt();
@@ -835,6 +932,7 @@ export class TrainCtrl {
       this.nextDisabled = false;
       this.skipDisabled = true;
       this.status = { key: 'status.revealed', tone: 'revealed' };
+      this.startPlayback();
     }
     this.solutionHidden = false;
     this.revealHidesSolution = true;

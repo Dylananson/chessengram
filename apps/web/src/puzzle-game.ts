@@ -164,6 +164,29 @@ export class PuzzleGame {
   }
 
   /**
+   * BRD-004: remaining-line computation for reveal playback. Pure read of
+   * game state — never grades, never writes. While the board is still on the
+   * solution path (no wrong move yet), the remaining plies play from the
+   * current position; once a wrong move has gone off-line, the full line
+   * plays from the solver position instead. (A wrong move never moves the
+   * board, but the reset re-anchors the viewer at the line start.)
+   */
+  solutionPlaybackLine(): SolutionPlaybackLine {
+    if (this.failed) {
+      return {
+        startFen: this.puzzle.solverFen,
+        plies: [...this.puzzle.solution],
+        fromStart: true,
+      };
+    }
+    return {
+      startFen: this.fen,
+      plies: this.puzzle.solution.slice(this.ply),
+      fromStart: false,
+    };
+  }
+
+  /**
    * Replay already-graded correct solver moves (from the attempt event log) and
    * their opponent replies, stopping at the first inconsistency. Used on reload.
    */
@@ -188,6 +211,56 @@ export class PuzzleGame {
     }
     if (this.ply >= this.puzzle.solution.length) this.completed = true;
   }
+}
+
+/**
+ * Solution playback (BRD-004, reveal): DOM-free projection of the solution
+ * line into board positions. Playback-only — never grades, never touches
+ * schedule or attempt state, and never reads attempt history (unlike
+ * `buildReviewLine`, which projects recorded attempts). The UI plays these
+ * steps after a reveal-abandon at a watchable pace.
+ */
+
+export interface SolutionPlaybackLine {
+  /** FEN playback starts from: current position on-path, solverFen off-line. */
+  readonly startFen: string;
+  /** Solution plies to play, in order (may include promotion plies). */
+  readonly plies: readonly string[];
+  /** True when off-line: the board resets to the solver position first. */
+  readonly fromStart: boolean;
+}
+
+export interface PlaybackStep {
+  /** 0-based ply position within the playback (step 0 is the first ply). */
+  readonly index: number;
+  readonly uci: string;
+  readonly fen: string;
+}
+
+/**
+ * Expand playback plies into per-ply board positions from `startFen`. Stops
+ * at the first malformed/illegal ply (like `buildReviewLine`); an
+ * unparseable start FEN yields no steps. Promotion plies and terminal mates
+ * flow through chessops, so they render exactly as played.
+ */
+export function buildPlaybackSteps(
+  startFen: string,
+  plies: readonly string[],
+): PlaybackStep[] {
+  let pos: Chess;
+  try {
+    pos = Chess.fromSetup(parseFen(startFen).unwrap()).unwrap();
+  } catch {
+    return [];
+  }
+  const steps: PlaybackStep[] = [];
+  for (const uci of plies) {
+    const move = parseUci(uci);
+    if (!move || !pos.isLegal(move)) break;
+    pos.play(move);
+    steps.push({ index: steps.length, uci, fen: makeFen(pos.toSetup()) });
+  }
+  return steps;
 }
 
 /**

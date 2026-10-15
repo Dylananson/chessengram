@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import { strict as assert } from 'node:assert';
-import { PuzzleGame } from '../src/puzzle-game.ts';
+import { PuzzleGame, buildPlaybackSteps } from '../src/puzzle-game.ts';
 import { makePuzzle, promotionPuzzle, setupMovePuzzle } from './fixtures.ts';
 
 test('correct solver move advances and auto-plays the opponent reply', () => {
@@ -128,4 +128,79 @@ test('isLegalSolverMove handles promotion roles without playing', () => {
   const promoted = game.playUserMove('b7', 'b8', 'q');
   assert.equal(promoted.kind, 'correct');
   assert.equal(game.isLegalSolverMove('b7', 'b8', 'q'), false, 'no moves after completion');
+});
+
+// --- BRD-004: remaining-line computation -------------------------------------
+
+const START_FEN = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
+
+test('BRD-004: solutionPlaybackLine plays the remainder while still on-path', () => {
+  const game = new PuzzleGame(makePuzzle({ id: 'pb-on', solution: ['e2e4', 'e7e5', 'g1f3'] }));
+
+  const fresh = game.solutionPlaybackLine();
+  assert.equal(fresh.fromStart, false);
+  assert.equal(fresh.startFen, START_FEN);
+  assert.deepEqual([...fresh.plies], ['e2e4', 'e7e5', 'g1f3']);
+
+  const first = game.playUserMove('e2', 'e4');
+  assert.equal(first.kind, 'correct');
+  const rest = game.solutionPlaybackLine();
+  assert.equal(rest.fromStart, false, 'only correct moves so far — no reset');
+  assert.equal(rest.startFen, game.fen, 'remaining plies play from the current board');
+  assert.deepEqual([...rest.plies], ['g1f3']);
+  assert.equal(game.failedState, false, 'probing the line never grades');
+});
+
+test('BRD-004: solutionPlaybackLine resets to the full line after a wrong move', () => {
+  const puzzle = makePuzzle({ id: 'pb-off', solution: ['e2e4', 'e7e5', 'g1f3'] });
+  const game = new PuzzleGame(puzzle);
+
+  const wrong = game.playUserMove('d2', 'd4');
+  assert.equal(wrong.kind, 'wrong');
+  const line = game.solutionPlaybackLine();
+  assert.equal(line.fromStart, true, 'off-line — reset to the solver position');
+  assert.equal(line.startFen, puzzle.solverFen);
+  assert.deepEqual([...line.plies], ['e2e4', 'e7e5', 'g1f3']);
+
+  // A later correction does not put the line back on-path: a wrong move went
+  // first, so playback still re-anchors at the start.
+  const correction = game.playUserMove('e2', 'e4');
+  assert.equal(correction.kind, 'correct');
+  const after = game.solutionPlaybackLine();
+  assert.equal(after.fromStart, true);
+  assert.deepEqual([...after.plies], ['e2e4', 'e7e5', 'g1f3']);
+});
+
+test('BRD-004: buildPlaybackSteps expands plies to positions, stopping at illegal', () => {
+  const steps = buildPlaybackSteps(START_FEN, ['e2e4', 'e7e5']);
+  assert.equal(steps.length, 2);
+  assert.deepEqual(
+    steps.map((s) => s.uci),
+    ['e2e4', 'e7e5'],
+  );
+  assert.deepEqual(
+    steps.map((s) => s.index),
+    [0, 1],
+  );
+  assert.notEqual(steps[0]!.fen, START_FEN);
+  assert.notEqual(steps[1]!.fen, steps[0]!.fen);
+
+  const stopped = buildPlaybackSteps(START_FEN, ['e2e4', 'e2e5']);
+  assert.equal(stopped.length, 1, 'stops at the first illegal ply');
+
+  assert.deepEqual(buildPlaybackSteps(START_FEN, []), [], 'empty line, no steps');
+  assert.deepEqual(buildPlaybackSteps('not-a-fen', ['e2e4']), [], 'bad FEN never throws');
+  assert.deepEqual(buildPlaybackSteps(START_FEN, ['zzz']), [], 'malformed UCI never throws');
+});
+
+test('BRD-004: buildPlaybackSteps renders promotion plies and the final mate', () => {
+  const promo = buildPlaybackSteps(promotionPuzzle.solverFen, promotionPuzzle.solution);
+  assert.equal(promo.length, 1);
+  assert.equal(promo[0]!.uci, 'b7b8q');
+  assert.match(promo[0]!.fen, /^1Q5k/, 'promoted queen on b8');
+
+  const mateFen = 'r1bqkbnr/pppp1ppp/2n5/4p2Q/2B1P3/8/PPPP1PPP/RNB1K1NR w KQkq - 0 1';
+  const mate = buildPlaybackSteps(mateFen, ['h5f7']);
+  assert.equal(mate.length, 1);
+  assert.ok(mate[0]!.fen.includes('pppp1Qpp'), 'queen delivered mate on f7');
 });

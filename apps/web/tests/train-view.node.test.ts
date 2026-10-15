@@ -32,6 +32,7 @@ import {
   type TrainBoardPort,
   type TrainPromotionUi,
 } from '../src/train-view.ts';
+import { PuzzleGame } from '../src/puzzle-game.ts';
 import { TrainingAdapter } from '../src/training-adapter.ts';
 import { LocalTrainingService } from '../src/scheduler-service.ts';
 import { LocalStore } from '../src/storage/local-store.ts';
@@ -728,4 +729,186 @@ test('BRD-001: promotion premove goes through the picker and executes', async ()
   assert.equal(ctrl.game?.isCompleted, true);
   assert.equal(ctrl.status.key, 'status.completed');
   assert.equal(ctrl.game?.failedState, false);
+});
+
+// --- 12. BRD-004: reveal plays out the solution ---------------------------------
+
+const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
+
+async function makeRevealWorld(
+  id: string,
+  solution: string[],
+): Promise<{ service: LocalTrainingService; adapter: TrainingAdapter }> {
+  const service = await makeService();
+  await service.seedContent([makePuzzle({ id, solution })]);
+  const adapter = new TrainingAdapter(service);
+  await adapter.startSession('test-program', 'test-collection');
+  return { service, adapter };
+}
+
+/** Every step of a reveal playback renders with no side to move and no dests. */
+function assertNonInteractive(set: TrainBoardConfig, where: string): void {
+  assert.equal(set.movable?.color, undefined, `${where}: no side to move — input disabled`);
+  assert.equal(set.movable?.dests?.size ?? 0, 0, `${where}: no destinations — input disabled`);
+}
+
+/** No scored outcome committed for the puzzle (abandoned attempts stay unscored). */
+function assertUnscored(adapter: TrainingAdapter, puzzleId: string, where: string): void {
+  for (const attempt of adapter.listAttemptsForPuzzle(puzzleId, 5)) {
+    assert.equal(attempt.outcome, undefined, `${where}: no scored outcome committed`);
+  }
+}
+
+test('BRD-004: reveal on-path plays the remaining plies, input disabled, unscored', async () => {
+  const { service, adapter } = await makeRevealWorld('rv-a', ['e2e4', 'e7e5', 'g1f3']);
+  const board = makeRecordingBoard();
+  const ctrl = new TrainCtrl(service, adapter, board.port);
+  ctrl.playbackPaceMs = 15;
+
+  const puzzle = await adapter.loadPuzzle('rv-a');
+  await ctrl.beginAttempt(puzzle);
+  await ctrl.resolveUserMove('e2', 'e4');
+  await waitReply();
+  assert.equal(ctrl.status.key, 'status.correct');
+
+  await ctrl.onReveal();
+  assert.equal(ctrl.status.key, 'status.revealed');
+  assert.equal(ctrl.playingBack, true, 'playback starts after the unscored abandon');
+  assert.equal(adapter.getActiveAttemptId(), undefined, 'attempt abandoned');
+  const setsAtReveal = board.sets.length;
+
+  await sleep(250);
+  assert.equal(ctrl.playingBack, false, 'short remainder finishes on its own');
+  assert.equal(ctrl.status.key, 'status.revealed', 'playback never changes the status');
+
+  const last = board.sets[board.sets.length - 1]!;
+  assert.deepEqual(last.lastMove, ['g1', 'f3'], 'last-move highlight on the final ply');
+  assertNonInteractive(last, 'final playback step');
+  const ref = new PuzzleGame(puzzle);
+  ref.playUserMove('e2', 'e4');
+  ref.playUserMove('g1', 'f3');
+  assert.equal(last.fen, ref.fen, 'playback ends at the solution-final position');
+
+  // Every playback render stayed non-interactive, and nothing was scored.
+  for (const set of board.sets.slice(setsAtReveal)) assertNonInteractive(set, 'playback step');
+  assert.equal(ctrl.scoredCommitted, false);
+  assertUnscored(adapter, 'rv-a', 'reveal playback');
+});
+
+test('BRD-004: reveal off-line resets to the solver position, then plays the full line', async () => {
+  const { service, adapter } = await makeRevealWorld('rv-b', ['e2e4', 'e7e5', 'g1f3']);
+  const board = makeRecordingBoard();
+  const ctrl = new TrainCtrl(service, adapter, board.port);
+  ctrl.playbackPaceMs = 15;
+
+  const puzzle = await adapter.loadPuzzle('rv-b');
+  await ctrl.beginAttempt(puzzle);
+  await ctrl.resolveUserMove('d2', 'd4');
+  assert.equal(ctrl.status.key, 'status.wrong');
+  const attemptsBefore = adapter.listAttemptsForPuzzle('rv-b', 5).length;
+
+  await ctrl.onReveal();
+  assert.equal(ctrl.playingBack, true);
+  const reset = board.sets[board.sets.length - 1]!;
+  assert.equal(reset.fen, puzzle.solverFen, 'board resets to the solver position first');
+  assertNonInteractive(reset, 'reset render');
+
+  await sleep(350);
+  assert.equal(ctrl.playingBack, false);
+  const last = board.sets[board.sets.length - 1]!;
+  assert.deepEqual(last.lastMove, ['g1', 'f3'], 'full line played to the final ply');
+  const ref = new PuzzleGame(puzzle);
+  ref.playUserMove('e2', 'e4');
+  ref.playUserMove('g1', 'f3');
+  assert.equal(last.fen, ref.fen, 'off-line playback ends at the solution-final position');
+
+  // Playback itself commits nothing: same attempt count, no new outcome.
+  assert.equal(adapter.listAttemptsForPuzzle('rv-b', 5).length, attemptsBefore);
+  assert.equal(ctrl.status.key, 'status.revealed');
+});
+
+test('BRD-004: reveal plays promotion plies to the promoted final position', async () => {
+  const service = await makeService();
+  await service.seedContent([promotionPuzzle]);
+  const adapter = new TrainingAdapter(service);
+  await adapter.startSession('test-program', 'test-collection');
+  const board = makeRecordingBoard();
+  const ctrl = new TrainCtrl(service, adapter, board.port);
+  ctrl.playbackPaceMs = 15;
+
+  await ctrl.beginAttempt(await adapter.loadPuzzle(promotionPuzzle.id));
+  await ctrl.onReveal();
+  assert.equal(ctrl.playingBack, true);
+
+  await sleep(200);
+  assert.equal(ctrl.playingBack, false);
+  const last = board.sets[board.sets.length - 1]!;
+  assert.deepEqual(last.lastMove, ['b7', 'b8'], 'last-move highlight on the promotion ply');
+  assert.match(last.fen!, /^1Q5k/, 'promoted queen rendered on b8');
+  assertNonInteractive(last, 'promotion playback step');
+  assertUnscored(adapter, promotionPuzzle.id, 'promotion playback');
+});
+
+test('BRD-004: Next cancels playback — no stale steps after navigation', async () => {
+  const service = await makeService();
+  await service.seedContent([
+    makePuzzle({ id: 'rv-n1', solution: ['e2e4', 'e7e5', 'g1f3'] }),
+    makePuzzle({ id: 'rv-n2', solution: ['e2e4', 'e7e5'] }),
+  ]);
+  const adapter = new TrainingAdapter(service);
+  await adapter.startSession('test-program', 'test-collection');
+  const board = makeRecordingBoard();
+  const ctrl = new TrainCtrl(service, adapter, board.port);
+  ctrl.playbackPaceMs = 5000;
+
+  await ctrl.beginAttempt(await adapter.loadPuzzle('rv-n1'));
+  await ctrl.onReveal();
+  assert.equal(ctrl.playingBack, true, 'long playback pending on its timer');
+
+  await ctrl.loadNext();
+  assert.equal(ctrl.playingBack, false, 'navigation stops playback');
+  const setsAfterNav = board.sets.length;
+  await sleep(150);
+  assert.equal(
+    board.sets.length,
+    setsAfterNav,
+    'no stale playback callback renders after navigation',
+  );
+  assert.ok(ctrl.game !== null, 'a fresh attempt is live after Next');
+});
+
+test('BRD-004: stale reply settle after reveal neither scores nor re-enables input', async () => {
+  const { service, adapter } = await makeRevealWorld('rv-c', ['e2e4', 'e7e5', 'g1f3']);
+  const board = makeRecordingBoard();
+  const ctrl = new TrainCtrl(service, adapter, board.port);
+  ctrl.playbackPaceMs = 15;
+
+  await ctrl.beginAttempt(await adapter.loadPuzzle('rv-c'));
+  await ctrl.resolveUserMove('e2', 'e4');
+  // Reveal inside the opponent-reply window: the 260ms settle is still in flight.
+  await ctrl.onReveal();
+  assert.equal(ctrl.status.key, 'status.revealed');
+
+  await sleep(600);
+  assert.equal(ctrl.status.key, 'status.revealed', 'stale settle never overwrites the status');
+  assert.equal(ctrl.playingBack, false);
+  assert.equal(ctrl.scoredCommitted, false, 'revealed attempt never scores');
+  assertNonInteractive(board.sets[board.sets.length - 1]!, 'post-settle board');
+  assertUnscored(adapter, 'rv-c', 'stale settle');
+});
+
+test('BRD-004: dispose during playback drops the timer — no stale callbacks', async () => {
+  const { service, adapter } = await makeRevealWorld('rv-d', ['e2e4', 'e7e5', 'g1f3']);
+  const board = makeRecordingBoard();
+  const ctrl = new TrainCtrl(service, adapter, board.port);
+  ctrl.playbackPaceMs = 5000;
+
+  await ctrl.beginAttempt(await adapter.loadPuzzle('rv-d'));
+  await ctrl.onReveal();
+  assert.equal(ctrl.playingBack, true);
+
+  ctrl.dispose();
+  assert.equal(ctrl.playingBack, false, 'teardown stops playback');
+  await sleep(100);
+  assert.equal(ctrl.playingBack, false, 'no stale callback revives playback after unmount');
 });
