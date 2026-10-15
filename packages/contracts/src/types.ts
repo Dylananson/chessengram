@@ -110,15 +110,22 @@ export interface ScheduleStateDetails {
 }
 
 /**
- * Progress key scope - PROVISIONAL (Q09)
- * Per-training-program scope proposed
+ * Progress key scope — per (program, collection, puzzle).
+ *
+ * USER DECISION 2026-10-15 (B4): per-collection SEPARATE progress — the same
+ * puzzle in two collections trains independently. This OVERRIDES the ADR-002
+ * per-program proposal (where `collectionId` was context-only, not identity).
+ * Do NOT edit docs/decisions/** for this override; this comment is the code
+ * record. `collectionId` stays optional in the type for backward
+ * compatibility; the service layer defaults a missing value to the default
+ * collection, but schedule identity always includes the collection scope.
  */
 export interface ProgressKey {
   /** Training program identifier */
   programId: string;
   /** Puzzle identifier */
   puzzleId: string;
-  /** Optional collection scope if shared across collections is not desired */
+  /** Collection scope (identity, not context). Defaults to the default collection. */
   collectionId?: string;
 }
 

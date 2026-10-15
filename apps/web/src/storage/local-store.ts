@@ -21,6 +21,14 @@ export const COLLECTION_SCHEDULES = 'schedules';
 export const COLLECTION_ATTEMPTS = 'attempts';
 export const COLLECTION_SESSIONS = 'sessions';
 export const COLLECTION_META = 'meta';
+/**
+ * Static puzzle sets with multi-membership (B4, user decision 2026-10-15).
+ * One puzzle may live in many collections; schedule progress is scoped per
+ * (program, collection, puzzle) so the same puzzle trains independently in
+ * each collection. Deleting a collection removes only the membership list —
+ * puzzles, schedules and raw attempt history are kept.
+ */
+export const COLLECTION_COLLECTIONS = 'collections';
 export const COLLECTION_SETTINGS = 'settings';
 /** Pre-import recovery snapshots. Deliberately excluded from exports/imports. */
 export const COLLECTION_BACKUPS = 'backups';
@@ -32,6 +40,7 @@ export const STORE_COLLECTIONS = [
   COLLECTION_ATTEMPTS,
   COLLECTION_SESSIONS,
   COLLECTION_SETTINGS,
+  COLLECTION_COLLECTIONS,
   COLLECTION_META,
 ] as const;
 
@@ -40,13 +49,23 @@ export type StoreCollection = (typeof STORE_COLLECTIONS)[number];
 export const META_CONTENT_SET = 'content-set';
 export const META_PUZZLE_ORDER = 'puzzle-order';
 export const META_ACTIVE_SESSIONS = 'active-sessions';
+/** Persisted id of the active (training) collection; defaults when absent. */
+export const META_ACTIVE_COLLECTION = 'active-collection';
+
+/**
+ * Default collection id. The bundled pack is seeded into this collection so
+ * first boot is unchanged, and legacy `program:puzzle` schedules migrate
+ * into this scope. Must stay stable: stored schedule keys embed it. (Re-exported
+ * from scheduler-service.ts so existing import sites keep working.)
+ */
+export const DEFAULT_COLLECTION_ID = 'lichess-900-1099-v1';
 
 /** Current schema version for the local store's own envelopes. */
 export const LOCAL_STORE_SCHEMA_VERSION = '1.0.0';
 
-/** Export file format marker and version (PB5). */
+/** Export file format marker and version (PB5). Bumped to 1.1.0 for B4. */
 export const EXPORT_FORMAT = 'chessreps-export';
-export const EXPORT_FORMAT_VERSION = '1.0.0';
+export const EXPORT_FORMAT_VERSION = '1.1.0';
 
 /**
  * Expected persisted schema versions. These mirror the contract literal types
@@ -58,6 +77,8 @@ export const EXPECTED_SCHEDULE_SCHEMA_VERSION = '1.0.0';
 export const EXPECTED_ATTEMPT_SCHEMA_VERSION = '1.0.0';
 export const EXPECTED_SESSION_SCHEMA_VERSION = '1.0.0';
 export const EXPECTED_SETTINGS_SCHEMA_VERSION = '1.0.0';
+/** New in export 1.1.0 (B4). No earlier shape exists, so this starts at 1.0.0. */
+export const EXPECTED_COLLECTION_SCHEMA_VERSION = '1.0.0';
 
 export interface Envelope<T> {
   /** Version of the persisted record shape. */
@@ -73,6 +94,14 @@ export interface ContentSetMeta {
   contentSchemaVersion: ContentSchemaVersion;
   count: number;
   loadedAt: number;
+}
+
+/** Static puzzle set (B4). Membership is a list of puzzle ids; puzzles may repeat across collections. */
+export interface CollectionRecord {
+  id: string;
+  name: string;
+  puzzleIds: string[];
+  createdAt: number;
 }
 
 /**
@@ -225,6 +254,34 @@ export class LocalStore {
       if (session) out.push(session);
     }
     return out;
+  }
+
+  // --- collections (static sets, B4) ------------------------------------
+
+  async saveCollection(collection: CollectionRecord): Promise<void> {
+    await this.backend.set(
+      COLLECTION_COLLECTIONS,
+      collection.id,
+      this.wrap(EXPECTED_COLLECTION_SCHEMA_VERSION, collection),
+    );
+  }
+
+  async loadCollections(): Promise<CollectionRecord[]> {
+    const records = await this.backend.getAll(COLLECTION_COLLECTIONS);
+    const out: CollectionRecord[] = [];
+    for (const record of records) {
+      if (!isEnvelope(record.value)) continue;
+      const collection = this.unwrap<CollectionRecord>(
+        record.value,
+        EXPECTED_COLLECTION_SCHEMA_VERSION,
+      );
+      if (collection) out.push(collection);
+    }
+    return out;
+  }
+
+  async deleteCollection(collectionId: string): Promise<void> {
+    await this.backend.delete(COLLECTION_COLLECTIONS, collectionId);
   }
 
   // --- settings (curated scheduler preferences) --------------------------

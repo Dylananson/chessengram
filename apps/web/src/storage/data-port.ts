@@ -20,14 +20,20 @@
  */
 
 import {
+  COLLECTION_COLLECTIONS,
+  DEFAULT_COLLECTION_ID,
+  EXPECTED_COLLECTION_SCHEMA_VERSION,
   EXPORT_FORMAT,
   EXPORT_FORMAT_VERSION,
+  LOCAL_STORE_SCHEMA_VERSION,
+  META_ACTIVE_COLLECTION,
   STORE_COLLECTIONS,
+  type CollectionRecord,
   type StoreExport,
   type StoreExportSummary,
 } from './local-store.ts';
 
-export const SUPPORTED_EXPORT_VERSIONS = ['1.0.0'] as const;
+export const SUPPORTED_EXPORT_VERSIONS = ['1.0.0', '1.1.0'] as const;
 
 export interface Migration {
   from: string;
@@ -36,7 +42,66 @@ export interface Migration {
 }
 
 /** Sequential migrations, applied until `EXPORT_FORMAT_VERSION` is reached. */
-export const MIGRATIONS: readonly Migration[] = [];
+export const MIGRATIONS: readonly Migration[] = [
+  { from: '1.0.0', to: '1.1.0', migrate: migrate100to110 },
+];
+
+/**
+ * B4 (2026-10-15): schedule scope becomes (program, collection, puzzle).
+ * Legacy schedule keys `program:puzzle` move into the default collection
+ * scope; a default collection seeded with the export's content ids is added
+ * when none exists; the active collection defaults when absent. Raw attempt
+ * records keep their recorded keys untouched (history is auditable
+ * as-recorded). On a key collision the already-scoped record wins; legacy
+ * 1.0.0 data cannot contain scoped keys, so this only triggers on
+ * hand-edited files.
+ */
+function migrate100to110(data: StoreExport): StoreExport {
+  const collections = { ...(data.collections ?? {}) };
+
+  const rawSchedules = isRecord(collections.schedules) ? collections.schedules : {};
+  const nextSchedules: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(rawSchedules)) {
+    if (key.split(':').length === 2) {
+      const [programId, ...rest] = key.split(':');
+      const scoped = `${programId}:${DEFAULT_COLLECTION_ID}:${rest.join(':')}`;
+      // Already-scoped record wins on collision; otherwise the legacy record moves.
+      nextSchedules[scoped] = nextSchedules[scoped] ?? rawSchedules[scoped] ?? value;
+    } else {
+      nextSchedules[key] = value;
+    }
+  }
+  collections.schedules = nextSchedules;
+
+  const rawLibrary = isRecord(collections.collections) ? collections.collections : {};
+  if (Object.keys(rawLibrary).length === 0) {
+    const contentIds = isRecord(collections.content) ? Object.keys(collections.content) : [];
+    const record: CollectionRecord = {
+      id: DEFAULT_COLLECTION_ID,
+      name: 'Default',
+      puzzleIds: contentIds,
+      createdAt: data.exportedAt,
+    };
+    rawLibrary[DEFAULT_COLLECTION_ID] = {
+      schemaVersion: EXPECTED_COLLECTION_SCHEMA_VERSION,
+      savedAt: data.exportedAt,
+      data: record,
+    };
+  }
+  collections.collections = rawLibrary;
+
+  const rawMeta = isRecord(collections.meta) ? collections.meta : {};
+  if (!(META_ACTIVE_COLLECTION in rawMeta)) {
+    rawMeta[META_ACTIVE_COLLECTION] = {
+      schemaVersion: LOCAL_STORE_SCHEMA_VERSION,
+      savedAt: data.exportedAt,
+      data: DEFAULT_COLLECTION_ID,
+    };
+  }
+  collections.meta = rawMeta;
+
+  return { ...data, formatVersion: '1.1.0', collections };
+}
 
 export type ParseExportResult =
   | { ok: true; data: StoreExport }

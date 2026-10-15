@@ -57,7 +57,17 @@ import type {
   TrainingService,
 } from '@chessreps/contracts';
 import { LocalStore, META_ACTIVE_SESSIONS, META_CONTENT_SET, META_PUZZLE_ORDER } from './storage/local-store.ts';
-import type { ContentSetMeta, StoreExport, StoreExportSummary } from './storage/local-store.ts';
+import {
+  DEFAULT_COLLECTION_ID,
+  META_ACTIVE_COLLECTION,
+  type CollectionRecord,
+  type ContentSetMeta,
+  type StoreExport,
+  type StoreExportSummary,
+} from './storage/local-store.ts';
+
+/** Re-exported so existing import sites keep working (canonical home: storage/local-store.ts). */
+export { DEFAULT_COLLECTION_ID };
 import { summarizeExport } from './storage/data-port.ts';
 import {
   fromCurated,
@@ -68,10 +78,42 @@ import {
 } from './settings-preferences.ts';
 
 export const DEFAULT_PROGRAM_ID = 'local-spaced-reps-v1';
-export const DEFAULT_COLLECTION_ID = 'lichess-900-1099-v1';
 
+/**
+ * Schedule scope is (programId, collectionId, puzzleId) — per-collection
+ * SEPARATE progress (user decision 2026-10-15, B4; overrides the ADR-002
+ * per-program proposal — see the `ProgressKey` comment in
+ * `@chessreps/contracts`). A missing `collectionId` defaults to
+ * `DEFAULT_COLLECTION_ID`, so legacy callers keep working.
+ */
 export function progressKeyToString(key: ProgressKey): string {
-  return `${key.programId}:${key.puzzleId}`;
+  return `${key.programId}:${effectiveCollectionId(key)}:${key.puzzleId}`;
+}
+
+interface ParsedScheduleKey {
+  programId: string;
+  /** Undefined for legacy pre-B4 `program:puzzle` keys (default scope). */
+  collectionId: string | undefined;
+  puzzleId: string;
+}
+
+/** Split a persisted schedule key; ids never contain `:`, puzzle ids may. */
+export function parseScheduleKey(key: string): ParsedScheduleKey | undefined {
+  const parts = key.split(':');
+  if (parts.length < 2) return undefined;
+  if (parts.length === 2) {
+    return { programId: parts[0]!, collectionId: undefined, puzzleId: parts.slice(1).join(':') };
+  }
+  return {
+    programId: parts[0]!,
+    collectionId: parts[1]!,
+    puzzleId: parts.slice(2).join(':'),
+  };
+}
+
+/** Effective collection scope for a progress key (missing → default). */
+export function effectiveCollectionId(key: ProgressKey): string {
+  return key.collectionId ?? DEFAULT_COLLECTION_ID;
 }
 
 function emptyTiming(): TimingSegments {
@@ -132,6 +174,8 @@ export class LocalTrainingService implements TrainingService {
   private readonly sessions = new Map<string, SessionState>();
   private readonly puzzles = new Map<string, NormalizedPuzzle>();
   private readonly activeSessionByProgram = new Map<string, string>();
+  private readonly collections = new Map<string, CollectionRecord>();
+  private activeCollectionId: string = DEFAULT_COLLECTION_ID;
   private puzzleOrder: string[] = [];
   private initialized = false;
 
@@ -161,6 +205,23 @@ export class LocalTrainingService implements TrainingService {
     for (const [key, state] of await this.store.loadSchedules()) {
       this.schedules.set(key, state);
     }
+    await this.migrateLegacyScheduleKeys();
+
+    this.collections.clear();
+    for (const collection of await this.store.loadCollections()) {
+      this.collections.set(collection.id, {
+        ...collection,
+        puzzleIds: [...new Set(collection.puzzleIds)],
+      });
+    }
+    await this.ensureDefaultCollection();
+
+    const storedActive = await this.store.loadMeta<string>(META_ACTIVE_COLLECTION);
+    this.activeCollectionId =
+      storedActive && this.collections.has(storedActive)
+        ? storedActive
+        : DEFAULT_COLLECTION_ID;
+    await this.persistActiveCollection();
 
     this.attempts.clear();
     for (const attempt of await this.store.loadAttempts()) {
@@ -184,6 +245,46 @@ export class LocalTrainingService implements TrainingService {
     if (storedSettings !== undefined) this.applySettings(parseCurated(storedSettings));
 
     this.initialized = true;
+  }
+
+  /**
+   * Live migration for pre-B4 data already in the backend: legacy
+   * `program:puzzle` schedule keys move into the default collection scope.
+   * Raw AttemptRecords keep their recorded keys untouched (auditable
+   * as-recorded). Export/import of old documents is handled separately by
+   * the 1.0.0 → 1.1.0 migration in storage/data-port.ts.
+   */
+  private async migrateLegacyScheduleKeys(): Promise<void> {
+    for (const [key, state] of [...this.schedules]) {
+      const parsed = parseScheduleKey(key);
+      if (parsed && parsed.collectionId === undefined) {
+        const scoped = `${parsed.programId}:${DEFAULT_COLLECTION_ID}:${parsed.puzzleId}`;
+        if (!this.schedules.has(scoped)) {
+          this.schedules.set(scoped, state);
+          await this.store.saveSchedule(scoped, state);
+        }
+        this.schedules.delete(key);
+        await this.store.deleteSchedule(key);
+      }
+    }
+  }
+
+  /** Create the default collection (seeded with the library) when missing. */
+  private async ensureDefaultCollection(): Promise<void> {
+    if (!this.collections.has(DEFAULT_COLLECTION_ID)) {
+      const record: CollectionRecord = {
+        id: DEFAULT_COLLECTION_ID,
+        name: 'Default',
+        puzzleIds: [...this.puzzleOrder],
+        createdAt: this.clock.now(),
+      };
+      this.collections.set(record.id, record);
+      await this.store.saveCollection(record);
+    }
+  }
+
+  private async persistActiveCollection(): Promise<void> {
+    await this.store.saveMeta(META_ACTIVE_COLLECTION, this.activeCollectionId);
   }
 
   /** Rebuild the scheduler from a curated settings value (no persistence). */
@@ -228,6 +329,8 @@ export class LocalTrainingService implements TrainingService {
     this.sessions.clear();
     this.puzzles.clear();
     this.activeSessionByProgram.clear();
+    this.collections.clear();
+    this.activeCollectionId = DEFAULT_COLLECTION_ID;
     this.puzzleOrder = [];
     this.settings = resolveSettings();
     this.scheduler = new Scheduler({ clock: this.clock, settings: this.settings });
@@ -248,6 +351,17 @@ export class LocalTrainingService implements TrainingService {
       this.puzzleOrder.push(puzzle.id);
     }
     await this.store.saveMeta(META_PUZZLE_ORDER, [...this.puzzleOrder]);
+    // Seeding a pack defines the default collection: first boot trains the
+    // bundled pack unchanged. User-created collections keep their (possibly
+    // now-stale) membership lists; stale ids are filtered at read time.
+    const record: CollectionRecord = {
+      id: DEFAULT_COLLECTION_ID,
+      name: this.collections.get(DEFAULT_COLLECTION_ID)?.name ?? 'Default',
+      puzzleIds: [...this.puzzleOrder],
+      createdAt: this.collections.get(DEFAULT_COLLECTION_ID)?.createdAt ?? this.clock.now(),
+    };
+    this.collections.set(record.id, record);
+    await this.store.saveCollection(record);
     const contentMeta: ContentSetMeta = {
       packId: meta.packId ?? '',
       contentSchemaVersion: puzzles[0]!.contentSchemaVersion,
@@ -296,6 +410,20 @@ export class LocalTrainingService implements TrainingService {
     await this.store.savePuzzles(puzzles);
     await this.store.saveMeta(META_PUZZLE_ORDER, [...this.puzzleOrder]);
     await this.refreshContentMeta(meta.packId);
+    // Newly imported puzzles land in the default collection so they stay
+    // trainable; other collections are untouched (explicit membership only).
+    if (added > 0) {
+      await this.ensureDefaultCollection();
+      const record = this.collections.get(DEFAULT_COLLECTION_ID)!;
+      let changed = false;
+      for (const puzzle of puzzles) {
+        if (!record.puzzleIds.includes(puzzle.id)) {
+          record.puzzleIds.push(puzzle.id);
+          changed = true;
+        }
+      }
+      if (changed) await this.store.saveCollection({ ...record, puzzleIds: [...record.puzzleIds] });
+    }
     return { added, replaced };
   }
 
@@ -314,9 +442,118 @@ export class LocalTrainingService implements TrainingService {
       this.schedules.delete(key);
       await this.store.deleteSchedule(key);
     }
+    for (const collection of this.collections.values()) {
+      if (collection.puzzleIds.includes(puzzleId)) {
+        collection.puzzleIds = collection.puzzleIds.filter((id) => id !== puzzleId);
+        await this.store.saveCollection({ ...collection, puzzleIds: [...collection.puzzleIds] });
+      }
+    }
     await this.store.deletePuzzle(puzzleId);
     await this.store.saveMeta(META_PUZZLE_ORDER, [...this.puzzleOrder]);
     await this.refreshContentMeta();
+  }
+
+  // --- collections (static sets, B4) ----------------------------------------
+
+  private copyCollection(record: CollectionRecord): CollectionRecord {
+    return { ...record, puzzleIds: [...record.puzzleIds] };
+  }
+
+  /** All collections, oldest first. Defensive copies. */
+  listCollections(): CollectionRecord[] {
+    return [...this.collections.values()]
+      .sort((a, b) => a.createdAt - b.createdAt || (a.id < b.id ? -1 : 1))
+      .map((record) => this.copyCollection(record));
+  }
+
+  getCollection(collectionId: string): CollectionRecord | undefined {
+    const record = this.collections.get(collectionId);
+    return record ? this.copyCollection(record) : undefined;
+  }
+
+  /** Persisted active-collection selection (Train picker). */
+  getActiveCollectionId(): string {
+    return this.activeCollectionId;
+  }
+
+  async setActiveCollectionId(collectionId: string): Promise<void> {
+    if (!this.collections.has(collectionId)) {
+      throw new Error(`Collection not found: ${collectionId}`);
+    }
+    this.activeCollectionId = collectionId;
+    await this.persistActiveCollection();
+  }
+
+  async createCollection(name: string): Promise<CollectionRecord> {
+    const clean = name.trim();
+    if (!clean) throw new Error('Collection name must not be empty.');
+    const record: CollectionRecord = {
+      id: `collection-${this.idFactory()}`,
+      name: clean,
+      puzzleIds: [],
+      createdAt: this.clock.now(),
+    };
+    this.collections.set(record.id, record);
+    await this.store.saveCollection(record);
+    return this.copyCollection(record);
+  }
+
+  async renameCollection(collectionId: string, name: string): Promise<CollectionRecord> {
+    const record = this.collections.get(collectionId);
+    if (!record) throw new Error(`Collection not found: ${collectionId}`);
+    const clean = name.trim();
+    if (!clean) throw new Error('Collection name must not be empty.');
+    record.name = clean;
+    await this.store.saveCollection(this.copyCollection(record));
+    return this.copyCollection(record);
+  }
+
+  /**
+   * Delete a collection's membership list and its collection-scoped derived
+   * schedules. Puzzles, other collections' schedules, and all raw attempt
+   * history are kept (D09: history outlives content and derived state). The
+   * default collection cannot be deleted; deleting the active collection
+   * falls back to the default.
+   */
+  async deleteCollection(collectionId: string): Promise<void> {
+    if (!this.collections.has(collectionId)) {
+      throw new Error(`Collection not found: ${collectionId}`);
+    }
+    if (collectionId === DEFAULT_COLLECTION_ID) {
+      throw new Error('The default collection cannot be deleted.');
+    }
+    this.collections.delete(collectionId);
+    await this.store.deleteCollection(collectionId);
+    for (const key of [...this.schedules.keys()]) {
+      const parsed = parseScheduleKey(key);
+      if (parsed?.collectionId === collectionId) {
+        this.schedules.delete(key);
+        await this.store.deleteSchedule(key);
+      }
+    }
+    if (this.activeCollectionId === collectionId) {
+      this.activeCollectionId = DEFAULT_COLLECTION_ID;
+      await this.persistActiveCollection();
+    }
+  }
+
+  async addPuzzleToCollection(collectionId: string, puzzleId: string): Promise<void> {
+    const record = this.collections.get(collectionId);
+    if (!record) throw new Error(`Collection not found: ${collectionId}`);
+    if (!this.puzzles.has(puzzleId)) throw new Error(`Puzzle not found: ${puzzleId}`);
+    if (!record.puzzleIds.includes(puzzleId)) {
+      record.puzzleIds.push(puzzleId);
+      await this.store.saveCollection(this.copyCollection(record));
+    }
+  }
+
+  async removePuzzleFromCollection(collectionId: string, puzzleId: string): Promise<void> {
+    const record = this.collections.get(collectionId);
+    if (!record) throw new Error(`Collection not found: ${collectionId}`);
+    if (record.puzzleIds.includes(puzzleId)) {
+      record.puzzleIds = record.puzzleIds.filter((id) => id !== puzzleId);
+      await this.store.saveCollection(this.copyCollection(record));
+    }
   }
 
   // --- data safety (PB5) --------------------------------------------------
@@ -370,7 +607,55 @@ export class LocalTrainingService implements TrainingService {
   }
 
   getScheduleState(key: string): ScheduleStateDetails | undefined {
-    return this.schedules.get(key)?.schedule;
+    const direct = this.schedules.get(key);
+    if (direct) return direct.schedule;
+    // Legacy pre-B4 `program:puzzle` lookup: resolve across collection scopes
+    // so old callers (History, Puzzles screens, existing tests) keep working.
+    // Prefers the active collection, then the default, then first inserted.
+    const parsed = parseScheduleKey(key);
+    if (parsed && parsed.collectionId === undefined) {
+      return this.legacyScheduleFor(parsed.programId, parsed.puzzleId).schedule;
+    }
+    return undefined;
+  }
+
+  /**
+   * Resolve a (program, puzzle) pair across collection scopes for legacy
+   * callers that do not pass a collection. Returns the matching schedule, if
+   * any, and the key to use for it (existing scope, else the default scope).
+   */
+  private legacyScheduleFor(
+    programId: string,
+    puzzleId: string,
+  ): { key: string; schedule: ScheduleStateDetails | undefined } {
+    let fallback: { key: string; schedule: ScheduleStateDetails | undefined } | undefined;
+    for (const [key, state] of this.schedules) {
+      const parsed = parseScheduleKey(key);
+      if (!parsed || parsed.programId !== programId || parsed.puzzleId !== puzzleId) continue;
+      if (parsed.collectionId === this.activeCollectionId) {
+        return { key, schedule: state.schedule };
+      }
+      if (parsed.collectionId === DEFAULT_COLLECTION_ID && !fallback) {
+        fallback = { key, schedule: state.schedule };
+      }
+      fallback ??= { key, schedule: state.schedule };
+    }
+    return (
+      fallback ?? {
+        key: `${programId}:${DEFAULT_COLLECTION_ID}:${puzzleId}`,
+        schedule: undefined,
+      }
+    );
+  }
+
+  /** Exact schedule lookup within one collection scope (no cross-scope fallback). */
+  private scopedScheduleFor(
+    programId: string,
+    collectionId: string,
+    puzzleId: string,
+  ): { key: string; schedule: ScheduleStateDetails | undefined } {
+    const key = `${programId}:${collectionId}:${puzzleId}`;
+    return { key, schedule: this.schedules.get(key)?.schedule };
   }
 
   getAttemptCount(): number {
@@ -415,7 +700,10 @@ export class LocalTrainingService implements TrainingService {
 
     const scheduleStates: Record<string, ScheduleStateDetails> = {};
     for (const [key, state] of this.schedules) {
-      if (this.keyInProgram(key, programId)) scheduleStates[key] = { ...state.schedule };
+      const parsed = parseScheduleKey(key);
+      if (!parsed || parsed.programId !== programId) continue;
+      if (request.collectionId && parsed.collectionId !== request.collectionId) continue;
+      scheduleStates[key] = { ...state.schedule };
     }
 
     return { session: { ...session }, scheduleStates };
@@ -632,29 +920,44 @@ export class LocalTrainingService implements TrainingService {
     const candidates: Candidate[] = [];
     const newOrder: string[] = [];
     const seen = new Set<string>();
+    const seenPuzzles = new Set<string>();
     const excluded = new Set(request.excludedKeys ?? []);
+    // Scoped to the requested collection when it exists; otherwise the
+    // legacy whole-library path (no collection passed, or unknown id).
+    const scope = request.collectionId ? this.collections.get(request.collectionId) : undefined;
+    const memberIds = scope
+      ? scope.puzzleIds.filter((id) => this.puzzles.has(id))
+      : this.puzzleOrder;
     const newIntroductionsAllowed =
-      this.countIntroducedToday(programId, now) < this.settings.newIntroductionLimitPerDay;
+      this.countIntroducedToday(programId, now, scope?.id) < this.settings.newIntroductionLimitPerDay;
     // UX-001: remember new puzzles suppressed by the daily cap so the
     // no-eligible fallback can report `daily-limit-reached` distinctly from
     // plain all-future-due (`no-due-work`).
     let newCappedOut = false;
 
-    for (const puzzleId of this.puzzleOrder) {
+    for (const puzzleId of memberIds) {
       if (excluded.has(puzzleId)) continue;
-      const key = `${programId}:${puzzleId}`;
-      const state = this.schedules.get(key)?.schedule ?? this.scheduler.createState().schedule;
+      const entry = scope
+        ? this.scopedScheduleFor(programId, scope.id, puzzleId)
+        : this.legacyScheduleFor(programId, puzzleId);
+      const key = entry.key;
+      const state = entry.schedule ?? this.scheduler.createState().schedule;
       if (state.state === 'new' && !newIntroductionsAllowed) {
         newCappedOut = true;
         continue;
       }
       seen.add(key);
+      seenPuzzles.add(puzzleId);
       candidates.push({ progressKey: key, state, orderKey: puzzleId });
       if (state.state === 'new') newOrder.push(key);
     }
 
     for (const [key, state] of this.schedules) {
-      if (seen.has(key) || !this.keyInProgram(key, programId)) continue;
+      const parsed = parseScheduleKey(key);
+      if (!parsed || parsed.programId !== programId) continue;
+      if (scope && parsed.collectionId !== scope.id) continue;
+      if (!scope && seenPuzzles.has(parsed.puzzleId)) continue;
+      if (seen.has(key)) continue;
       candidates.push({ progressKey: key, state: state.schedule, orderKey: key });
     }
 
@@ -676,7 +979,7 @@ export class LocalTrainingService implements TrainingService {
       };
     }
 
-    return { puzzleId: chosen.slice(programId.length + 1) };
+    return { puzzleId: parseScheduleKey(chosen)?.puzzleId ?? chosen };
   }
 
   /**
@@ -701,13 +1004,24 @@ export class LocalTrainingService implements TrainingService {
     await this.clearActiveAttempt(sessionId);
   }
 
-  queueSummary(programId: string): QueueSummary {
+  /**
+   * Queue counts. Without a collection id this covers the whole library
+   * (legacy path: History screen, existing tests). With a known collection
+   * id it covers that collection's membership only (Train picker); an
+   * unknown id falls back to the whole library rather than stranding the UI.
+   */
+  queueSummary(programId: string, collectionId?: string): QueueSummary {
     const now = this.clock.now();
     const summary: QueueSummary = { total: 0, learned: 0, newCount: 0, due: 0 };
-    for (const puzzleId of this.puzzleOrder) {
+    const scope = collectionId ? this.collections.get(collectionId) : undefined;
+    const memberIds = scope
+      ? scope.puzzleIds.filter((id) => this.puzzles.has(id))
+      : this.puzzleOrder;
+    for (const puzzleId of memberIds) {
       summary.total += 1;
-      const key = `${programId}:${puzzleId}`;
-      const state = this.schedules.get(key)?.schedule;
+      const state = scope
+        ? this.schedules.get(`${programId}:${scope.id}:${puzzleId}`)?.schedule
+        : this.legacyScheduleFor(programId, puzzleId).schedule;
       const kind = state?.state;
       if (!kind || kind === 'new') {
         summary.newCount += 1;
@@ -758,19 +1072,17 @@ export class LocalTrainingService implements TrainingService {
 
   // --- internals ----------------------------------------------------------
 
-  private keyInProgram(key: string, programId: string): boolean {
-    return key.startsWith(`${programId}:`);
-  }
-
-  /** Count puzzles introduced today (local day) for the new-per-day cap. */
-  private countIntroducedToday(programId: string, now: number): number {
+  /** Count puzzles introduced today (local day), optionally within one collection. */
+  private countIntroducedToday(programId: string, now: number, collectionId?: string): number {
     const start = new Date(now);
     start.setHours(0, 0, 0, 0);
     const dayStart = start.getTime();
     const dayEnd = dayStart + 24 * 60 * 60 * 1000;
     let count = 0;
     for (const [key, state] of this.schedules) {
-      if (!this.keyInProgram(key, programId)) continue;
+      const parsed = parseScheduleKey(key);
+      if (!parsed || parsed.programId !== programId) continue;
+      if (collectionId && parsed.collectionId !== collectionId) continue;
       const introducedAt = state.schedule.introducedAt;
       if (introducedAt !== undefined && introducedAt >= dayStart && introducedAt < dayEnd) {
         count += 1;

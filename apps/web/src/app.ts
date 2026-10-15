@@ -14,7 +14,6 @@ import { applyTranslations, detectLocale, setLocale, t } from './i18n.ts';
 import { loadPuzzlesFromPack } from './pack-loader.ts';
 import { navigate, registerScreen, startRouter, type ScreenId } from './router.ts';
 import {
-  DEFAULT_COLLECTION_ID,
   DEFAULT_PROGRAM_ID,
   LocalTrainingService,
 } from './scheduler-service.ts';
@@ -96,7 +95,8 @@ async function init(): Promise<void> {
   }
 
   const adapter = new TrainingAdapter(service);
-  await adapter.startSession(DEFAULT_PROGRAM_ID, DEFAULT_COLLECTION_ID);
+  // B4: train the persisted active collection (defaults on first boot).
+  await adapter.startSession(DEFAULT_PROGRAM_ID, service.getActiveCollectionId());
 
   const ctx: AppContext = { service, adapter };
   buildNav(ctx);

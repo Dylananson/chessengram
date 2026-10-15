@@ -19,7 +19,7 @@ import type { AppContext } from './app-context.ts';
 import { t } from './i18n.ts';
 import { PuzzleGame, ReviewNavigator, buildReviewLine, type PromotionRole } from './puzzle-game.ts';
 import type { Screen } from './router.ts';
-import { DEFAULT_PROGRAM_ID } from './scheduler-service.ts';
+import { DEFAULT_PROGRAM_ID, progressKeyToString } from './scheduler-service.ts';
 import { AttemptTimer } from './timing.ts';
 import { selectEarliestFutureDue, type Candidate } from '@chessreps/scheduler';
 import type { NormalizedPuzzle } from '@chessreps/contracts';
@@ -55,6 +55,7 @@ export class TrainView implements Screen {
     progress?: HTMLElement;
     storage?: HTMLElement;
     queue?: HTMLElement;
+    picker?: HTMLSelectElement;
     board?: HTMLElement;
     reviewSection?: HTMLElement;
     reviewLabel?: HTMLElement;
@@ -111,6 +112,7 @@ export class TrainView implements Screen {
           this.showNoDue(selection);
         }
       }
+      this.refreshPicker();
       this.updateProgress();
     })();
   }
@@ -146,6 +148,7 @@ export class TrainView implements Screen {
     this.el.progress = h.querySelector('#progress') ?? undefined;
     this.el.storage = h.querySelector('#storage') ?? undefined;
     this.el.queue = h.querySelector('#queue') ?? undefined;
+    this.el.picker = h.querySelector('#collection-picker') ?? undefined;
     this.el.board = h.querySelector('#board') ?? undefined;
     this.el.reviewSection = h.querySelector('#review-section') ?? undefined;
     this.el.reviewLabel = h.querySelector('#review-label') ?? undefined;
@@ -191,22 +194,54 @@ export class TrainView implements Screen {
   }
 
   private updateProgress(): void {
+    const activeCollection = this.service.getActiveCollectionId();
+    const q = this.service.queueSummary(DEFAULT_PROGRAM_ID, activeCollection);
     this.text('progress').textContent = t('progress.summary', {
       attempts: this.service.getAttemptCount(),
-      total: this.service.listPuzzleIds().length,
+      total: q.total,
     });
     this.text('storage').textContent = t('progress.storage', {
       backend: t(
         this.service.getBackendKind() === 'indexeddb' ? 'storage.indexeddb' : 'storage.memory',
       ),
     });
-    const q = this.service.queueSummary(DEFAULT_PROGRAM_ID);
     this.text('queue').textContent = t('queue.summary', {
       total: q.total,
       newCount: q.newCount,
       due: q.due,
       learned: q.learned,
     });
+  }
+
+  // --- active-collection picker (B4) -----------------------------------------
+  //
+  // Queue/progress follow the persisted active collection. Switching starts a
+  // fresh session in the new scope; an in-flight attempt keeps its original
+  // scope and stays committable, the next selection uses the new collection.
+
+  /** Rebuild the picker options from the service; selection follows the service. */
+  private refreshPicker(): void {
+    const select = this.el.picker;
+    if (!select) return;
+    select.innerHTML = '';
+    for (const collection of this.service.listCollections()) {
+      const option = document.createElement('option');
+      option.value = collection.id;
+      option.textContent = collection.name;
+      select.appendChild(option);
+    }
+    select.value = this.service.getActiveCollectionId();
+  }
+
+  private async onCollectionChange(collectionId: string): Promise<void> {
+    if (!collectionId || collectionId === this.service.getActiveCollectionId()) return;
+    await this.service.setActiveCollectionId(collectionId);
+    await this.adapter.startSession(DEFAULT_PROGRAM_ID, collectionId);
+    this.refreshPicker();
+    this.updateProgress();
+    if (!this.adapter.getActiveAttemptId()) {
+      await this.loadNext();
+    }
   }
 
   // --- board rendering -----------------------------------------------------
@@ -497,23 +532,32 @@ export class TrainView implements Screen {
   private findPracticeTarget(reason?: string): { puzzleId: string; kind: 'ahead' | 'new' } | null {
     const active = this.adapter.describeCurrentAttempt().progressKey;
     const programId = active?.programId ?? DEFAULT_PROGRAM_ID;
+    // B4: schedule scope is (program, collection, puzzle). Practice reads the
+    // active collection's scope via 3-part keys only — never the legacy
+    // `program:puzzle` lookup, which resolves another collection's state when
+    // the active scope has none.
+    const collectionId = this.service.getActiveCollectionId();
     const reserved = new Set<string>();
-    if (active) reserved.add(`${active.programId}:${active.puzzleId}`);
-    const ids = this.service.listPuzzleIds();
+    if (active) reserved.add(progressKeyToString(active));
+    const members = this.service.getCollection(collectionId)?.puzzleIds;
+    const library = new Set(this.service.listPuzzleIds());
+    const ids = (members ?? [...library]).filter((id) => library.has(id));
     const candidates: Candidate[] = [];
     for (const id of ids) {
-      const state = this.service.getScheduleState(`${programId}:${id}`);
+      const key = progressKeyToString({ programId, collectionId, puzzleId: id });
+      const state = this.service.getScheduleState(key);
       if (!state) continue;
-      candidates.push({ progressKey: `${programId}:${id}`, state, orderKey: id });
+      candidates.push({ progressKey: key, state, orderKey: id });
     }
     const ahead = selectEarliestFutureDue(candidates, { now: Date.now(), reservedKeys: reserved });
-    if (ahead) return { puzzleId: ahead.progressKey.slice(programId.length + 1), kind: 'ahead' };
+    if (ahead) return { puzzleId: ahead.orderKey, kind: 'ahead' };
     // Cap is the only blocker and nothing is due in the future: offer one
     // new puzzle anyway (explicit opt-in; the cap still gates auto-selection).
     if (reason === 'daily-limit-reached') {
       for (const id of ids) {
-        if (reserved.has(`${programId}:${id}`)) continue;
-        const state = this.service.getScheduleState(`${programId}:${id}`);
+        const key = progressKeyToString({ programId, collectionId, puzzleId: id });
+        if (reserved.has(key)) continue;
+        const state = this.service.getScheduleState(key);
         if (!state || state.state === 'new') return { puzzleId: id, kind: 'new' };
       }
     }
@@ -533,8 +577,13 @@ export class TrainView implements Screen {
       this.showNoDue(selection);
       return;
     }
+    const attemptKey = this.adapter.describeCurrentAttempt().progressKey;
     const whenValue = this.service.getScheduleState(
-      `${this.adapter.describeCurrentAttempt().progressKey?.programId ?? DEFAULT_PROGRAM_ID}:${target.puzzleId}`,
+      progressKeyToString({
+        programId: attemptKey?.programId ?? DEFAULT_PROGRAM_ID,
+        collectionId: this.service.getActiveCollectionId(),
+        puzzleId: target.puzzleId,
+      }),
     )?.dueAt;
     await this.beginAttempt(await this.adapter.loadPuzzle(target.puzzleId));
     if (target.kind === 'ahead') {
@@ -628,6 +677,9 @@ export class TrainView implements Screen {
 
   private bindEvents(): void {
     this.btn('next').addEventListener('click', () => void this.loadNext());
+    this.el.picker?.addEventListener('change', (event) =>
+      void this.onCollectionChange((event.target as HTMLSelectElement).value),
+    );
     this.btn('practice').addEventListener('click', () => void this.onPractice());
     this.btn('skip').addEventListener('click', () => void this.onSkip());
     this.btn('reveal').addEventListener('click', () => void this.onReveal());
@@ -717,6 +769,11 @@ function template(): string {
           <button id="skip-btn" class="button button-secondary" type="button">${t('skip.label')}</button>
           <button id="next-btn" class="button" type="button" disabled>${t('next.label')}</button>
           <button id="practice-btn" class="button button-secondary hidden" type="button">${t('practiceAhead.label')}</button>
+        </div>
+        <div class="info">
+          <h2>${t('collections.active.label')}</h2>
+          <p class="progress-note">${t('collections.active.hint')}</p>
+          <select id="collection-picker"></select>
         </div>
         <div class="info">
           <h2 data-i18n="queue.title"></h2>
