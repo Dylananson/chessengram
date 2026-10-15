@@ -33,11 +33,12 @@
  *    the adapter, and the service. This file only moved the DOM writes into
  *    vnodes + `redraw()` calls.
  *
- * Deviations from the S2 pilot (both preserve exact pre-Snabbdom hooks):
- * raw `h()` vnodes instead of the S1 `panel`/`actionButton`/`statusLine`
- * primitives (smoke + CSS hooks depend on the legacy `div.info`/`h2`,
- * `#status.status.*`, and `.button.button-secondary` shapes; polish is S7),
- * and an async mount that patches the placeholder immediately (loading
+ * Deviations from the S2 pilot (all preserve exact pre-Snabbdom hooks):
+ * the info/status/solution/review shells stay raw `h()` vnodes (smoke + CSS
+ * hooks depend on the legacy `div.info`/`h2`, `#status.status.*` shapes), as
+ * does the practice button with its conditional `.hidden` class; every other
+ * button uses the S1 `actionButton` helper (same classes/ids/strings in the
+ * DOM — S7 polish). Async mount patches the placeholder immediately (loading
  * status paints synchronously, as before) then runs the resume/select flow
  * — the S4 shape.
  */
@@ -47,10 +48,6 @@ import type { Api } from 'chessground/api';
 import type { Key } from 'chessground/types';
 import type { SquareName } from 'chessops/types';
 import { h } from 'snabbdom/build/h.js';
-import { init } from 'snabbdom/build/init.js';
-import { attributesModule } from 'snabbdom/build/modules/attributes.js';
-import { eventListenersModule } from 'snabbdom/build/modules/eventlisteners.js';
-import { propsModule } from 'snabbdom/build/modules/props.js';
 import type { VNode } from 'snabbdom/build/vnode.js';
 import type { NormalizedPuzzle } from '@chessreps/contracts';
 import { selectEarliestFutureDue, type Candidate } from '@chessreps/scheduler';
@@ -70,16 +67,13 @@ import {
 } from './scheduler-service.ts';
 import { AttemptTimer } from './timing.ts';
 import type { TrainingAdapter } from './training-adapter.ts';
+import { actionButton } from './ui/primitives.ts';
+// Screen patch function: the shared `./ui/patch.ts` setup (`attributes`
+// for ids/disabled, `eventListeners` for `on: { click/change }`, `props`
+// for the live picker value).
+import { screenPatch as patch } from './ui/patch.ts';
 
 const START_FEN = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
-
-/**
- * snabbdom patch function for this screen. `attributes` covers ids/disabled,
- * `eventListeners` covers the `on: { click/change }` bindings, `props`
- * covers the live picker value. `style` stays out: it reads `window` at load
- * and would break Node imports.
- */
-const patch = init([attributesModule, eventListenersModule, propsModule]);
 
 /** The chessground `set()` config, as accepted by the live instance. */
 export type TrainBoardConfig = Parameters<Api['set']>[0];
@@ -782,16 +776,14 @@ export function view(ctrl: TrainCtrl): VNode {
     h('div.info', [
       h('h2', { attrs: { 'data-i18n': 'solution.title' } }, t('solution.title')),
       h('div.button-row', [
-        h(
-          'button#reveal-btn.button.button-secondary',
-          {
-            attrs: {
-              type: 'button',
-              ...(ctrl.revealDisabled ? { disabled: true } : {}),
-            },
-            on: { click: () => void ctrl.onReveal() },
-          },
+        actionButton(
           ctrl.revealHidesSolution ? t('reveal.hide') : t('reveal.show'),
+          'secondary',
+          {
+            id: 'reveal-btn',
+            disabled: ctrl.revealDisabled,
+            onClick: () => void ctrl.onReveal(),
+          },
         ),
       ]),
       h(
@@ -809,57 +801,41 @@ export function view(ctrl: TrainCtrl): VNode {
           : '',
       ),
       h('div.button-row', [
-        h(
-          'button#review-first.button.button-secondary',
-          {
-            attrs: { type: 'button', ...(review?.canBack ? {} : { disabled: true }) },
-            on: { click: () => ctrl.stepReview('first') },
-          },
-          t('review.first'),
-        ),
-        h(
-          'button#review-back.button.button-secondary',
-          {
-            attrs: { type: 'button', ...(review?.canBack ? {} : { disabled: true }) },
-            on: { click: () => ctrl.stepReview('back') },
-          },
-          t('review.back'),
-        ),
-        h(
-          'button#review-forward.button.button-secondary',
-          {
-            attrs: { type: 'button', ...(review?.canForward ? {} : { disabled: true }) },
-            on: { click: () => ctrl.stepReview('forward') },
-          },
-          t('review.forward'),
-        ),
-        h(
-          'button#review-last.button.button-secondary',
-          {
-            attrs: { type: 'button', ...(review?.canForward ? {} : { disabled: true }) },
-            on: { click: () => ctrl.stepReview('last') },
-          },
-          t('review.last'),
-        ),
+        actionButton(t('review.first'), 'secondary', {
+          id: 'review-first',
+          disabled: !review?.canBack,
+          onClick: () => ctrl.stepReview('first'),
+        }),
+        actionButton(t('review.back'), 'secondary', {
+          id: 'review-back',
+          disabled: !review?.canBack,
+          onClick: () => ctrl.stepReview('back'),
+        }),
+        actionButton(t('review.forward'), 'secondary', {
+          id: 'review-forward',
+          disabled: !review?.canForward,
+          onClick: () => ctrl.stepReview('forward'),
+        }),
+        actionButton(t('review.last'), 'secondary', {
+          id: 'review-last',
+          disabled: !review?.canForward,
+          onClick: () => ctrl.stepReview('last'),
+        }),
       ]),
     ]),
     h('div.button-row', [
-      h(
-        'button#skip-btn.button.button-secondary',
-        {
-          attrs: { type: 'button', ...(ctrl.skipDisabled ? { disabled: true } : {}) },
-          on: { click: () => void ctrl.onSkip() },
-        },
-        t('skip.label'),
-      ),
-      h(
-        'button#next-btn.button',
-        {
-          attrs: { type: 'button', ...(ctrl.nextDisabled ? { disabled: true } : {}) },
-          on: { click: () => void ctrl.loadNext() },
-        },
-        t('next.label'),
-      ),
+      actionButton(t('skip.label'), 'secondary', {
+        id: 'skip-btn',
+        disabled: ctrl.skipDisabled,
+        onClick: () => void ctrl.onSkip(),
+      }),
+      actionButton(t('next.label'), 'primary', {
+        id: 'next-btn',
+        disabled: ctrl.nextDisabled,
+        onClick: () => void ctrl.loadNext(),
+      }),
+      // Raw vnode: the conditional `.hidden` class has no `actionButton`
+      // expression (same id/classes/strings in the DOM).
       h(
         `button#practice-btn.button.button-secondary${ctrl.practiceHidden ? '.hidden' : ''}`,
         {

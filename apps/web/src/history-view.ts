@@ -20,7 +20,6 @@
  */
 
 import { h } from 'snabbdom/build/h.js';
-import { init } from 'snabbdom/build/init.js';
 import type { VNode } from 'snabbdom/build/vnode.js';
 import type { AttemptRecord, ScheduleState } from '@chessreps/contracts';
 import type { AppContext } from './app-context.ts';
@@ -28,15 +27,9 @@ import { t } from './i18n.ts';
 import type { Screen } from './router.ts';
 import { DEFAULT_PROGRAM_ID, type LocalTrainingService } from './scheduler-service.ts';
 import { emptyState, panel } from './ui/primitives.ts';
-
-/**
- * snabbdom patch function for this screen. The module set is intentionally
- * empty: History renders static selectors + text only (no listeners, no
- * dynamic classes/attrs/props). Screens that need more add the corresponding
- * `snabbdom/build/modules/*` deep-subpath modules here (all Node-safe except
- * `style`, which reads `window` at load and must stay out).
- */
-const patch = init([]);
+// Shared screen patch (see `./ui/patch.ts`): History renders static
+// selectors + text only, so the extra modules are no-ops here.
+import { screenPatch as patch } from './ui/patch.ts';
 
 export interface HistoryRow {
   puzzleId: string;

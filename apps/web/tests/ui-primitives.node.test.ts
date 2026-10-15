@@ -3,11 +3,13 @@ import { strict as assert } from 'node:assert';
 import { h } from 'snabbdom/build/h.js';
 import {
   actionButton,
+  checkboxRow,
   emptyState,
   formRow,
   panel,
   statusLine,
 } from '../src/ui/primitives.ts';
+import { screenPatch } from '../src/ui/patch.ts';
 
 test('panel renders section.panel with h3 title, body and action row', () => {
   const body = h('p', 'hello');
@@ -57,6 +59,57 @@ test('actionButton passes type, disabled and click handler through', () => {
   const plain = actionButton('Go');
   assert.equal(plain.data?.attrs?.disabled, undefined);
   assert.equal(plain.data?.on, undefined);
+});
+
+test('actionButton compact scale appends .compact without changing labels', () => {
+  assert.equal(actionButton('Add', 'primary', { compact: true }).sel, 'button.button.compact');
+  assert.equal(
+    actionButton('Cancel', 'secondary', { compact: true }).sel,
+    'button.button.button-secondary.compact',
+  );
+  assert.equal(
+    actionButton('More', 'tertiary', { compact: true }).sel,
+    'button.button.button-tertiary.compact',
+  );
+  assert.equal(actionButton('Add', 'primary', { compact: true }).text, 'Add');
+  assert.equal(actionButton('Plain').sel, 'button.button', 'compact defaults off');
+});
+
+test('actionButton carries smoke-hook ids via attrs', () => {
+  const vnode = actionButton('Save', 'primary', { id: 'settings-save-prefs' });
+  assert.equal(vnode.sel, 'button.button');
+  assert.equal(vnode.data?.attrs?.id, 'settings-save-prefs');
+  assert.equal(vnode.data?.attrs?.type, 'button');
+
+  const plain = actionButton('Save');
+  assert.equal(plain.data?.attrs?.id, undefined);
+});
+
+test('checkboxRow renders the wrapped-checkbox shape with id and checked state', () => {
+  const vnode = checkboxRow('Enable timing', { id: 'set-timing', checked: true });
+  assert.equal(vnode.sel, 'div.field.checkbox');
+  assert.equal(vnode.children?.length, 1);
+  const label = vnode.children?.[0];
+  assert.equal(label.sel, 'label');
+  assert.equal(label.children?.length, 2);
+  const [input, text] = label.children ?? [];
+  assert.equal(input.sel, 'input');
+  assert.equal(input.data?.attrs?.id, 'set-timing');
+  assert.equal(input.data?.attrs?.type, 'checkbox');
+  assert.equal(input.data?.props?.checked, true);
+  assert.equal(text.text, ' Enable timing');
+});
+
+test('checkboxRow omits id, props, and listeners when absent', () => {
+  const vnode = checkboxRow('Label');
+  const input = vnode.children?.[0].children?.[0];
+  assert.deepEqual(input.data?.attrs, { type: 'checkbox' });
+  assert.equal(input.data?.props, undefined);
+  assert.equal(input.data?.on, undefined);
+});
+
+test('screenPatch is a shared patch function', () => {
+  assert.equal(typeof screenPatch, 'function');
 });
 
 test('formRow renders label, control, help and error', () => {

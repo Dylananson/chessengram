@@ -22,10 +22,6 @@
  */
 
 import { h } from 'snabbdom/build/h.js';
-import { init } from 'snabbdom/build/init.js';
-import { attributesModule } from 'snabbdom/build/modules/attributes.js';
-import { eventListenersModule } from 'snabbdom/build/modules/eventlisteners.js';
-import { propsModule } from 'snabbdom/build/modules/props.js';
 import type { VNode } from 'snabbdom/build/vnode.js';
 import type { AppContext } from './app-context.ts';
 import { t } from './i18n.ts';
@@ -42,16 +38,9 @@ import {
 import { parseExport, summarizeExport } from './storage/data-port.ts';
 import type { StoreExport, StoreExportSummary } from './storage/local-store.ts';
 import type { TrainingAdapter } from './training-adapter.ts';
-import { emptyState, formRow, panel, statusLine } from './ui/primitives.ts';
-
-/**
- * snabbdom patch function for this screen. `attributes` + `props` cover the
- * form controls (ids/accept/min/max via attrs; value/checked/selected via
- * props so redraws update live control state); `eventListeners` covers the
- * `on: { click }` bindings. The `style` module reads `window` at load and
- * must stay out.
- */
-const patch = init([attributesModule, eventListenersModule, propsModule]);
+import { actionButton, checkboxRow, emptyState, formRow, panel, statusLine } from './ui/primitives.ts';
+// Shared screen patch (see `./ui/patch.ts`).
+import { screenPatch as patch } from './ui/patch.ts';
 
 function downloadJson(filename: string, text: string): void {
   const blob = new Blob([text], { type: 'application/json' });
@@ -282,24 +271,13 @@ function prefsPanel(ctrl: SettingsCtrl): VNode {
       999,
     ),
     numberField(ctrl, 'set-relearning', 'settings.prefs.relearning', c.relearningMinutes, 1, 1440),
-    // Wrapped-checkbox shape (`div.field.checkbox > label > input + text`) has
-    // no formRow expression — see SETTINGS-FOLLOWUP-checkbox-row.
-    h('div.field.checkbox', [
-      h('label', [
-        h('input', {
-          attrs: { id: 'set-timing', type: 'checkbox' },
-          props: { checked: c.timingEnabled },
-        }),
-        ` ${t('settings.prefs.timing')}`,
-      ]),
-    ]),
+    checkboxRow(t('settings.prefs.timing'), { id: 'set-timing', checked: c.timingEnabled }),
   ], [
-    // `.button.compact` has no actionButton expression — see
-    // SETTINGS-FOLLOWUP-compact-button.
-    h('button.button.compact', {
-      attrs: { type: 'button', id: 'settings-save-prefs' },
-      on: { click: () => onSaveClick(ctrl) },
-    }, t('settings.prefs.save')),
+    actionButton(t('settings.prefs.save'), 'primary', {
+      compact: true,
+      id: 'settings-save-prefs',
+      onClick: () => onSaveClick(ctrl),
+    }),
   ]);
 }
 
@@ -315,14 +293,16 @@ function pendingPreview(ctrl: SettingsCtrl, pending: PendingImport): VNode {
       attempts: s.counts.attempts ?? 0,
     })),
     h('div.button-row', [
-      h('button.button.compact', {
-        attrs: { type: 'button', id: 'settings-import-confirm' },
-        on: { click: () => void ctrl.confirmImport() },
-      }, t('settings.data.confirm')),
-      h('button.button.button-secondary.compact', {
-        attrs: { type: 'button', id: 'settings-import-cancel' },
-        on: { click: () => ctrl.cancelImport() },
-      }, t('settings.data.cancel')),
+      actionButton(t('settings.data.confirm'), 'primary', {
+        compact: true,
+        id: 'settings-import-confirm',
+        onClick: () => void ctrl.confirmImport(),
+      }),
+      actionButton(t('settings.data.cancel'), 'secondary', {
+        compact: true,
+        id: 'settings-import-cancel',
+        onClick: () => ctrl.cancelImport(),
+      }),
     ]),
   ]);
 }
@@ -332,6 +312,8 @@ function backupsBody(ctrl: SettingsCtrl): VNode | VNode[] {
   return ctrl.backups.map((label) =>
     h('div.flex-row', [
       h('span', label),
+      // Raw vnode: `actionButton` has no `data-*` attr passthrough, so the
+      // restore hook id stays expressed here (same classes/strings in the DOM).
       h('button.button.compact', {
         attrs: { type: 'button', 'data-restore': label },
         on: { click: () => void ctrl.restoreBackup(label) },
@@ -355,20 +337,22 @@ export function view(ctrl: SettingsCtrl): VNode {
       h('p', t('settings.data.body')),
       ...(ctrl.summary ? [h('p', countsLine(ctrl.summary))] : []),
     ], [
-      h('button.button.compact', {
-        attrs: { type: 'button', id: 'settings-export' },
-        on: { click: () => onExportClick(ctrl) },
-      }, t('settings.data.export')),
+      actionButton(t('settings.data.export'), 'primary', {
+        compact: true,
+        id: 'settings-export',
+        onClick: () => onExportClick(ctrl),
+      }),
     ]),
     panel(t('settings.data.import'), [
       h('div.flex-row', [
         h('input', {
           attrs: { type: 'file', id: 'settings-import-file', accept: '.json,application/json' },
         }),
-        h('button.button.compact', {
-          attrs: { type: 'button', id: 'settings-import-preview' },
-          on: { click: () => onPreviewClick(ctrl) },
-        }, t('settings.data.previewButton')),
+        actionButton(t('settings.data.previewButton'), 'primary', {
+          compact: true,
+          id: 'settings-import-preview',
+          onClick: () => onPreviewClick(ctrl),
+        }),
       ]),
       ...(ctrl.pending ? [pendingPreview(ctrl, ctrl.pending)] : []),
     ]),

@@ -22,16 +22,11 @@
  * creator-error boxes keep their legacy `.ok`/`.error` classes on the
  * `#puzzles-message` / `#pc-errors` elements themselves instead of the
  * `statusLine` primitive (smoke + CSS hooks depend on them; polish is S7).
- * The compact action buttons are raw `h('button.button.compact', …)` vnodes —
- * see SETTINGS-FOLLOWUP-compact-button (no `actionButton` expression exists
- * for the `.compact` scale).
+ * (The S7 polish kept those two boxes as-is; the compact action buttons did
+ * migrate to `actionButton`'s `compact` scale.)
  */
 
 import { h } from 'snabbdom/build/h.js';
-import { init } from 'snabbdom/build/init.js';
-import { attributesModule } from 'snabbdom/build/modules/attributes.js';
-import { eventListenersModule } from 'snabbdom/build/modules/eventlisteners.js';
-import { propsModule } from 'snabbdom/build/modules/props.js';
 import type { VNode } from 'snabbdom/build/vnode.js';
 import type { NormalizedPuzzle } from '@chessreps/contracts';
 import type { AppContext } from './app-context.ts';
@@ -39,7 +34,10 @@ import { t } from './i18n.ts';
 import type { Screen } from './router.ts';
 import { DEFAULT_PROGRAM_ID, type LocalTrainingService } from './scheduler-service.ts';
 import type { ContentSetMeta } from './storage/local-store.ts';
-import { emptyState, formRow, panel } from './ui/primitives.ts';
+import { actionButton, emptyState, formRow, panel } from './ui/primitives.ts';
+// Screen patch function: the shared `./ui/patch.ts` setup (`attributes` +
+// `props` for the form controls, `eventListeners` for `on: { click }`).
+import { screenPatch as patch } from './ui/patch.ts';
 import {
   makeLichessStyleId,
   normalizeUciList,
@@ -51,15 +49,6 @@ import {
   type PgnPreview,
   type PuzzleInput,
 } from './validation/puzzle-validation.ts';
-
-/**
- * snabbdom patch function for this screen. `attributes` + `props` cover the
- * form controls (ids/accept/placeholders/readonly/disabled via attrs;
- * value/checked via props so redraws update live control state);
- * `eventListeners` covers the `on: { click }` bindings. The `style` module
- * reads `window` at load and must stay out.
- */
-const patch = init([attributesModule, eventListenersModule, propsModule]);
 
 export interface PuzzlesMessage {
   kind: 'ok' | 'error';
@@ -364,11 +353,7 @@ function packPanel(ctrl: PuzzlesCtrl): VNode {
 function fileRow(fileId: string, accept: string, buttonId: string, label: string, onClick: () => void): VNode {
   return h('div.flex-row', [
     h('input', { attrs: { type: 'file', id: fileId, accept } }),
-    h(
-      'button.button.compact',
-      { attrs: { type: 'button', id: buttonId }, on: { click: onClick } },
-      label,
-    ),
+    actionButton(label, 'primary', { compact: true, id: buttonId, onClick }),
   ]);
 }
 
@@ -411,26 +396,17 @@ function pgnPreviewView(ctrl: PuzzlesCtrl, preview: PgnPreview): VNode {
   return panel(t('puzzles.pgn.preview.title'), [
     ...rows,
     h('div.button-row', [
-      h(
-        'button.button.compact',
-        {
-          attrs: {
-            type: 'button',
-            id: 'puzzles-pgn-confirm',
-            ...(valid === 0 ? { disabled: true } : {}),
-          },
-          on: { click: () => void ctrl.confirmPgn() },
-        },
-        t('puzzles.pgn.confirm', { count: valid }),
-      ),
-      h(
-        'button.button.button-secondary.compact',
-        {
-          attrs: { type: 'button', id: 'puzzles-pgn-cancel' },
-          on: { click: () => void ctrl.cancelPgn() },
-        },
-        t('puzzles.pgn.cancel'),
-      ),
+      actionButton(t('puzzles.pgn.confirm', { count: valid }), 'primary', {
+        compact: true,
+        id: 'puzzles-pgn-confirm',
+        disabled: valid === 0,
+        onClick: () => void ctrl.confirmPgn(),
+      }),
+      actionButton(t('puzzles.pgn.cancel'), 'secondary', {
+        compact: true,
+        id: 'puzzles-pgn-cancel',
+        onClick: () => void ctrl.cancelPgn(),
+      }),
     ]),
   ]);
 }
@@ -524,11 +500,10 @@ function creatorForm(ctrl: PuzzlesCtrl): VNode[] {
       { htmlFor: 'pc-sourceid' },
     ),
     h('div.button-row', [
-      h(
-        'button.button',
-        { attrs: { type: 'button', id: 'pc-save' }, on: { click: () => onSaveClick(ctrl) } },
-        t('puzzles.creator.save'),
-      ),
+      actionButton(t('puzzles.creator.save'), 'primary', {
+        id: 'pc-save',
+        onClick: () => onSaveClick(ctrl),
+      }),
     ]),
   ];
 }
@@ -540,13 +515,14 @@ function creatorPanel(ctrl: PuzzlesCtrl): VNode {
       : t('puzzles.creator.mode.create')
     : t('puzzles.creator.title');
   return panel(title, [
-    h(
-      'button.button.button-tertiary.compact',
-      {
-        attrs: { type: 'button', id: 'puzzles-new-btn' },
-        on: { click: () => void ctrl.toggleCreator() },
-      },
+    actionButton(
       ctrl.showCreator ? t('puzzles.creator.cancel') : t('puzzles.creator.open'),
+      'tertiary',
+      {
+        compact: true,
+        id: 'puzzles-new-btn',
+        onClick: () => void ctrl.toggleCreator(),
+      },
     ),
     ...(ctrl.showCreator ? creatorForm(ctrl) : []),
   ]);

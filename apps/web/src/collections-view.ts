@@ -24,10 +24,6 @@
  */
 
 import { h } from 'snabbdom/build/h.js';
-import { init } from 'snabbdom/build/init.js';
-import { attributesModule } from 'snabbdom/build/modules/attributes.js';
-import { eventListenersModule } from 'snabbdom/build/modules/eventlisteners.js';
-import { propsModule } from 'snabbdom/build/modules/props.js';
 import type { VNode } from 'snabbdom/build/vnode.js';
 import type { AppContext } from './app-context.ts';
 import { t } from './i18n.ts';
@@ -38,15 +34,8 @@ import {
   type LocalTrainingService,
 } from './scheduler-service.ts';
 import { actionButton, emptyState, panel } from './ui/primitives.ts';
-
-/**
- * snabbdom patch function for this screen. Modules are the S2 empty set plus
- * the three this screen's widgets need: `attributes` (ids, placeholders,
- * disabled), `eventListeners` (`on: { click/input }` wiring), and `props`
- * (live input values bound to ctrl drafts). `style` stays out: it reads
- * `window` at load and would break Node imports.
- */
-const patch = init([attributesModule, eventListenersModule, propsModule]);
+// Shared screen patch (see `./ui/patch.ts`).
+import { screenPatch as patch } from './ui/patch.ts';
 
 export interface CollectionsRow {
   id: string;
@@ -273,14 +262,10 @@ function collectionCard(ctrl: CollectionsCtrl, row: CollectionsRow): VNode {
         props: { value: ctrl.addValues.get(row.id) ?? '' },
         on: { input: (event) => void ctrl.addInput(row.id, event) },
       }),
-      h(
-        'button.button.compact',
-        {
-          attrs: { type: 'button' },
-          on: { click: () => void ctrl.addMember(row.id) },
-        },
-        t('collections.member.add'),
-      ),
+      actionButton(t('collections.member.add'), 'primary', {
+        compact: true,
+        onClick: () => void ctrl.addMember(row.id),
+      }),
     ]),
   ]);
 }
@@ -308,14 +293,11 @@ export function view(ctrl: CollectionsCtrl): VNode {
         props: { value: ctrl.newName },
         on: { input: (event) => void ctrl.createInput(event) },
       }),
-      h(
-        'button.button.compact',
-        {
-          attrs: { type: 'button', id: 'collections-create' },
-          on: { click: () => void ctrl.create() },
-        },
-        t('collections.create'),
-      ),
+      actionButton(t('collections.create'), 'primary', {
+        compact: true,
+        id: 'collections-create',
+        onClick: () => void ctrl.create(),
+      }),
     ]),
     ...(messageNode === null ? [] : [messageNode]),
   ]);

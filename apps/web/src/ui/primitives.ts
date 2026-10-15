@@ -3,7 +3,7 @@
  *
  * Clean-room glue over `snabbdom`'s `h()`: tiny vnode factories for the
  * shapes every training screen needs (panel, action button, form row,
- * status line, empty state). Pure functions only — no state, no services,
+ * checkbox row, status line, empty state). Pure functions only — no state, no services,
  * no side effects. Event callbacks are caller-provided and passed through
  * untouched. First consumers land in S2.
  *
@@ -33,6 +33,10 @@ export type StatusTone =
 
 export interface ActionButtonOptions {
   disabled?: boolean;
+  /** Element id, set via `attrs` (smoke + CSS hook ids live here, as before). */
+  id?: string;
+  /** Compact scale: appends `.compact` (narrower padding, auto width). */
+  compact?: boolean;
   onClick?: (ev: MouseEvent) => void;
 }
 
@@ -62,18 +66,20 @@ export function panel(
   return h('section.panel', children);
 }
 
-/** Button using the existing `.button` vocabulary. */
+/** Button using the existing `.button` vocabulary (plus `.compact` scale). */
 export function actionButton(
   label: string,
   variant: ButtonVariant = 'primary',
   options: ActionButtonOptions = {},
 ): VNode {
-  const sel = variant === 'primary' ? 'button.button' : `button.button.button-${variant}`;
+  const base = variant === 'primary' ? 'button.button' : `button.button.button-${variant}`;
+  const sel = options.compact === true ? `${base}.compact` : base;
   return h(
     sel,
     {
       attrs: {
         type: 'button',
+        ...(options.id !== undefined ? { id: options.id } : {}),
         ...(options.disabled === true ? { disabled: true } : {}),
       },
       ...(options.onClick !== undefined ? { on: { click: options.onClick } } : {}),
@@ -104,6 +110,38 @@ export function formRow(labelText: string, control: VNode, options: FormRowOptio
 /** One-line status readout; tone selects the `.status` modifier class. */
 export function statusLine(text: string, tone: StatusTone = 'info'): VNode {
   return h(tone === 'info' ? 'div.status' : `div.status.${tone}`, text);
+}
+
+export interface CheckboxRowOptions {
+  /** Input id, set via `attrs` (the caller owns label association via this id). */
+  id?: string;
+  /**
+   * Checked state, bound via `props` so redraws update live control state
+   * (same convention as the per-screen form controls).
+   */
+  checked?: boolean;
+  onChange?: (ev: Event) => void;
+}
+
+/**
+ * Wrapped-checkbox row: `div.field.checkbox > label > input + text`, the
+ * shape the settings timing toggle used as a raw vnode. The label text is
+ * appended with a leading space exactly as before.
+ */
+export function checkboxRow(labelText: string, options: CheckboxRowOptions = {}): VNode {
+  return h('div.field.checkbox', [
+    h('label', [
+      h('input', {
+        attrs: {
+          ...(options.id !== undefined ? { id: options.id } : {}),
+          type: 'checkbox',
+        },
+        ...(options.checked !== undefined ? { props: { checked: options.checked } } : {}),
+        ...(options.onChange !== undefined ? { on: { change: options.onChange } } : {}),
+      }),
+      ` ${labelText}`,
+    ]),
+  ]);
 }
 
 /** Centered empty-list placeholder. */
