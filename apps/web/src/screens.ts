@@ -1,6 +1,6 @@
 /**
- * Placeholder screens rendered by the app shell until the product build-out
- * fills them in (PB3 Puzzles/PGN, PB4 Settings, History as part of the shell).
+ * Screen-stub registry. Train, Puzzles, Settings, and History are real screens;
+ * only `collections` remains a stub until the T13-followup (B4, needs user scope).
  * Each stub is a real exported screen so navigation and per-screen teardown
  * are exercised from day one.
  */

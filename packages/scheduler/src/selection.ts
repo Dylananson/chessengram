@@ -3,6 +3,23 @@
  * Ordering: active attempt (handled outside this pure function), due
  * Learning/Relearning by dueAt then key, due Review by dueAt then key,
  * eligible New by stable order; backlog does not fabricate failures.
+ *
+ * UX-004 tiebreaker rule (locked — do not reorder without a new ADR):
+ * 1. Tier priority is strict: due Learning/Relearning > due Review > New.
+ *    A lower tier is only reached when no candidate in any higher tier is
+ *    eligible, so due work can delay — but never permanently deny — New
+ *    puzzles: once higher tiers drain, New is always served.
+ * 2. Within Learning/Relearning and within Review, ties break by `dueAt`
+ *    ascending, then `orderKey` ascending (`byDueThenKey`). Simultaneous-due
+ *    items therefore resolve in a stable, repeatable sequence.
+ * 3. Within New, ties break by `newOrder` index ascending, then `orderKey`
+ *    ascending (`byNewOrder`); candidates absent from `newOrder` sort after
+ *    listed ones. Identical inputs always yield the identical pick.
+ * 4. "No starvation" means: draining the queue (repeatedly selecting and
+ *    removing/reserving the winner) visits every eligible candidate exactly
+ *    in the order above. `selectNextDue` itself is stateless — repeat calls
+ *    with identical inputs return the identical key; progress comes from the
+ *    caller advancing state, never from randomness or call counting here.
  */
 
 import type { ScheduleState, ScheduleStateDetails } from "@chessreps/contracts";
@@ -61,6 +78,8 @@ export function selectNextDue(
     }
   }
 
+  // UX-004: total order within a due tier — dueAt, then orderKey.
+  // Simultaneous-due items resolve deterministically by orderKey.
   const byDueThenKey = (a: Candidate, b: Candidate) => {
     const da = a.state.dueAt ?? Number.POSITIVE_INFINITY;
     const db = b.state.dueAt ?? Number.POSITIVE_INFINITY;
@@ -71,6 +90,8 @@ export function selectNextDue(
     return 0;
   };
 
+  // UX-004: total order for New — stable newOrder index, then orderKey.
+  // Unlisted keys sort after listed ones; never random, never call-counted.
   const byNewOrder = (a: Candidate, b: Candidate) => {
     const ia = newIndex.get(a.progressKey);
     const ib = newIndex.get(b.progressKey);

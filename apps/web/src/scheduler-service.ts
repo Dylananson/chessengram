@@ -732,6 +732,30 @@ export class LocalTrainingService implements TrainingService {
     return structuredClone(attempt);
   }
 
+  /**
+   * Read-only list of raw attempt records, newest-first (by `startedAt`).
+   *
+   * No mutations, no grading, no scheduler writes. Returns defensive copies
+   * (`structuredClone`); callers cannot affect service state by mutating the
+   * result. The default limit (100) keeps the History screen cheap; pass an
+   * explicit `limit` to page.
+   */
+  listAttempts(filter: { programId?: string; puzzleId?: string; limit?: number } = {}): AttemptRecord[] {
+    const limit = filter.limit ?? 100;
+    const matches: AttemptRecord[] = [];
+    for (const attempt of this.attempts.values()) {
+      if (filter.programId !== undefined && attempt.progressKey.programId !== filter.programId) {
+        continue;
+      }
+      if (filter.puzzleId !== undefined && attempt.progressKey.puzzleId !== filter.puzzleId) {
+        continue;
+      }
+      matches.push(attempt);
+    }
+    matches.sort((a, b) => b.startedAt - a.startedAt);
+    return matches.slice(0, Math.max(0, limit)).map((attempt) => structuredClone(attempt));
+  }
+
   // --- internals ----------------------------------------------------------
 
   private keyInProgram(key: string, programId: string): boolean {

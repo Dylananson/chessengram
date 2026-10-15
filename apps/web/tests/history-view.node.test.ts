@@ -15,6 +15,7 @@ test('empty library yields an empty read-only snapshot', async () => {
     learned: 0,
     attemptCount: 0,
     rows: [],
+    attempts: [],
   });
 });
 
