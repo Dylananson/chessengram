@@ -8,248 +8,218 @@
  *  - Skip abandons the current unscored attempt and moves to the next due
  *    puzzle (session-scoped skip list in the adapter),
  *  - the queue summary (new/learned/due) is shown on screen.
+ *
+ * Rendering (UI-001 S6 — the S2 ctrl/view/redraw pattern from history-view,
+ * last and highest-risk because of the live board):
+ *
+ *  - Mutable state lives in {@link TrainCtrl} (game, timer, attempt flags,
+ *    status, button states, review navigator, picker snapshot). {@link view}
+ *    is a pure `(ctrl) => VNode` function rendering everything EXCEPT the
+ *    board. `h`/`init`/modules come from DOM-free `snabbdom/build/*` deep
+ *    subpaths (never the package root, which touches `window` at load), so
+ *    the ctrl, the shell builder, and `view` stay importable under Node.
+ *    Only `TrainView.mount` touches the DOM.
+ *  - The chessground host element lives OUTSIDE the patched subtree.
+ *    `mount` builds a static shell via {@link createTrainShell} (layout +
+ *    board-wrap + `div#board` + an empty controls placeholder), creates the
+ *    `Chessground` instance on the host once, and patches ONLY the
+ *    placeholder with `view(ctrl)`. The board vnode never exists, so no
+ *    patch can remount it; all board updates go through the imperative
+ *    {@link TrainBoardPort} (`ground.set(...)`), and unmount destroys the
+ *    ground. The global `#promotion` overlay (owned by `index.html`) likewise
+ *    stays outside the tree and is synced imperatively through
+ *    {@link TrainPromotionUi}.
+ *  - Grading/selection logic is untouched: it lives in `puzzle-game.ts`,
+ *    the adapter, and the service. This file only moved the DOM writes into
+ *    vnodes + `redraw()` calls.
+ *
+ * Deviations from the S2 pilot (both preserve exact pre-Snabbdom hooks):
+ * raw `h()` vnodes instead of the S1 `panel`/`actionButton`/`statusLine`
+ * primitives (smoke + CSS hooks depend on the legacy `div.info`/`h2`,
+ * `#status.status.*`, and `.button.button-secondary` shapes; polish is S7),
+ * and an async mount that patches the placeholder immediately (loading
+ * status paints synchronously, as before) then runs the resume/select flow
+ * — the S4 shape.
  */
 
 import { Chessground } from 'chessground';
 import type { Api } from 'chessground/api';
-import type { Dests, Key } from 'chessground/types';
+import type { Key } from 'chessground/types';
 import type { SquareName } from 'chessops/types';
-
+import { h } from 'snabbdom/build/h.js';
+import { init } from 'snabbdom/build/init.js';
+import { attributesModule } from 'snabbdom/build/modules/attributes.js';
+import { eventListenersModule } from 'snabbdom/build/modules/eventlisteners.js';
+import { propsModule } from 'snabbdom/build/modules/props.js';
+import type { VNode } from 'snabbdom/build/vnode.js';
+import type { NormalizedPuzzle } from '@chessreps/contracts';
+import { selectEarliestFutureDue, type Candidate } from '@chessreps/scheduler';
 import type { AppContext } from './app-context.ts';
 import { t } from './i18n.ts';
-import { PuzzleGame, ReviewNavigator, buildReviewLine, type PromotionRole } from './puzzle-game.ts';
+import {
+  PuzzleGame,
+  ReviewNavigator,
+  buildReviewLine,
+  type PromotionRole,
+} from './puzzle-game.ts';
 import type { Screen } from './router.ts';
-import { DEFAULT_PROGRAM_ID, progressKeyToString } from './scheduler-service.ts';
+import {
+  DEFAULT_PROGRAM_ID,
+  progressKeyToString,
+  type LocalTrainingService,
+} from './scheduler-service.ts';
 import { AttemptTimer } from './timing.ts';
-import { selectEarliestFutureDue, type Candidate } from '@chessreps/scheduler';
-import type { NormalizedPuzzle } from '@chessreps/contracts';
+import type { TrainingAdapter } from './training-adapter.ts';
 
 const START_FEN = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
 
-export class TrainView implements Screen {
-  readonly id = 'train' as const;
+/**
+ * snabbdom patch function for this screen. `attributes` covers ids/disabled,
+ * `eventListeners` covers the `on: { click/change }` bindings, `props`
+ * covers the live picker value. `style` stays out: it reads `window` at load
+ * and would break Node imports.
+ */
+const patch = init([attributesModule, eventListenersModule, propsModule]);
 
-  private readonly ctx: AppContext;
-  private host: HTMLElement | null = null;
+/** The chessground `set()` config, as accepted by the live instance. */
+export type TrainBoardConfig = Parameters<Api['set']>[0];
 
-  private ground: Api | null = null;
-  private game: PuzzleGame | null = null;
-  private timer = new AttemptTimer();
-  private scoredCommitted = false;
-  private pendingPromotion: { from: Key; to: Key } | null = null;
-  private revealed = false;
-  private currentPuzzle: NormalizedPuzzle | null = null;
-  private review: ReviewNavigator | null = null;
+/**
+ * Imperative board seam. The ctrl renders positions into this port; the
+ * mount site wires it to the real chessground instance, tests wire a
+ * recording fake. The port object identity never changes within a mount, and
+ * `destroy` runs only on unmount — `redraw()` never touches the board.
+ */
+export interface TrainBoardPort {
+  set(config: TrainBoardConfig): void;
+  destroy(): void;
+}
 
-  private el: {
-    status?: HTMLElement;
-    puzzleId?: HTMLElement;
-    rating?: HTMLElement;
-    themes?: HTMLElement;
-    solverColor?: HTMLElement;
-    solution?: HTMLElement;
-    reveal?: HTMLButtonElement;
-    skip?: HTMLButtonElement;
-    next?: HTMLButtonElement;
-    practice?: HTMLButtonElement;
-    progress?: HTMLElement;
-    storage?: HTMLElement;
-    queue?: HTMLElement;
-    picker?: HTMLSelectElement;
-    board?: HTMLElement;
-    reviewSection?: HTMLElement;
-    reviewLabel?: HTMLElement;
-    reviewFirst?: HTMLButtonElement;
-    reviewBack?: HTMLButtonElement;
-    reviewForward?: HTMLButtonElement;
-    reviewLast?: HTMLButtonElement;
-  } = {};
+/** No-op board port: the ctrl default, so Node tests never need a DOM. */
+export const NoopBoard: TrainBoardPort = {
+  set(): void {},
+  destroy(): void {},
+};
 
-  private readonly onVisibility = (): void => {
-    if (document.hidden) this.timer.interrupt();
-    else this.timer.resume();
-  };
+/**
+ * Imperative promotion-overlay seam. The overlay element is global (owned by
+ * `index.html`, outside every patched subtree); the mount site syncs it from
+ * ctrl state, tests record the calls. Glyph/label resolution stays here with
+ * the ctrl so the shell is a thin DOM writer.
+ */
+export interface TrainPromotionUi {
+  show(color: 'white' | 'black'): void;
+  hide(): void;
+}
 
-  private readonly onBeforeUnload = (): void => this.timer.interrupt();
+/** No-op promotion seam: the ctrl default for Node tests. */
+export const NoopPromotionUi: TrainPromotionUi = {
+  show(): void {},
+  hide(): void {},
+};
 
-  constructor(ctx: AppContext) {
-    this.ctx = ctx;
+export type TrainStatusTone = 'info' | 'correct' | 'wrong' | 'completed' | 'revealed';
+
+export interface TrainStatus {
+  key: string;
+  tone: TrainStatusTone;
+  params?: Record<string, string | number>;
+}
+
+export interface TrainCollectionOption {
+  id: string;
+  name: string;
+}
+
+/**
+ * Per-screen controller: owns the game, timer, attempt flags, status, button
+ * states, review navigator, and picker snapshot, plus the `board` /
+ * `promotionUi` ports and the `redraw` closure the mount site installs.
+ * Every mutation path ends in `redraw()` (mirroring the S2 History seam);
+ * the board port carries positions imperatively and is never redrawn.
+ * DOM-free: safe to drive under Node with fake ports.
+ */
+export class TrainCtrl {
+  game: PuzzleGame | null = null;
+  timer = new AttemptTimer();
+  scoredCommitted = false;
+  pendingPromotion: { from: Key; to: Key } | null = null;
+  pendingPromotionColor: 'white' | 'black' = 'white';
+  revealed = false;
+  /**
+   * Puzzle shown in the info panel. Set by both `beginAttempt` and resume
+   * (both painted the info DOM pre-Snabbdom). Kept separate from
+   * `currentPuzzle` below on purpose — see `resumeIfPossible`.
+   */
+  infoPuzzle: NormalizedPuzzle | null = null;
+  currentPuzzle: NormalizedPuzzle | null = null;
+  review: ReviewNavigator | null = null;
+
+  status: TrainStatus = { key: 'status.loading', tone: 'info' };
+  solutionHidden = true;
+  revealHidesSolution = false;
+  nextDisabled = true;
+  skipDisabled = false;
+  revealDisabled = false;
+  practiceHidden = true;
+  practiceLabel: string = t('practiceAhead.label');
+  collections: TrainCollectionOption[] = [];
+  activeCollectionId = '';
+  progressText = '';
+  storageText = '';
+  queueText = '';
+
+  board: TrainBoardPort;
+  promotionUi: TrainPromotionUi;
+  redraw: () => void = () => {};
+  disposed = false;
+
+  private readonly service: LocalTrainingService;
+  private readonly adapter: TrainingAdapter;
+
+  constructor(
+    service: LocalTrainingService,
+    adapter: TrainingAdapter,
+    board: TrainBoardPort = NoopBoard,
+    promotionUi: TrainPromotionUi = NoopPromotionUi,
+    redraw: () => void = () => {},
+  ) {
+    this.service = service;
+    this.adapter = adapter;
+    this.board = board;
+    this.promotionUi = promotionUi;
+    this.redraw = redraw;
+    this.collections = service.listCollections().map((collection) => ({
+      id: collection.id,
+      name: collection.name,
+    }));
+    this.activeCollectionId = service.getActiveCollectionId();
   }
 
-  private get service() {
-    return this.ctx.service;
+  /** Mark torn down: late async continuations become no-ops. */
+  dispose(): void {
+    this.disposed = true;
+    this.board = NoopBoard;
+    this.promotionUi = NoopPromotionUi;
+    this.redraw = () => {};
   }
 
-  private get adapter() {
-    return this.ctx.adapter;
+  interruptTimer(): void {
+    this.timer.interrupt();
   }
 
-  mount(host: HTMLElement): Promise<void> {
-    return (async () => {
-      this.host = host;
-      host.innerHTML = template();
-      this.queryRefs();
-      this.bindEvents();
-
-      const boardEl = this.el.board!;
-      this.ground = Chessground(boardEl, {
-        fen: START_FEN,
-        orientation: 'white',
-        coordinates: true,
-        animation: { enabled: true, duration: 180 },
-        movable: { free: false, showDests: true, events: { after: (o, d) => void this.onUserMove(o, d) } },
-      });
-
-      document.addEventListener('visibilitychange', this.onVisibility);
-      window.addEventListener('beforeunload', this.onBeforeUnload);
-
-      const resumed = await this.resumeIfPossible();
-      if (!resumed) {
-        const selection = await this.adapter.selectNext();
-        if (selection.puzzleId) {
-          await this.beginAttempt(await this.adapter.loadPuzzle(selection.puzzleId));
-        } else {
-          this.showNoDue(selection);
-        }
-      }
-      this.refreshPicker();
-      this.updateProgress();
-    })();
-  }
-
-  unmount(): void {
-    document.removeEventListener('visibilitychange', this.onVisibility);
-    window.removeEventListener('beforeunload', this.onBeforeUnload);
-    this.hidePromotion();
-    this.cleanupPromotion?.();
-    this.cleanupPromotion = null;
-    this.ground?.destroy();
-    this.ground = null;
-    this.game = null;
-    this.currentPuzzle = null;
-    this.review = null;
-    this.host = null;
-  }
-
-  // --- DOM helpers ---------------------------------------------------------
-
-  private queryRefs(): void {
-    const h = this.host!;
-    this.el.status = h.querySelector('#status') ?? undefined;
-    this.el.puzzleId = h.querySelector('#puzzle-id') ?? undefined;
-    this.el.rating = h.querySelector('#rating') ?? undefined;
-    this.el.themes = h.querySelector('#themes') ?? undefined;
-    this.el.solverColor = h.querySelector('#solver-color') ?? undefined;
-    this.el.solution = h.querySelector('#solution') ?? undefined;
-    this.el.reveal = h.querySelector('#reveal-btn') ?? undefined;
-    this.el.skip = h.querySelector('#skip-btn') ?? undefined;
-    this.el.next = h.querySelector('#next-btn') ?? undefined;
-    this.el.practice = h.querySelector('#practice-btn') ?? undefined;
-    this.el.progress = h.querySelector('#progress') ?? undefined;
-    this.el.storage = h.querySelector('#storage') ?? undefined;
-    this.el.queue = h.querySelector('#queue') ?? undefined;
-    this.el.picker = h.querySelector('#collection-picker') ?? undefined;
-    this.el.board = h.querySelector('#board') ?? undefined;
-    this.el.reviewSection = h.querySelector('#review-section') ?? undefined;
-    this.el.reviewLabel = h.querySelector('#review-label') ?? undefined;
-    this.el.reviewFirst = h.querySelector('#review-first') ?? undefined;
-    this.el.reviewBack = h.querySelector('#review-back') ?? undefined;
-    this.el.reviewForward = h.querySelector('#review-forward') ?? undefined;
-    this.el.reviewLast = h.querySelector('#review-last') ?? undefined;
-  }
-
-  private text(id: keyof typeof this.el): HTMLElement {
-    return this.el[id] as HTMLElement;
-  }
-
-  private btn(id: 'reveal' | 'skip' | 'next' | 'practice'): HTMLButtonElement {
-    return this.el[id] as HTMLButtonElement;
-  }
-
-  private nextBtn(): HTMLButtonElement {
-    return this.btn('next');
-  }
-
-  private setStatus(
-    key: string,
-    className?: string,
-    params?: Record<string, string | number>,
-  ): void {
-    const el = this.text('status');
-    el.textContent = t(key, params);
-    el.className = 'status';
-    if (className) el.classList.add(className);
-    if (this.game?.failedState && !this.game.isCompleted) el.classList.add('failed-but-solving');
-  }
-
-  private updatePuzzleInfo(p: NormalizedPuzzle): void {
-    this.text('puzzleId').textContent = `${t('puzzle.id')}: ${p.id}`;
-    this.text('rating').textContent = `${t('puzzle.rating')}: ${p.rating}`;
-    this.text('themes').textContent = `${t('puzzle.themes')}: ${p.themes.slice(0, 4).join(', ') || t('puzzle.none')}`;
-    this.text('solverColor').textContent = `${t('puzzle.solver')}: ${t(`color.${p.solverColor}`)}`;
-    this.el.solution!.textContent = p.solution.join(' ');
-    this.el.solution!.classList.add('hidden');
-    this.revealed = false;
-    this.btn('reveal').textContent = t('reveal.show');
-  }
-
-  private updateProgress(): void {
-    const activeCollection = this.service.getActiveCollectionId();
-    const q = this.service.queueSummary(DEFAULT_PROGRAM_ID, activeCollection);
-    this.text('progress').textContent = t('progress.summary', {
-      attempts: this.service.getAttemptCount(),
-      total: q.total,
-    });
-    this.text('storage').textContent = t('progress.storage', {
-      backend: t(
-        this.service.getBackendKind() === 'indexeddb' ? 'storage.indexeddb' : 'storage.memory',
-      ),
-    });
-    this.text('queue').textContent = t('queue.summary', {
-      total: q.total,
-      newCount: q.newCount,
-      due: q.due,
-      learned: q.learned,
-    });
-  }
-
-  // --- active-collection picker (B4) -----------------------------------------
-  //
-  // Queue/progress follow the persisted active collection. Switching starts a
-  // fresh session in the new scope; an in-flight attempt keeps its original
-  // scope and stays committable, the next selection uses the new collection.
-
-  /** Rebuild the picker options from the service; selection follows the service. */
-  private refreshPicker(): void {
-    const select = this.el.picker;
-    if (!select) return;
-    select.innerHTML = '';
-    for (const collection of this.service.listCollections()) {
-      const option = document.createElement('option');
-      option.value = collection.id;
-      option.textContent = collection.name;
-      select.appendChild(option);
-    }
-    select.value = this.service.getActiveCollectionId();
-  }
-
-  private async onCollectionChange(collectionId: string): Promise<void> {
-    if (!collectionId || collectionId === this.service.getActiveCollectionId()) return;
-    await this.service.setActiveCollectionId(collectionId);
-    await this.adapter.startSession(DEFAULT_PROGRAM_ID, collectionId);
-    this.refreshPicker();
-    this.updateProgress();
-    if (!this.adapter.getActiveAttemptId()) {
-      await this.loadNext();
-    }
+  resumeTimer(): void {
+    this.timer.resume();
   }
 
   // --- board rendering -----------------------------------------------------
 
-  private renderPosition(opts: { fen?: string; lastMove?: Key[]; interactive?: boolean } = {}): void {
-    if (!this.game || !this.ground) return;
+  private renderPosition(
+    opts: { fen?: string; lastMove?: Key[]; interactive?: boolean } = {},
+  ): void {
+    if (!this.game || this.disposed) return;
     const interactive = opts.interactive ?? this.game.solverTurn;
-    this.ground.set({
+    this.board.set({
       fen: opts.fen ?? this.game.fen,
       orientation: this.game.orientation,
       turnColor: this.game.turn,
@@ -257,7 +227,7 @@ export class TrainView implements Screen {
       movable: {
         free: false,
         color: interactive ? this.game.orientation : undefined,
-        dests: (interactive ? this.game.legalDests() : new Map()) as Dests,
+        dests: interactive ? this.game.legalDests() : new Map(),
         showDests: true,
         events: { after: (o, d) => void this.onUserMove(o, d) },
       },
@@ -268,43 +238,50 @@ export class TrainView implements Screen {
 
   // --- move handling -------------------------------------------------------
 
-  private async onUserMove(orig: Key, dest: Key): Promise<void> {
-    if (!this.game) return;
+  async onUserMove(orig: Key, dest: Key): Promise<void> {
+    if (!this.game || this.disposed) return;
     if (this.game.requiresPromotion(orig as SquareName, dest as SquareName)) {
       this.pendingPromotion = { from: orig, to: dest };
+      this.pendingPromotionColor = this.game.orientation;
       this.renderPosition();
-      this.showPromotion(this.game.orientation);
+      this.promotionUi.show(this.game.orientation);
+      this.redraw();
       return;
     }
     await this.resolveUserMove(orig as SquareName, dest as SquareName);
   }
 
-  private async resolveUserMove(
+  async resolveUserMove(
     from: SquareName,
     to: SquareName,
     promotion?: PromotionRole,
   ): Promise<void> {
-    if (!this.game) return;
+    if (!this.game || this.disposed) return;
     const result = this.game.playUserMove(from, to, promotion);
 
     if (result.kind === 'illegal' || result.kind === 'ignored' || result.kind === 'needs-promotion') {
       this.renderPosition();
+      this.redraw();
       return;
     }
 
     if (result.kind === 'wrong') {
       await this.adapter.recordWrongMove(result.uci);
+      if (this.disposed) return;
       if (!this.scoredCommitted) {
         this.scoredCommitted = true;
         this.timer.markFailure();
         await this.adapter.commitFailure(this.timer.snapshot());
+        if (this.disposed) return;
       }
-      this.setStatus('status.wrong', 'wrong');
+      this.status = { key: 'status.wrong', tone: 'wrong' };
       this.renderPosition();
+      this.redraw();
       return;
     }
 
     await this.adapter.recordMove(result.uci, true);
+    if (this.disposed) return;
     this.renderPosition({
       fen: result.fenAfterSolver,
       lastMove: [from as Key, to as Key],
@@ -312,38 +289,45 @@ export class TrainView implements Screen {
     });
 
     const settle = async (): Promise<void> => {
+      if (this.disposed) return;
       if (result.completed) {
         await this.completePuzzle();
       } else {
-        this.setStatus('status.correct', 'correct');
+        this.status = { key: 'status.correct', tone: 'correct' };
         this.renderPosition();
+        this.redraw();
       }
     };
 
     if (result.fenAfterOpponent) {
-      window.setTimeout(() => void settle(), 260);
+      // Global setTimeout (identical to window.setTimeout in the browser,
+      // but Node-safe so the ctrl stays testable without a DOM).
+      setTimeout(() => void settle(), 260);
     } else {
       await settle();
     }
   }
 
   private async completePuzzle(): Promise<void> {
-    if (!this.game) return;
+    if (!this.game || this.disposed) return;
     if (this.game.failedState) {
       await this.adapter.finishCorrection(this.timer.snapshot());
-      this.setStatus('status.correctionComplete', 'completed');
+      if (this.disposed) return;
+      this.status = { key: 'status.correctionComplete', tone: 'completed' };
     } else {
       if (!this.scoredCommitted) {
         this.scoredCommitted = true;
         await this.adapter.commitSuccess(this.timer.snapshot());
+        if (this.disposed) return;
       }
-      this.setStatus('status.completed', 'completed');
+      this.status = { key: 'status.completed', tone: 'completed' };
     }
     this.renderPosition({ interactive: false });
-    this.nextBtn().disabled = false;
-    this.btn('skip').disabled = true;
+    this.nextDisabled = false;
+    this.skipDisabled = true;
     this.updateProgress();
     this.enterReview();
+    this.redraw();
   }
 
   // --- attempt review (read-only, completed puzzles only) -------------------
@@ -354,17 +338,16 @@ export class TrainView implements Screen {
   // entered only from the completed state, renders non-interactively, and
   // performs no schedule or attempt writes (read via `listAttemptsForPuzzle`).
 
-  /** Drop review state and hide the review controls (new attempt starting). */
-  private resetReview(): void {
+  /** Drop review state (new attempt starting); the view hides the section. */
+  resetReview(): void {
     this.review = null;
-    this.el.reviewSection?.classList.add('hidden');
   }
 
   /**
-   * Build the review line from the recorded attempt events and show the
-   * controls at the final position. No-op unless the puzzle is completed.
+   * Build the review line from the recorded attempt events. No-op unless the
+   * puzzle is completed.
    */
-  private enterReview(): void {
+  enterReview(): void {
     if (!this.game?.isCompleted || !this.currentPuzzle) {
       this.resetReview();
       return;
@@ -377,107 +360,92 @@ export class TrainView implements Screen {
       return;
     }
     this.review = new ReviewNavigator(line);
-    this.el.reviewSection?.classList.remove('hidden');
     this.renderReviewStep();
   }
 
   /** Render the navigator's current step. Non-interactive; no state writes. */
-  private renderReviewStep(): void {
-    if (!this.review || !this.game?.isCompleted) return;
+  renderReviewStep(): void {
+    if (!this.review || !this.game?.isCompleted || this.disposed) return;
     const step = this.review.current();
     this.renderPosition({
       fen: step.fen,
       lastMove: step.uci ? uciToKeys(step.uci) : undefined,
       interactive: false,
     });
-    this.updateReviewControls();
   }
 
-  private updateReviewControls(): void {
-    if (!this.review) return;
-    if (this.el.reviewLabel) {
-      this.el.reviewLabel.textContent = t('review.position', {
-        index: this.review.position,
-        total: this.review.count - 1,
-      });
-    }
-    if (this.el.reviewFirst) this.el.reviewFirst.disabled = !this.review.canBack;
-    if (this.el.reviewBack) this.el.reviewBack.disabled = !this.review.canBack;
-    if (this.el.reviewForward) this.el.reviewForward.disabled = !this.review.canForward;
-    if (this.el.reviewLast) this.el.reviewLast.disabled = !this.review.canForward;
-  }
-
-  private stepReview(direction: 'first' | 'back' | 'forward' | 'last'): void {
+  stepReview(direction: 'first' | 'back' | 'forward' | 'last'): void {
     if (!this.review || !this.game?.isCompleted) return;
     if (direction === 'first') this.review.first();
     else if (direction === 'back') this.review.back();
     else if (direction === 'forward') this.review.forward();
     else this.review.last();
     this.renderReviewStep();
+    this.redraw();
   }
 
-  // --- promo overlay -------------------------------------------------------
+  // --- promotion picker -----------------------------------------------------
 
-  private readonly PROMOTION_GLYPHS: Record<'white' | 'black', Record<PromotionRole, string>> = {
-    white: { q: '♕', r: '♖', b: '♗', n: '♘' },
-    black: { q: '♛', r: '♜', b: '♝', n: '♞' },
-  };
-
-  private showPromotion(color: 'white' | 'black'): void {
-    const overlay = document.getElementById('promotion')!;
-    overlay.querySelectorAll<HTMLButtonElement>('[data-promotion]').forEach((b) => {
-      const role = b.getAttribute('data-promotion') as PromotionRole;
-      b.textContent = this.PROMOTION_GLYPHS[color][role];
-      b.setAttribute('aria-label', t(`promotion.${roleName(role)}`));
-    });
-    overlay.classList.remove('hidden');
-  }
-
-  private hidePromotion(): void {
-    document.getElementById('promotion')?.classList.add('hidden');
-  }
-
-  private onPromotionChoice(role: PromotionRole): void {
+  choosePromotion(role: PromotionRole): void {
     const pending = this.pendingPromotion;
     this.pendingPromotion = null;
-    this.hidePromotion();
+    this.promotionUi.hide();
     if (!pending) {
       this.renderPosition();
+      this.redraw();
       return;
     }
     void this.resolveUserMove(pending.from as SquareName, pending.to as SquareName, role);
   }
 
+  cancelPromotion(): void {
+    this.pendingPromotion = null;
+    this.promotionUi.hide();
+    this.renderPosition();
+    this.redraw();
+  }
+
   // --- attempt lifecycle ---------------------------------------------------
 
-  private async beginAttempt(p: NormalizedPuzzle): Promise<void> {
+  async beginAttempt(p: NormalizedPuzzle): Promise<void> {
     this.game = new PuzzleGame(p);
+    this.infoPuzzle = p;
     this.currentPuzzle = p;
     this.resetReview();
     this.timer = new AttemptTimer();
     this.scoredCommitted = false;
     this.pendingPromotion = null;
     this.revealed = false;
-    this.hidePromotion();
+    this.promotionUi.hide();
 
     await this.adapter.startAttempt(p);
+    if (this.disposed) return;
     this.timer.start();
 
-    this.nextBtn().disabled = true;
-    this.btn('skip').disabled = false;
-    this.btn('reveal').disabled = false;
-    this.btn('practice').classList.add('hidden');
-    this.updatePuzzleInfo(p);
-    this.setStatus('status.yourTurn', undefined, { color: t(`color.${p.solverColor}`) });
+    this.nextDisabled = true;
+    this.skipDisabled = false;
+    this.revealDisabled = false;
+    this.practiceHidden = true;
+    this.solutionHidden = true;
+    this.revealHidesSolution = false;
+    this.status = {
+      key: 'status.yourTurn',
+      tone: 'info',
+      params: { color: t(`color.${p.solverColor}`) },
+    };
     this.renderPosition();
     this.updateProgress();
+    this.redraw();
   }
 
-  private async loadNext(): Promise<void> {
+  async loadNext(): Promise<void> {
+    if (this.disposed) return;
     if (this.game?.isCompleted === false && this.adapter.getActiveAttemptId()) return;
-    this.nextBtn().disabled = true;
-    this.btn('practice').classList.add('hidden');
+    this.nextDisabled = true;
+    this.practiceHidden = true;
+    this.redraw();
     const selection = await this.adapter.selectNext();
+    if (this.disposed) return;
     if (!selection.puzzleId) {
       this.showNoDue(selection);
       return;
@@ -497,7 +465,7 @@ export class TrainView implements Screen {
    *   anyway. Practice attempts are scored normally; nothing is auto-started
    *   and no schedule state is fabricated.
    */
-  private showNoDue(selection: {
+  showNoDue(selection: {
     puzzleId: string | null;
     nextDueAt?: number;
     reason?: string;
@@ -505,31 +473,31 @@ export class TrainView implements Screen {
     const when = selection.nextDueAt
       ? new Date(selection.nextDueAt).toLocaleString()
       : t('puzzle.none');
-    const practiceBtn = this.btn('practice');
     if (selection.reason === 'queue-empty') {
-      this.setStatus('status.queueEmpty');
-      practiceBtn.classList.add('hidden');
+      this.status = { key: 'status.queueEmpty', tone: 'info' };
+      this.practiceHidden = true;
     } else {
       if (selection.reason === 'daily-limit-reached') {
-        this.setStatus('status.dailyLimit', undefined, { when });
+        this.status = { key: 'status.dailyLimit', tone: 'info', params: { when } };
       } else {
-        this.setStatus('status.noDue', undefined, { when });
+        this.status = { key: 'status.noDue', tone: 'info', params: { when } };
       }
       const target = this.findPracticeTarget(selection.reason);
       if (target) {
-        practiceBtn.textContent = t(
+        this.practiceLabel = t(
           target.kind === 'ahead' ? 'practiceAhead.label' : 'practiceNew.label',
         );
-        practiceBtn.classList.remove('hidden');
+        this.practiceHidden = false;
       } else {
-        practiceBtn.classList.add('hidden');
+        this.practiceHidden = true;
       }
     }
-    this.nextBtn().disabled = false;
+    this.nextDisabled = false;
+    this.redraw();
   }
 
   /** Resolve the opt-in practice target, if any. Pure read of service state. */
-  private findPracticeTarget(reason?: string): { puzzleId: string; kind: 'ahead' | 'new' } | null {
+  findPracticeTarget(reason?: string): { puzzleId: string; kind: 'ahead' | 'new' } | null {
     const active = this.adapter.describeCurrentAttempt().progressKey;
     const programId = active?.programId ?? DEFAULT_PROGRAM_ID;
     // B4: schedule scope is (program, collection, puzzle). Practice reads the
@@ -565,9 +533,11 @@ export class TrainView implements Screen {
   }
 
   /** Start the opt-in practice target resolved by `findPracticeTarget`. */
-  private async onPractice(): Promise<void> {
+  async onPractice(): Promise<void> {
+    if (this.disposed) return;
     if (this.adapter.getActiveAttemptId()) return;
     const selection = await this.adapter.selectNext();
+    if (this.disposed) return;
     if (selection.puzzleId) {
       await this.beginAttempt(await this.adapter.loadPuzzle(selection.puzzleId));
       return;
@@ -586,16 +556,22 @@ export class TrainView implements Screen {
       }),
     )?.dueAt;
     await this.beginAttempt(await this.adapter.loadPuzzle(target.puzzleId));
+    if (this.disposed) return;
     if (target.kind === 'ahead') {
-      this.setStatus('status.practiceAhead', undefined, {
-        id: target.puzzleId,
-        when: whenValue ? new Date(whenValue).toLocaleString() : t('puzzle.none'),
-      });
+      this.status = {
+        key: 'status.practiceAhead',
+        tone: 'info',
+        params: {
+          id: target.puzzleId,
+          when: whenValue ? new Date(whenValue).toLocaleString() : t('puzzle.none'),
+        },
+      };
+      this.redraw();
     }
   }
 
   /** Rebuild the current attempt after a reload, if one is still open. */
-  private async resumeIfPossible(): Promise<boolean> {
+  async resumeIfPossible(): Promise<boolean> {
     const sessionId = this.adapter.getSessionId();
     if (!sessionId) return false;
     const attempt = this.service.getActiveAttempt(sessionId);
@@ -603,7 +579,12 @@ export class TrainView implements Screen {
 
     try {
       const p = await this.adapter.loadPuzzle(attempt.progressKey.puzzleId);
+      if (this.disposed) return false;
       this.game = new PuzzleGame(p);
+      this.infoPuzzle = p;
+      // NOTE: `currentPuzzle` is intentionally left untouched here, matching
+      // the pre-Snabbdom flow: a directly-resumed completion enters review
+      // only once a fresh `beginAttempt` has set the current puzzle.
 
       const correctUcis = attempt.events
         .filter((event) => event.type === 'move' && event.payload?.correct === true)
@@ -619,24 +600,33 @@ export class TrainView implements Screen {
       }
       this.adapter.resumeAttempt(attempt);
       this.timer.start();
-      this.hidePromotion();
-      this.updatePuzzleInfo(p);
+      this.promotionUi.hide();
+      this.solutionHidden = true;
+      this.revealHidesSolution = false;
+      this.revealed = false;
 
-      this.btn('skip').disabled = false;
-      this.btn('reveal').disabled = false;
+      this.skipDisabled = false;
+      this.revealDisabled = false;
 
       if (this.game.isCompleted) {
-        this.nextBtn().disabled = false;
+        this.nextDisabled = false;
         await this.completePuzzle();
       } else if (failed) {
-        this.nextBtn().disabled = true;
-        this.setStatus('status.failedButSolving', 'wrong');
+        this.nextDisabled = true;
+        this.status = { key: 'status.failedButSolving', tone: 'wrong' };
+        this.redraw();
       } else {
-        this.nextBtn().disabled = true;
-        this.setStatus('status.yourTurn', undefined, { color: t(`color.${p.solverColor}`) });
+        this.nextDisabled = true;
+        this.status = {
+          key: 'status.yourTurn',
+          tone: 'info',
+          params: { color: t(`color.${p.solverColor}`) },
+        };
+        this.redraw();
       }
       this.renderPosition();
       this.updateProgress();
+      this.redraw();
       return true;
     } catch (err) {
       console.warn('Resume failed; starting a fresh selection', err);
@@ -647,76 +637,103 @@ export class TrainView implements Screen {
 
   // --- actions -------------------------------------------------------------
 
-  private async onSkip(): Promise<void> {
+  async onSkip(): Promise<void> {
+    if (this.disposed) return;
     if (!this.adapter.getActiveAttemptId()) return;
     this.timer.interrupt();
     await this.adapter.abandonCurrentAttempt({ skip: true });
+    if (this.disposed) return;
     await this.loadNext();
   }
 
-  private async onReveal(): Promise<void> {
+  async onReveal(): Promise<void> {
+    if (this.disposed) return;
     if (this.revealed) {
-      if (this.el.solution) this.el.solution.classList.toggle('hidden');
+      this.solutionHidden = !this.solutionHidden;
+      this.redraw();
       return;
     }
     this.revealed = true;
     if (this.game && !this.game.isCompleted && this.adapter.getActiveAttemptId()) {
       this.timer.interrupt();
       await this.adapter.recordAssistance('reveal');
+      if (this.disposed) return;
       await this.adapter.abandonCurrentAttempt({ skip: false });
+      if (this.disposed) return;
       this.renderPosition({ interactive: false });
-      this.nextBtn().disabled = false;
-      this.btn('skip').disabled = true;
-      this.setStatus('status.revealed', 'revealed');
+      this.nextDisabled = false;
+      this.skipDisabled = true;
+      this.status = { key: 'status.revealed', tone: 'revealed' };
     }
-    this.el.solution?.classList.remove('hidden');
-    this.btn('reveal').textContent = t('reveal.hide');
+    this.solutionHidden = false;
+    this.revealHidesSolution = true;
+    this.updateProgress();
+    this.redraw();
   }
 
-  // --- wiring --------------------------------------------------------------
+  // --- active-collection picker (B4) -----------------------------------------
+  //
+  // Queue/progress follow the persisted active collection. Switching starts a
+  // fresh session in the new scope; an in-flight attempt keeps its original
+  // scope and stays committable, the next selection uses the new collection.
 
-  private bindEvents(): void {
-    this.btn('next').addEventListener('click', () => void this.loadNext());
-    this.el.picker?.addEventListener('change', (event) =>
-      void this.onCollectionChange((event.target as HTMLSelectElement).value),
-    );
-    this.btn('practice').addEventListener('click', () => void this.onPractice());
-    this.btn('skip').addEventListener('click', () => void this.onSkip());
-    this.btn('reveal').addEventListener('click', () => void this.onReveal());
-    this.el.reviewFirst?.addEventListener('click', () => this.stepReview('first'));
-    this.el.reviewBack?.addEventListener('click', () => this.stepReview('back'));
-    this.el.reviewForward?.addEventListener('click', () => this.stepReview('forward'));
-    this.el.reviewLast?.addEventListener('click', () => this.stepReview('last'));
+  /** Rebuild the picker options from the service; selection follows the service. */
+  refreshPicker(): void {
+    this.collections = this.service.listCollections().map((collection) => ({
+      id: collection.id,
+      name: collection.name,
+    }));
+    this.activeCollectionId = this.service.getActiveCollectionId();
+    this.redraw();
+  }
 
-    const overlay = document.getElementById('promotion')!;
-    const onChoice = (e: Event): void => {
-      const role = (e.currentTarget as HTMLElement).getAttribute('data-promotion') as PromotionRole;
-      this.onPromotionChoice(role);
-    };
-    const onOverlayClick = (e: Event): void => {
-      if (e.target === overlay) {
-        this.pendingPromotion = null;
-        this.hidePromotion();
-        this.renderPosition();
-      }
-    };
-    overlay.querySelectorAll<HTMLButtonElement>('[data-promotion]').forEach((b) => {
-      b.addEventListener('click', onChoice);
+  async onCollectionChange(collectionId: string): Promise<void> {
+    if (this.disposed) return;
+    if (!collectionId || collectionId === this.service.getActiveCollectionId()) return;
+    await this.service.setActiveCollectionId(collectionId);
+    if (this.disposed) return;
+    await this.adapter.startSession(DEFAULT_PROGRAM_ID, collectionId);
+    if (this.disposed) return;
+    this.refreshPicker();
+    this.updateProgress();
+    this.redraw();
+    if (!this.adapter.getActiveAttemptId()) {
+      await this.loadNext();
+    }
+  }
+
+  updateProgress(): void {
+    const activeCollection = this.service.getActiveCollectionId();
+    const q = this.service.queueSummary(DEFAULT_PROGRAM_ID, activeCollection);
+    this.progressText = t('progress.summary', {
+      attempts: this.service.getAttemptCount(),
+      total: q.total,
     });
-    overlay.addEventListener('click', onOverlayClick);
-    this.cleanupPromotion = () => {
-      overlay.querySelectorAll<HTMLButtonElement>('[data-promotion]').forEach((b) => {
-        b.removeEventListener('click', onChoice);
-      });
-      overlay.removeEventListener('click', onOverlayClick);
-    };
+    this.storageText = t('progress.storage', {
+      backend: t(
+        this.service.getBackendKind() === 'indexeddb' ? 'storage.indexeddb' : 'storage.memory',
+      ),
+    });
+    this.queueText = t('queue.summary', {
+      total: q.total,
+      newCount: q.newCount,
+      due: q.due,
+      learned: q.learned,
+    });
   }
-
-  private cleanupPromotion: (() => void) | null = null;
 }
 
-function roleName(role: PromotionRole): string {
+export const PROMOTION_GLYPHS: Record<'white' | 'black', Record<PromotionRole, string>> = {
+  white: { q: '♕', r: '♖', b: '♗', n: '♘' },
+  black: { q: '♛', r: '♜', b: '♝', n: '♞' },
+};
+
+export function roleName(role: PromotionRole): string {
   return role === 'q' ? 'queen' : role === 'r' ? 'rook' : role === 'b' ? 'bishop' : 'knight';
+}
+
+export function promotionGlyph(color: 'white' | 'black', role: PromotionRole): string {
+  return PROMOTION_GLYPHS[color][role];
 }
 
 /** Last-move highlight squares for a review step (`e2e4` → `['e2', 'e4']`). */
@@ -726,64 +743,367 @@ function uciToKeys(uci: string): Key[] | undefined {
   return [uci.slice(0, 2) as Key, uci.slice(2, 4) as Key];
 }
 
-function template(): string {
-  return `
-    <div class="layout">
-      <div class="board-wrap">
-        <div class="info">
-          <h2 data-i18n="board.title"></h2>
-          <div id="board" class="board" aria-label="${t('board.title')}"></div>
-        </div>
-      </div>
-      <div class="controls">
-        <div class="info">
-          <h2 data-i18n="puzzle.info"></h2>
-          <p id="puzzle-id">-</p>
-          <p id="rating">-</p>
-          <p id="themes">-</p>
-          <p id="solver-color">-</p>
-        </div>
-        <div class="info">
-          <h2 data-i18n="status.title"></h2>
-          <div id="status" class="status">${t('status.loading')}</div>
-        </div>
-        <div class="info">
-          <h2 data-i18n="solution.title"></h2>
-          <div class="button-row">
-            <button id="reveal-btn" class="button button-secondary" type="button">${t('reveal.show')}</button>
-          </div>
-          <div id="solution" class="solution-preview hidden">-</div>
-        </div>
-        <div class="info hidden" id="review-section">
-          <h2 data-i18n="review.title"></h2>
-          <p class="progress-note">${t('review.hint')}</p>
-          <p id="review-label"></p>
-          <div class="button-row">
-            <button id="review-first" class="button button-secondary" type="button">${t('review.first')}</button>
-            <button id="review-back" class="button button-secondary" type="button">${t('review.back')}</button>
-            <button id="review-forward" class="button button-secondary" type="button">${t('review.forward')}</button>
-            <button id="review-last" class="button button-secondary" type="button">${t('review.last')}</button>
-          </div>
-        </div>
-        <div class="button-row">
-          <button id="skip-btn" class="button button-secondary" type="button">${t('skip.label')}</button>
-          <button id="next-btn" class="button" type="button" disabled>${t('next.label')}</button>
-          <button id="practice-btn" class="button button-secondary hidden" type="button">${t('practiceAhead.label')}</button>
-        </div>
-        <div class="info">
-          <h2>${t('collections.active.label')}</h2>
-          <p class="progress-note">${t('collections.active.hint')}</p>
-          <select id="collection-picker"></select>
-        </div>
-        <div class="info">
-          <h2 data-i18n="queue.title"></h2>
-          <p id="queue" class="progress-note"></p>
-        </div>
-        <div>
-          <p id="progress" class="progress-note"></p>
-          <p id="storage" class="progress-note"></p>
-        </div>
-      </div>
-    </div>
-  `;
+function statusClass(ctrl: TrainCtrl): string {
+  let sel = 'div#status.status';
+  if (ctrl.status.tone !== 'info') sel += `.${ctrl.status.tone}`;
+  if (ctrl.game?.failedState && !ctrl.game.isCompleted) sel += '.failed-but-solving';
+  return sel;
+}
+
+/**
+ * Pure view: same information, ids, classes, and strings as the pre-Snabbdom
+ * template (board excluded — see {@link createTrainShell}). Board-adjacent
+ * state (review position, button disabled states, solution visibility,
+ * picker options) reads live ctrl fields.
+ */
+export function view(ctrl: TrainCtrl): VNode {
+  const puzzle = ctrl.infoPuzzle;
+  const review = ctrl.review;
+  return h('div.controls', [
+    h('div.info', [
+      h('h2', { attrs: { 'data-i18n': 'puzzle.info' } }, t('puzzle.info')),
+      h('p#puzzle-id', puzzle ? `${t('puzzle.id')}: ${puzzle.id}` : '-'),
+      h('p#rating', puzzle ? `${t('puzzle.rating')}: ${puzzle.rating}` : '-'),
+      h(
+        'p#themes',
+        puzzle
+          ? `${t('puzzle.themes')}: ${puzzle.themes.slice(0, 4).join(', ') || t('puzzle.none')}`
+          : '-',
+      ),
+      h(
+        'p#solver-color',
+        puzzle ? `${t('puzzle.solver')}: ${t(`color.${puzzle.solverColor}`)}` : '-',
+      ),
+    ]),
+    h('div.info', [
+      h('h2', { attrs: { 'data-i18n': 'status.title' } }, t('status.title')),
+      h(statusClass(ctrl), t(ctrl.status.key, ctrl.status.params)),
+    ]),
+    h('div.info', [
+      h('h2', { attrs: { 'data-i18n': 'solution.title' } }, t('solution.title')),
+      h('div.button-row', [
+        h(
+          'button#reveal-btn.button.button-secondary',
+          {
+            attrs: {
+              type: 'button',
+              ...(ctrl.revealDisabled ? { disabled: true } : {}),
+            },
+            on: { click: () => void ctrl.onReveal() },
+          },
+          ctrl.revealHidesSolution ? t('reveal.hide') : t('reveal.show'),
+        ),
+      ]),
+      h(
+        `div#solution.solution-preview${ctrl.solutionHidden ? '.hidden' : ''}`,
+        puzzle ? puzzle.solution.join(' ') : '-',
+      ),
+    ]),
+    h(`div.info${review ? '' : '.hidden'}`, { attrs: { id: 'review-section' } }, [
+      h('h2', { attrs: { 'data-i18n': 'review.title' } }, t('review.title')),
+      h('p.progress-note', t('review.hint')),
+      h(
+        'p#review-label',
+        review
+          ? t('review.position', { index: review.position, total: review.count - 1 })
+          : '',
+      ),
+      h('div.button-row', [
+        h(
+          'button#review-first.button.button-secondary',
+          {
+            attrs: { type: 'button', ...(review?.canBack ? {} : { disabled: true }) },
+            on: { click: () => ctrl.stepReview('first') },
+          },
+          t('review.first'),
+        ),
+        h(
+          'button#review-back.button.button-secondary',
+          {
+            attrs: { type: 'button', ...(review?.canBack ? {} : { disabled: true }) },
+            on: { click: () => ctrl.stepReview('back') },
+          },
+          t('review.back'),
+        ),
+        h(
+          'button#review-forward.button.button-secondary',
+          {
+            attrs: { type: 'button', ...(review?.canForward ? {} : { disabled: true }) },
+            on: { click: () => ctrl.stepReview('forward') },
+          },
+          t('review.forward'),
+        ),
+        h(
+          'button#review-last.button.button-secondary',
+          {
+            attrs: { type: 'button', ...(review?.canForward ? {} : { disabled: true }) },
+            on: { click: () => ctrl.stepReview('last') },
+          },
+          t('review.last'),
+        ),
+      ]),
+    ]),
+    h('div.button-row', [
+      h(
+        'button#skip-btn.button.button-secondary',
+        {
+          attrs: { type: 'button', ...(ctrl.skipDisabled ? { disabled: true } : {}) },
+          on: { click: () => void ctrl.onSkip() },
+        },
+        t('skip.label'),
+      ),
+      h(
+        'button#next-btn.button',
+        {
+          attrs: { type: 'button', ...(ctrl.nextDisabled ? { disabled: true } : {}) },
+          on: { click: () => void ctrl.loadNext() },
+        },
+        t('next.label'),
+      ),
+      h(
+        `button#practice-btn.button.button-secondary${ctrl.practiceHidden ? '.hidden' : ''}`,
+        {
+          attrs: { type: 'button' },
+          on: { click: () => void ctrl.onPractice() },
+        },
+        ctrl.practiceLabel,
+      ),
+    ]),
+    h('div.info', [
+      h('h2', t('collections.active.label')),
+      h('p.progress-note', t('collections.active.hint')),
+      h(
+        'select#collection-picker',
+        {
+          props: { value: ctrl.activeCollectionId },
+          on: {
+            change: (event: Event) =>
+              void ctrl.onCollectionChange((event.target as HTMLSelectElement).value),
+          },
+        },
+        ctrl.collections.map((collection) =>
+          h('option', { attrs: { value: collection.id } }, collection.name),
+        ),
+      ),
+    ]),
+    h('div.info', [
+      h('h2', { attrs: { 'data-i18n': 'queue.title' } }, t('queue.title')),
+      h('p#queue.progress-note', ctrl.queueText),
+    ]),
+    h('div', [
+      h('p#progress.progress-note', ctrl.progressText),
+      h('p#storage.progress-note', ctrl.storageText),
+    ]),
+  ]);
+}
+
+export interface TrainShell {
+  /** Static root appended to the screen host; removed on unmount. */
+  root: HTMLElement;
+  /** The chessground host (`div#board`). Never part of the patched subtree. */
+  boardHost: HTMLElement;
+  /** Empty placeholder the snabbdom patch replaces with `view(ctrl)`. */
+  uiPlaceholder: HTMLElement;
+}
+
+/**
+ * Build the static Train shell in the given document: layout + board-wrap +
+ * `div#board` host + an empty controls placeholder. Called exactly once per
+ * `mount`; `view()` renders only into the placeholder, so patches can never
+ * create, move, or replace the board host. Takes the document as a parameter
+ * so the one-creation-per-mount property is assertable without a browser.
+ */
+export function createTrainShell(doc: Document): TrainShell {
+  const root = doc.createElement('div');
+  root.className = 'train-screen';
+  const layout = doc.createElement('div');
+  layout.className = 'layout';
+  const boardWrap = doc.createElement('div');
+  boardWrap.className = 'board-wrap';
+  const info = doc.createElement('div');
+  info.className = 'info';
+  const heading = doc.createElement('h2');
+  heading.setAttribute('data-i18n', 'board.title');
+  heading.textContent = t('board.title');
+  const boardHost = doc.createElement('div');
+  boardHost.id = 'board';
+  boardHost.className = 'board';
+  boardHost.setAttribute('aria-label', t('board.title'));
+  info.appendChild(heading);
+  info.appendChild(boardHost);
+  boardWrap.appendChild(info);
+  const uiPlaceholder = doc.createElement('div');
+  layout.appendChild(boardWrap);
+  layout.appendChild(uiPlaceholder);
+  root.appendChild(layout);
+  return { root, boardHost, uiPlaceholder };
+}
+
+export class TrainView implements Screen {
+  readonly id = 'train' as const;
+
+  private readonly ctx: AppContext;
+  private host: HTMLElement | null = null;
+  private shell: TrainShell | null = null;
+  private ground: Api | null = null;
+  private ctrl: TrainCtrl | null = null;
+  private vnode: VNode | null = null;
+  private unbindPromotion: (() => void) | null = null;
+
+  private get service() {
+    return this.ctx.service;
+  }
+
+  private get adapter() {
+    return this.ctx.adapter;
+  }
+
+  private readonly onVisibility = (): void => {
+    if (this.ctrl === null) return;
+    if (document.hidden) this.ctrl.interruptTimer();
+    else this.ctrl.resumeTimer();
+  };
+
+  private readonly onBeforeUnload = (): void => {
+    this.ctrl?.interruptTimer();
+  };
+
+  constructor(ctx: AppContext) {
+    this.ctx = ctx;
+  }
+
+  mount(host: HTMLElement): Promise<void> {
+    return (async () => {
+      this.host = host;
+      // Static shell first: the board host is created exactly once here and
+      // is never part of the vnode tree below.
+      const shell = createTrainShell(document);
+      host.appendChild(shell.root);
+      this.shell = shell;
+
+      this.ground = Chessground(shell.boardHost, {
+        fen: START_FEN,
+        orientation: 'white',
+        coordinates: true,
+        animation: { enabled: true, duration: 180 },
+        movable: {
+          free: false,
+          showDests: true,
+          events: { after: (o, d) => void this.ctrl?.onUserMove(o, d) },
+        },
+      });
+
+      this.bindPromotionOverlay();
+      document.addEventListener('visibilitychange', this.onVisibility);
+      window.addEventListener('beforeunload', this.onBeforeUnload);
+
+      // Patch the placeholder synchronously so the loading status paints
+      // immediately (as the old template did), then run the async flow.
+      const ground = this.ground;
+      const ctrl = new TrainCtrl(
+        this.service,
+        this.adapter,
+        {
+          set: (config) => ground.set(config),
+          destroy: () => ground.destroy(),
+        },
+        {
+          show: (color) => this.showPromotion(color),
+          hide: () => this.hidePromotion(),
+        },
+      );
+      this.ctrl = ctrl;
+      this.vnode = patch(shell.uiPlaceholder, view(ctrl));
+      ctrl.redraw = () => {
+        if (this.ctrl === null || this.vnode === null) return;
+        this.vnode = patch(this.vnode, view(this.ctrl));
+      };
+
+      const resumed = await ctrl.resumeIfPossible();
+      if (this.ctrl === null) return;
+      if (!resumed) {
+        const selection = await this.adapter.selectNext();
+        if (this.ctrl === null) return;
+        if (selection.puzzleId) {
+          await this.beginAttemptSafe(await this.adapter.loadPuzzle(selection.puzzleId));
+        } else {
+          ctrl.showNoDue(selection);
+        }
+      }
+      if (this.ctrl === null) return;
+      ctrl.refreshPicker();
+      ctrl.updateProgress();
+      ctrl.redraw();
+    })();
+  }
+
+  private async beginAttemptSafe(p: NormalizedPuzzle): Promise<void> {
+    if (this.ctrl === null) return;
+    await this.ctrl.beginAttempt(p);
+  }
+
+  unmount(): void {
+    document.removeEventListener('visibilitychange', this.onVisibility);
+    window.removeEventListener('beforeunload', this.onBeforeUnload);
+    this.hidePromotion();
+    this.unbindPromotion?.();
+    this.unbindPromotion = null;
+    // Swap the ctrl onto no-op ports first so any late async continuation
+    // cannot touch the destroyed ground, then destroy it exactly once.
+    this.ctrl?.dispose();
+    this.ctrl = null;
+    try {
+      this.ground?.destroy();
+    } finally {
+      this.ground = null;
+    }
+    this.shell?.root.remove();
+    this.shell = null;
+    this.vnode = null;
+    this.host = null;
+  }
+
+  // --- promotion overlay (global `#promotion`, outside the patched tree) ---
+
+  private showPromotion(color: 'white' | 'black'): void {
+    const overlay = document.getElementById('promotion');
+    if (!overlay) return;
+    overlay.querySelectorAll<HTMLButtonElement>('[data-promotion]').forEach((b) => {
+      const role = b.getAttribute('data-promotion') as PromotionRole;
+      b.textContent = promotionGlyph(color, role);
+      b.setAttribute('aria-label', t(`promotion.${roleName(role)}`));
+    });
+    overlay.classList.remove('hidden');
+  }
+
+  private hidePromotion(): void {
+    document.getElementById('promotion')?.classList.add('hidden');
+  }
+
+  private bindPromotionOverlay(): void {
+    const overlay = document.getElementById('promotion');
+    if (!overlay) {
+      this.unbindPromotion = null;
+      return;
+    }
+    const onChoice = (e: Event): void => {
+      const role = (e.currentTarget as HTMLElement).getAttribute('data-promotion') as PromotionRole;
+      this.ctrl?.choosePromotion(role);
+    };
+    const onOverlayClick = (e: Event): void => {
+      if (e.target === overlay) {
+        this.ctrl?.cancelPromotion();
+      }
+    };
+    overlay.querySelectorAll<HTMLButtonElement>('[data-promotion]').forEach((b) => {
+      b.addEventListener('click', onChoice);
+    });
+    overlay.addEventListener('click', onOverlayClick);
+    this.unbindPromotion = () => {
+      overlay.querySelectorAll<HTMLButtonElement>('[data-promotion]').forEach((b) => {
+        b.removeEventListener('click', onChoice);
+      });
+      overlay.removeEventListener('click', onOverlayClick);
+    };
+  }
 }
