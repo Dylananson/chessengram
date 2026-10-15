@@ -21,7 +21,7 @@ flowchart TD
   I18N["I18N-001 toast keys"] --> REL2["REL-002 periodic update check"]
   REL2 --> T16
   SET["SET-001 new-per-day 100"] --> T16
-  LANE["train-view lane: MOB-001 → BRD-001 → BRD-003 → BRD-004 → STS-001 → BRD-002 (one at a time)"] --> T16
+  LANE["train-view lane: MOB-001 done → BRD-001 → BRD-003 → BRD-004 → STS-001 → REV-002 → TRN-001 → BRD-002 (one at a time)"] --> T16
   THM["THM-001 board theme picker"] --> T16
   REV["REV-001 resumed-review (needs user call)"] --> T16
   HW["T11/T15 hardware (needs device)"] --> T16
@@ -45,12 +45,14 @@ flowchart TD
 | BRD-003 | Restart-after-complete as new scored attempt | — | `train-view.ts` (completion region), related tests | Ready — train-view lane |
 | BRD-004 | Reveal plays out solution on board | — | `train-view.ts` (reveal region), `puzzle-game.ts` (playback helper) | Ready — train-view lane |
 | STS-001 | Per-puzzle training status on Train page | — | `train-view.ts` (status region), related tests | Ready — train-view lane |
+| REV-002 | Arrow-key review stepping (Left/Right/Up/Down, review-only) | — | `train-view.ts` (review region), related tests | Ready — train-view lane |
+| TRN-001 | Train controls polish: `>` Next (hidden when disabled), `↻` restart symbol, analyze placeholder, details-after-completion, live timer | — | `train-view.ts` (controls region), layout CSS, related tests | Ready — train-view lane |
 | BRD-002 | Bigger desktop board + expand toggle | MOB-001 (shared layout CSS — serialize) | layout CSS, `train-view.ts` (board region) | Ready after MOB-001 — train-view lane, last |
 | THM-001 | Board theme picker (survey Lichess/chessground theming first; square colors only, pieces untouched; localStorage persistence) | BRD-002 (shared board CSS — serialize) | `settings-view.ts` (picker region), board-theme CSS, related tests | Ready after BRD-002 |
 | REV-001 | Resumed completions show no review section (keep vs fix) | **user call** | `train-view.ts` (review gating) | **Blocked: needs user call** |
 | HW | T11/T15 hardware matrix execution | Matrix written (done) | real device | **Blocked: needs device** |
 | RF-001 | React + component library (PROPOSED, see BACKLOG) | architecture decision (accepted ADR) | — | **Parked: loop must skip (UI-001 Snabbdom foundation done instead, 2026-10-16)** |
-| T16 | First usable release | B1 B2 B3 B5 B6 B4 HW UI-001 STY-001 I18N-001 REL-002 SET-001 MOB-001 BRD-001 BRD-002 BRD-003 BRD-004 STS-001 THM-001 REV-001 | — | **Blocked: user sign-off** |
+| T16 | First usable release | B1 B2 B3 B5 B6 B4 HW UI-001 STY-001 I18N-001 REL-002 SET-001 MOB-001 BRD-001 BRD-002 BRD-003 BRD-004 STS-001 THM-001 REV-001 REV-002 TRN-001 | — | **Blocked: user sign-off** |
 
 Round log:
 - R1: B1 + B2 + B3 (disjoint paths) — Done 2026-10-15 (`a328313`). 111 tests green (7+35+69), typecheck + build clean. B1: behavior unchanged, tiebreaker locked by comment + 10 fairness tests. B2: `listAttempts` + per-attempt rows. B3: header fix + adr-sweep note (recommends accept 001/004 for local scope, defer 002/003; T13 reword proposed).

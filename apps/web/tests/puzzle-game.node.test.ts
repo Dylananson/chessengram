@@ -100,3 +100,32 @@ test('replaySolverMoves ignores a move that does not match the solution', () => 
   assert.equal(game.isCompleted, false);
   assert.equal(game.turn, 'white');
 });
+
+test('isLegalSolverMove probes legality without grading', () => {
+  const puzzle = makePuzzle({ id: 'probe', solution: ['e2e4', 'e7e5', 'g1f3'] });
+  const game = new PuzzleGame(puzzle);
+  assert.equal(game.isLegalSolverMove('e2', 'e4'), true);
+  assert.equal(game.isLegalSolverMove('d2', 'd4'), true, 'legal-but-wrong stays positionally legal');
+  assert.equal(game.isLegalSolverMove('e2', 'e5'), false);
+  assert.equal(game.failedState, false, 'probing never grades');
+
+  const first = game.playUserMove('e2', 'e4');
+  assert.equal(first.kind, 'correct');
+  // Post-reply position (white to move again): legality follows the reply.
+  assert.equal(game.isLegalSolverMove('g1', 'f3'), true);
+  assert.equal(game.isLegalSolverMove('e4', 'e5'), false, 'occupied square');
+  assert.equal(game.failedState, false);
+});
+
+test('isLegalSolverMove handles promotion roles without playing', () => {
+  const game = new PuzzleGame(promotionPuzzle);
+  assert.equal(game.isLegalSolverMove('b7', 'b8', 'q'), true);
+  assert.equal(game.isLegalSolverMove('b7', 'b8', 'n'), true, 'role legality only — grading decides wrong');
+  assert.equal(game.isLegalSolverMove('b7', 'b8'), false, 'promotion needs a role');
+  assert.equal(game.isCompleted, false);
+  assert.equal(game.failedState, false);
+
+  const promoted = game.playUserMove('b7', 'b8', 'q');
+  assert.equal(promoted.kind, 'correct');
+  assert.equal(game.isLegalSolverMove('b7', 'b8', 'q'), false, 'no moves after completion');
+});

@@ -465,3 +465,134 @@ test('MOB-001: mobile CSS orders the review section above the detail panels', as
     'review section ordered first inside .controls on mobile',
   );
 });
+
+// --- 10. BRD-001: premoves + selection persistence ------------------------------
+
+async function makePremoveWorld(solution: string[], extra?: { solverFen?: string }): Promise<{
+  service: LocalTrainingService;
+  adapter: TrainingAdapter;
+}> {
+  const service = await makeService();
+  await service.seedContent([makePuzzle({ id: 'premove-line', solution, ...extra })]);
+  const adapter = new TrainingAdapter(service);
+  await adapter.startSession('test-program', 'test-collection');
+  return { service, adapter };
+}
+
+const waitReply = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 450));
+
+test('BRD-001: legal premove queued in the reply window executes after the reply', async () => {
+  const { service, adapter } = await makePremoveWorld(['e2e4', 'e7e5', 'g1f3']);
+  const board = makeRecordingBoard();
+  const ctrl = new TrainCtrl(service, adapter, board.port);
+
+  await ctrl.beginAttempt(await adapter.loadPuzzle('premove-line'));
+  await ctrl.resolveUserMove('e2', 'e4');
+  // Reply window: the window render offers native premoves, not normal moves.
+  const windowSet = board.sets[board.sets.length - 1]!;
+  assert.equal(windowSet.premovable?.enabled, true);
+  assert.equal(windowSet.movable?.color, 'white');
+  assert.equal(windowSet.movable?.dests?.size ?? 0, 0);
+
+  await ctrl.onUserMove('g1', 'f3');
+  assert.equal(ctrl.game?.failedState, false, 'queueing never fails by itself');
+  assert.equal(ctrl.game?.isCompleted, false, 'queued move waits for the reply');
+  assert.equal(ctrl.scoredCommitted, false);
+
+  await waitReply();
+  assert.equal(ctrl.game?.isCompleted, true, 'queued premove executed after the reply');
+  assert.equal(ctrl.status.key, 'status.completed');
+  assert.equal(ctrl.game?.failedState, false);
+});
+
+test('BRD-001: illegal premove is discarded without penalty', async () => {
+  const { service, adapter } = await makePremoveWorld(['e2e4', 'e7e5', 'g1f3', 'b8c6']);
+  const board = makeRecordingBoard();
+  const ctrl = new TrainCtrl(service, adapter, board.port);
+
+  await ctrl.beginAttempt(await adapter.loadPuzzle('premove-line'));
+  await ctrl.resolveUserMove('e2', 'e4');
+  await ctrl.onUserMove('a2', 'a5');
+  assert.equal(ctrl.game?.failedState, false);
+
+  await waitReply();
+  assert.equal(ctrl.game?.isCompleted, false, 'nothing executed');
+  assert.equal(ctrl.status.key, 'status.correct');
+  assert.equal(ctrl.game?.failedState, false);
+  assert.equal(ctrl.scoredCommitted, false, 'discarded premove never scores');
+
+  // The solver is still to move: the intended move still works.
+  await ctrl.resolveUserMove('g1', 'f3');
+  await waitReply();
+  assert.equal(ctrl.game?.isCompleted, true);
+  assert.equal(ctrl.status.key, 'status.completed');
+});
+
+test('BRD-001: wrong executed premove grades as an ordinary wrong move', async () => {
+  const { service, adapter } = await makePremoveWorld(['e2e4', 'e7e5', 'g1f3', 'b8c6']);
+  const board = makeRecordingBoard();
+  const ctrl = new TrainCtrl(service, adapter, board.port);
+
+  await ctrl.beginAttempt(await adapter.loadPuzzle('premove-line'));
+  await ctrl.resolveUserMove('e2', 'e4');
+  // d2d4 is legal in the post-reply position but off-solution.
+  await ctrl.onUserMove('d2', 'd4');
+
+  await waitReply();
+  assert.equal(ctrl.status.key, 'status.wrong');
+  assert.equal(ctrl.game?.failedState, true);
+  assert.equal(ctrl.scoredCommitted, true, 'first-failure rules unchanged');
+
+  // Correction still completes the puzzle.
+  await ctrl.resolveUserMove('g1', 'f3');
+  await waitReply();
+  assert.equal(ctrl.game?.isCompleted, true);
+  assert.equal(ctrl.status.key, 'status.correctionComplete');
+});
+
+test('BRD-001: selection survives the opponent reply render', async () => {
+  const { service, adapter } = await makePremoveWorld(['e2e4', 'e7e5', 'g1f3', 'b8c6']);
+  const board = makeRecordingBoard();
+  const ctrl = new TrainCtrl(service, adapter, board.port);
+
+  await ctrl.beginAttempt(await adapter.loadPuzzle('premove-line'));
+  await ctrl.resolveUserMove('e2', 'e4');
+  // The user selects the knight for the next move during the reply window.
+  ctrl.onBoardSelect('g1');
+  await waitReply();
+
+  const last = board.sets[board.sets.length - 1]!;
+  assert.equal(last.selected, 'g1', 'selection re-asserted after the reply');
+  assert.ok(last.movable?.dests?.has('g1'), 'destination highlights re-asserted');
+  assert.ok(last.movable?.dests?.get('g1')?.includes('f3'));
+
+  // A stale selection (a square with no solver dests) is dropped instead.
+  await ctrl.resolveUserMove('g1', 'f3');
+  ctrl.onBoardSelect('e2');
+  await waitReply();
+  const after = board.sets[board.sets.length - 1]!;
+  assert.equal(after.selected, undefined, 'invalid selection not re-asserted');
+});
+
+test('BRD-001: promotion premove goes through the picker and executes', async () => {
+  const { service, adapter } = await makePremoveWorld(['e2e4', 'e7e5', 'b7b8q'], {
+    solverFen: '7k/1P2p3/8/8/8/8/4P3/K7 w - - 0 1',
+  });
+  const board = makeRecordingBoard();
+  const promo = makePromo();
+  const ctrl = new TrainCtrl(service, adapter, board.port, promo.ui);
+
+  await ctrl.beginAttempt(await adapter.loadPuzzle('premove-line'));
+  await ctrl.resolveUserMove('e2', 'e4');
+  await ctrl.onUserMove('b7', 'b8');
+  assert.deepEqual(promo.shown, ['white'], 'promotion picker honored for premoves');
+  assert.equal(ctrl.game?.isCompleted, false, 'promotion choice still pending');
+
+  ctrl.choosePromotion('q');
+  assert.equal(ctrl.game?.isCompleted, false, 'queued promotion waits for the reply');
+  assert.equal(ctrl.game?.failedState, false);
+  await waitReply();
+  assert.equal(ctrl.game?.isCompleted, true);
+  assert.equal(ctrl.status.key, 'status.completed');
+  assert.equal(ctrl.game?.failedState, false);
+});

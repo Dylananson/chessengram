@@ -257,3 +257,71 @@
   font-size: 14px;
   color: var(--c-font-dim);
 }
+
+/* --- STY-001: previously rendered-but-unstyled selectors --- */
+
+/* Collection card badges (collections-view `span.badge`): small pill in the
+   info feedback tone, consistent with the `.status` vocabulary above. */
+span.badge {
+  display: inline-block;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.4;
+  padding: 2px 8px;
+  border: 1px solid var(--c-border);
+  border-radius: 999px;
+  background: var(--c-info-bg);
+  color: var(--c-info);
+  vertical-align: middle;
+  white-space: nowrap;
+}
+
+/* History per-attempt table (`table.attempt-table`): same vocabulary as the
+   `.puzzle-table` rules in app.css, resolved through theme tokens. */
+table.attempt-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+table.attempt-table th,
+table.attempt-table td {
+  text-align: left;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--c-border);
+  white-space: nowrap;
+}
+
+table.attempt-table th {
+  color: var(--c-font-dim);
+  font-weight: 600;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+/* Wrapped-checkbox row (`div.field.checkbox > label > input`, settings
+   timing toggle via `checkboxRow`): horizontal row instead of the stacked
+   `.field` column, label inline with the box. */
+div.field.checkbox {
+  flex-direction: row;
+  align-items: center;
+}
+
+div.field.checkbox label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  font-weight: 400;
+  color: var(--c-font);
+  cursor: pointer;
+}
+
+div.field.checkbox input[type='checkbox'] {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  accent-color: var(--c-primary);
+  cursor: pointer;
+}

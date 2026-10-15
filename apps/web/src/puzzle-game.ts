@@ -100,6 +100,19 @@ export class PuzzleGame {
     return rank === 0 || rank === 7;
   }
 
+  /**
+   * BRD-001: legality probe for a queued premove. Pure: parses and tests the
+   * move against the current position without playing it and without grading.
+   * The caller owns the queue; `false` means silent discard, `true` routes
+   * through the normal `playUserMove` grading path (a positionally legal but
+   * off-solution move still grades wrong there).
+   */
+  isLegalSolverMove(from: SquareName, to: SquareName, promotion?: PromotionRole): boolean {
+    if (this.completed || this.pos.turn !== this.solverColor) return false;
+    const move = parseUci(`${from}${to}${promotion ?? ''}`);
+    return !!move && this.pos.isLegal(move);
+  }
+
   playUserMove(from: SquareName, to: SquareName, promotion?: PromotionRole): UserMoveOutcome {
     if (!this.solverTurn) return { kind: 'ignored' };
     if (this.requiresPromotion(from, to) && !promotion) {

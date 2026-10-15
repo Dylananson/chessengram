@@ -163,6 +163,18 @@ function registerServiceWorker(): void {
           }
         });
       });
+      // REL-002: long-lived tabs never discover updates without a reload, so
+      // poll hourly plus whenever the tab becomes visible again. Same toast
+      // path as above; failures swallowed, offline-first preserved.
+      const checkForUpdate = (): void => {
+        registration.update().catch(() => {
+          // No network or no update — ignore.
+        });
+      };
+      window.setInterval(checkForUpdate, 60 * 60 * 1000);
+      document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState === 'visible') checkForUpdate();
+      });
     })
     .catch(() => {
       // Offline caching is a progressive enhancement; ignore registration failures.

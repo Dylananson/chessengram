@@ -86,6 +86,13 @@ export type TrainBoardConfig = Parameters<Api['set']>[0];
  */
 export interface TrainBoardPort {
   set(config: TrainBoardConfig): void;
+  /**
+   * BRD-001: clear the native premove display. Chessground keeps
+   * `premovable.current` across `set()` calls, so the ctrl clears it
+   * defensively when the reply window closes. Optional so existing fakes
+   * keep working.
+   */
+  cancelPremove?(): void;
   destroy(): void;
 }
 
@@ -139,6 +146,22 @@ export class TrainCtrl {
   scoredCommitted = false;
   pendingPromotion: { from: Key; to: Key } | null = null;
   pendingPromotionColor: 'white' | 'black' = 'white';
+  /**
+   * BRD-001 premove + selection state (move input only).
+   * `awaitingReply` covers the ~260ms opponent-reply window after a correct
+   * solver move: the displayed position is pre-reply while the game has
+   * already applied the reply. One solver move may be queued in that window
+   * and is executed (or silently discarded) when the reply lands.
+   */
+  private awaitingReply = false;
+  private queuedPremove: {
+    from: SquareName;
+    to: SquareName;
+    promotion?: PromotionRole;
+  } | null = null;
+  private pendingPromotionIsPremove = false;
+  /** Last chessground selection, re-asserted when a reply render would drop it. */
+  private selectedKey: Key | null = null;
   revealed = false;
   /**
    * Puzzle shown in the info panel. Set by both `beginAttempt` and resume
@@ -209,22 +232,55 @@ export class TrainCtrl {
   // --- board rendering -----------------------------------------------------
 
   private renderPosition(
-    opts: { fen?: string; lastMove?: Key[]; interactive?: boolean } = {},
+    opts: { fen?: string; lastMove?: Key[]; interactive?: boolean; replyPending?: boolean } = {},
   ): void {
     if (!this.game || this.disposed) return;
     const interactive = opts.interactive ?? this.game.solverTurn;
+    // BRD-001: keep the last user selection across reply renders. Only
+    // re-assert squares that still hold a solver piece with legal dests;
+    // anything else (moved/empty/enemy squares) is dropped.
+    if (this.selectedKey && !this.game.legalDests().has(this.selectedKey as SquareName)) {
+      this.selectedKey = null;
+    }
     this.board.set({
       fen: opts.fen ?? this.game.fen,
       orientation: this.game.orientation,
-      turnColor: this.game.turn,
+      // During the reply window the displayed position is pre-reply, so the
+      // side to move shown is the opponent's. That (plus movable.color below)
+      // is also what lets chessground offer premoves instead of normal moves.
+      turnColor: opts.replyPending
+        ? this.game.turn === 'white'
+          ? 'black'
+          : 'white'
+        : this.game.turn,
       lastMove: opts.lastMove,
       movable: {
         free: false,
-        color: interactive ? this.game.orientation : undefined,
-        dests: interactive ? this.game.legalDests() : new Map(),
+        color: opts.replyPending
+          ? this.game.orientation
+          : interactive
+            ? this.game.orientation
+            : undefined,
+        dests: opts.replyPending || !interactive ? new Map() : this.game.legalDests(),
         showDests: true,
         events: { after: (o, d) => void this.onUserMove(o, d) },
       },
+      // BRD-001: native premove affordance. `set`/`unset` feed the one-slot
+      // app queue (promotion flow included); execution stays on the normal
+      // grading path when the reply lands.
+      premovable: {
+        enabled: true,
+        showDests: true,
+        events: {
+          set: (o, d) => this.queuePremove(o as SquareName, d as SquareName),
+          unset: () => {
+            this.queuedPremove = null;
+            this.selectedKey = null;
+          },
+        },
+      },
+      events: { select: (key) => this.onBoardSelect(key) },
+      ...(this.selectedKey ? { selected: this.selectedKey } : {}),
       draggable: { enabled: true, showGhost: true },
       selectable: { enabled: true },
     });
@@ -234,6 +290,11 @@ export class TrainCtrl {
 
   async onUserMove(orig: Key, dest: Key): Promise<void> {
     if (!this.game || this.disposed) return;
+    // BRD-001: moves during the reply window become the queued premove.
+    if (this.awaitingReply) {
+      this.queuePremove(orig as SquareName, dest as SquareName);
+      return;
+    }
     if (this.game.requiresPromotion(orig as SquareName, dest as SquareName)) {
       this.pendingPromotion = { from: orig, to: dest };
       this.pendingPromotionColor = this.game.orientation;
@@ -243,6 +304,64 @@ export class TrainCtrl {
       return;
     }
     await this.resolveUserMove(orig as SquareName, dest as SquareName);
+  }
+
+  /**
+   * BRD-001: track the user's board selection (wired to chessground
+   * `events.select`) so the reply render can re-assert it. No board traffic
+   * here — chessground already shows the selection natively.
+   */
+  onBoardSelect(key: Key): void {
+    if (this.disposed) return;
+    this.selectedKey = key;
+  }
+
+  /**
+   * BRD-001: queue one solver move during the reply window. Never grades:
+   * legality is decided against the post-reply position when the reply
+   * lands — illegal queues are silently discarded, legal ones run the normal
+   * `resolveUserMove` grading path (a wrong executed premove is an ordinary
+   * wrong move). Promotion queues go through the promotion picker first.
+   */
+  queuePremove(from: SquareName, to: SquareName): void {
+    if (!this.game || this.disposed || !this.awaitingReply) return;
+    if (this.game.requiresPromotion(from, to)) {
+      this.pendingPromotion = { from: from as Key, to: to as Key };
+      this.pendingPromotionColor = this.game.orientation;
+      this.pendingPromotionIsPremove = true;
+      this.promotionUi.show(this.game.orientation);
+      this.redraw();
+      return;
+    }
+    this.queuedPremove = { from, to };
+    this.redraw();
+  }
+
+  /**
+   * BRD-001: consume the queued premove if it is still legal in the
+   * post-reply position. Pure gate — illegal queues vanish silently and are
+   * never graded; legal ones are returned for normal `resolveUserMove`
+   * grading by the caller.
+   */
+  private takeQueuedPremove(): {
+    from: SquareName;
+    to: SquareName;
+    promotion?: PromotionRole;
+  } | null {
+    const queued = this.queuedPremove;
+    this.queuedPremove = null;
+    if (!queued || !this.game || this.disposed) return null;
+    if (!this.game.isLegalSolverMove(queued.from, queued.to, queued.promotion)) return null;
+    return queued;
+  }
+
+  /** BRD-001: drop all premove/selection state (new attempt, skip, reveal). */
+  private clearPremoveState(): void {
+    this.awaitingReply = false;
+    this.queuedPremove = null;
+    this.pendingPromotionIsPremove = false;
+    this.selectedKey = null;
+    this.board.cancelPremove?.();
   }
 
   async resolveUserMove(
@@ -258,6 +377,9 @@ export class TrainCtrl {
       this.redraw();
       return;
     }
+
+    // An executed move (right or wrong) supersedes any tracked selection.
+    this.selectedKey = null;
 
     if (result.kind === 'wrong') {
       await this.adapter.recordWrongMove(result.uci);
@@ -280,10 +402,32 @@ export class TrainCtrl {
       fen: result.fenAfterSolver,
       lastMove: [from as Key, to as Key],
       interactive: false,
+      replyPending: Boolean(result.fenAfterOpponent),
     });
 
+    const attemptGame = this.game;
     const settle = async (): Promise<void> => {
       if (this.disposed) return;
+      this.awaitingReply = false;
+      this.board.cancelPremove?.();
+      // BRD-001: run the queued premove only for the same attempt while it
+      // is still live. Anything else (new puzzle, revealed, skipped) drops
+      // the queue silently — never graded, never a failure.
+      let premove: { from: SquareName; to: SquareName; promotion?: PromotionRole } | null =
+        null;
+      if (
+        this.game === attemptGame &&
+        !this.revealed &&
+        this.adapter.getActiveAttemptId()
+      ) {
+        premove = this.takeQueuedPremove();
+      } else {
+        this.queuedPremove = null;
+      }
+      if (premove) {
+        await this.resolveUserMove(premove.from, premove.to, premove.promotion);
+        return;
+      }
       if (result.completed) {
         await this.completePuzzle();
       } else {
@@ -294,6 +438,7 @@ export class TrainCtrl {
     };
 
     if (result.fenAfterOpponent) {
+      this.awaitingReply = true;
       // Global setTimeout (identical to window.setTimeout in the browser,
       // but Node-safe so the ctrl stays testable without a DOM).
       setTimeout(() => void settle(), 260);
@@ -382,10 +527,23 @@ export class TrainCtrl {
 
   choosePromotion(role: PromotionRole): void {
     const pending = this.pendingPromotion;
+    const isPremove = this.pendingPromotionIsPremove;
     this.pendingPromotion = null;
+    this.pendingPromotionIsPremove = false;
     this.promotionUi.hide();
     if (!pending) {
       this.renderPosition();
+      this.redraw();
+      return;
+    }
+    // BRD-001: a promotion queued during the reply window waits for the
+    // reply; a late choice (window already closed) is just a normal move.
+    if (isPremove && this.awaitingReply) {
+      this.queuedPremove = {
+        from: pending.from as SquareName,
+        to: pending.to as SquareName,
+        promotion: role,
+      };
       this.redraw();
       return;
     }
@@ -394,6 +552,7 @@ export class TrainCtrl {
 
   cancelPromotion(): void {
     this.pendingPromotion = null;
+    this.pendingPromotionIsPremove = false;
     this.promotionUi.hide();
     this.renderPosition();
     this.redraw();
@@ -409,6 +568,7 @@ export class TrainCtrl {
     this.timer = new AttemptTimer();
     this.scoredCommitted = false;
     this.pendingPromotion = null;
+    this.clearPremoveState();
     this.revealed = false;
     this.promotionUi.hide();
 
@@ -634,6 +794,7 @@ export class TrainCtrl {
   async onSkip(): Promise<void> {
     if (this.disposed) return;
     if (!this.adapter.getActiveAttemptId()) return;
+    this.clearPremoveState();
     this.timer.interrupt();
     await this.adapter.abandonCurrentAttempt({ skip: true });
     if (this.disposed) return;
@@ -649,6 +810,7 @@ export class TrainCtrl {
     }
     this.revealed = true;
     if (this.game && !this.game.isCompleted && this.adapter.getActiveAttemptId()) {
+      this.clearPremoveState();
       this.timer.interrupt();
       await this.adapter.recordAssistance('reveal');
       if (this.disposed) return;
@@ -1002,6 +1164,7 @@ export class TrainView implements Screen {
         this.adapter,
         {
           set: (config) => ground.set(config),
+          cancelPremove: () => ground.cancelPremove(),
           destroy: () => ground.destroy(),
         },
         {
