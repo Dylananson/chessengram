@@ -1,13 +1,37 @@
 /**
- * Settings screen (PB4/PB5). Currently hosts Data safety: full export, a
+ * Settings screen (PB4/PB5). Hosts scheduler preferences (curated prefs save
+ * + take-effect-on-next-attempt) and Data safety: full export, a
  * preview-then-confirm import, and one-click restore of recovery snapshots.
- * Scheduler preferences arrive in the next build step on this same screen.
+ *
+ * Rendering (UI-001 S4 — the S2 ctrl/view/redraw pattern from history-view):
+ * mutable state lives in {@link SettingsCtrl} (`message`, `summary`,
+ * `backups`, `pending`, `curated`), {@link view} is a pure
+ * `(ctrl) => VNode` function built from the S1 primitives, and
+ * {@link SettingsView} mounts once via snabbdom `patch` then re-patches
+ * through a guarded `redraw` closure. `h`/`init`/modules come from DOM-free
+ * `snabbdom/build/*` deep subpaths (never the package root, which touches
+ * `window` at load), so this module — ctrl, helpers, and `view` — stays
+ * importable under Node. Only `mount` and the thin DOM-reader click handlers
+ * touch the DOM.
+ *
+ * Deviation from the S2 pilot (async first paint): History snapshots are
+ * synchronous, but the Settings state (`exportStoreSummary`, `listBackups`,
+ * `getCuratedSettings`) needs async service reads, so `mount` installs the
+ * guarded `redraw` closure first, awaits `ctrl.refresh()`, then patches the
+ * placeholder once. Writers always end in `refresh()` (re-read + redraw).
  */
 
+import { h } from 'snabbdom/build/h.js';
+import { init } from 'snabbdom/build/init.js';
+import { attributesModule } from 'snabbdom/build/modules/attributes.js';
+import { eventListenersModule } from 'snabbdom/build/modules/eventlisteners.js';
+import { propsModule } from 'snabbdom/build/modules/props.js';
+import type { VNode } from 'snabbdom/build/vnode.js';
 import type { AppContext } from './app-context.ts';
 import { t } from './i18n.ts';
 import type { Screen } from './router.ts';
 import { DEFAULT_COLLECTION_ID, DEFAULT_PROGRAM_ID } from './scheduler-service.ts';
+import type { LocalTrainingService } from './scheduler-service.ts';
 import {
   CURATED_DEFAULTS,
   FAILURE_PRESETS,
@@ -17,14 +41,17 @@ import {
 } from './settings-preferences.ts';
 import { parseExport, summarizeExport } from './storage/data-port.ts';
 import type { StoreExport, StoreExportSummary } from './storage/local-store.ts';
+import type { TrainingAdapter } from './training-adapter.ts';
+import { emptyState, formRow, panel, statusLine } from './ui/primitives.ts';
 
-function escapeHtml(value: string): string {
-  return value
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;');
-}
+/**
+ * snabbdom patch function for this screen. `attributes` + `props` cover the
+ * form controls (ids/accept/min/max via attrs; value/checked/selected via
+ * props so redraws update live control state); `eventListeners` covers the
+ * `on: { click }` bindings. The `style` module reads `window` at load and
+ * must stay out.
+ */
+const patch = init([attributesModule, eventListenersModule, propsModule]);
 
 function downloadJson(filename: string, text: string): void {
   const blob = new Blob([text], { type: 'application/json' });
@@ -50,15 +77,317 @@ interface PendingImport {
   summary: StoreExportSummary;
 }
 
+/**
+ * Per-screen controller: owns the mutable settings state plus the `redraw`
+ * closure the mount site installs. Every writer ends in `refresh()`
+ * (re-read the async service state, then redraw). View use of
+ * `parseCurated` only — no changes to parsing/clamping logic.
+ */
+export class SettingsCtrl {
+  message: Message | null = null;
+  summary: StoreExportSummary | null = null;
+  backups: string[] = [];
+  pending: PendingImport | null = null;
+  curated: CuratedSettings = CURATED_DEFAULTS;
+  redraw: () => void = () => {};
+
+  private readonly service: LocalTrainingService;
+  private readonly adapter: TrainingAdapter;
+
+  constructor(
+    service: LocalTrainingService,
+    adapter: TrainingAdapter,
+    redraw: () => void = () => {},
+  ) {
+    this.service = service;
+    this.adapter = adapter;
+    this.redraw = redraw;
+  }
+
+  /** Re-read the async service state without writes. */
+  async load(): Promise<void> {
+    this.summary = await this.service.exportStoreSummary();
+    this.backups = await this.service.listBackups();
+    this.curated = this.service.getCuratedSettings();
+  }
+
+  /** Re-read the async service state and re-render. Performs no writes. */
+  async refresh(): Promise<void> {
+    await this.load();
+    this.redraw();
+  }
+
+  /** Validate + clamp the raw prefs (via `parseCurated`), persist, confirm. */
+  async savePreferences(raw: unknown): Promise<void> {
+    this.curated = await this.service.applyCuratedSettings(parseCurated(raw));
+    this.message = { kind: 'ok', text: t('settings.prefs.saved') };
+    await this.refresh();
+  }
+
+  /** Export the full store as a JSON download, then report the total. */
+  async exportStore(): Promise<void> {
+    const exported = await this.service.exportStore();
+    downloadJson(`chessreps-export-${timestamp()}.json`, JSON.stringify(exported));
+    this.message = {
+      kind: 'ok',
+      text: t('settings.data.exported', { total: summarizeExport(exported).total }),
+    };
+    await this.refresh();
+  }
+
+  /**
+   * Validate pasted/uploaded export text into a pending preview. `null`
+   * means no file was chosen. Never writes to the store.
+   */
+  async previewImportText(text: string | null): Promise<void> {
+    if (text === null) {
+      this.message = { kind: 'error', text: t('settings.data.invalid') };
+      await this.refresh();
+      return;
+    }
+    const parsed = parseExport(text);
+    if (!parsed.ok) {
+      this.message = {
+        kind: 'error',
+        text: t('settings.data.importError', { error: parsed.errors.join('; ') }),
+      };
+      this.pending = null;
+      await this.refresh();
+      return;
+    }
+    this.pending = { data: parsed.data, summary: summarizeExport(parsed.data) };
+    this.message = null;
+    await this.refresh();
+  }
+
+  /** Confirm the pending preview: snapshot, import, reload, report. */
+  async confirmImport(): Promise<void> {
+    if (!this.pending) return;
+    const label = `pre-import-${timestamp()}`;
+    const summary = await this.service.importStore(this.pending.data, label);
+    this.pending = null;
+    await this.adapter.reloadAfterDataChange(DEFAULT_PROGRAM_ID, DEFAULT_COLLECTION_ID);
+    this.message = { kind: 'ok', text: t('settings.data.imported', { total: summary.total, label }) };
+    await this.refresh();
+  }
+
+  /** Discard the pending import preview without writing. */
+  cancelImport(): void {
+    this.pending = null;
+    this.redraw();
+  }
+
+  /** Restore one recovery snapshot by label, then reload and report. */
+  async restoreBackup(label: string): Promise<void> {
+    const summary = await this.service.restoreBackup(label);
+    if (!summary) {
+      this.message = { kind: 'error', text: t('settings.data.restoreMissing') };
+      await this.refresh();
+      return;
+    }
+    await this.adapter.reloadAfterDataChange(DEFAULT_PROGRAM_ID, DEFAULT_COLLECTION_ID);
+    this.message = { kind: 'ok', text: t('settings.data.restored', { label }) };
+    await this.refresh();
+  }
+}
+
+function countsLine(summary: StoreExportSummary): string {
+  return t('settings.data.current', {
+    total: summary.total,
+    content: summary.counts.content ?? 0,
+    schedules: summary.counts.schedules ?? 0,
+    attempts: summary.counts.attempts ?? 0,
+  });
+}
+
+/**
+ * Thin DOM readers for the prefs form. Called only from the browser save
+ * click handler; the ctrl itself takes plain data so it stays Node-testable.
+ */
+function readPrefsFromDom(): Record<string, unknown> {
+  const number = (id: string, fallback: number): number => {
+    const input = document.getElementById(id) as HTMLInputElement | null;
+    const value = input ? Number(input.value) : NaN;
+    return Number.isFinite(value) ? value : fallback;
+  };
+  return {
+    failurePreset: (document.getElementById('set-failure') as HTMLSelectElement | null)?.value,
+    stepBackAmount: number('set-step-back', CURATED_DEFAULTS.stepBackAmount),
+    retryRetainAmount: number('set-retry-retain', CURATED_DEFAULTS.retryRetainAmount),
+    newIntroductionLimitPerDay: number('set-new-per-day', CURATED_DEFAULTS.newIntroductionLimitPerDay),
+    relearningMinutes: number('set-relearning', CURATED_DEFAULTS.relearningMinutes),
+    timingEnabled: (document.getElementById('set-timing') as HTMLInputElement | null)?.checked,
+  };
+}
+
+function onSaveClick(ctrl: SettingsCtrl): void {
+  void ctrl.savePreferences(readPrefsFromDom());
+}
+
+function onExportClick(ctrl: SettingsCtrl): void {
+  void ctrl.exportStore();
+}
+
+function onPreviewClick(ctrl: SettingsCtrl): void {
+  const input = document.getElementById('settings-import-file') as HTMLInputElement | null;
+  const file = input?.files?.[0];
+  if (!file) {
+    void ctrl.previewImportText(null);
+    return;
+  }
+  void file.text().then((text) => ctrl.previewImportText(text));
+}
+
+function numberField(
+  ctrl: SettingsCtrl,
+  id: string,
+  labelKey: string,
+  value: number,
+  min: number,
+  max: number,
+): VNode {
+  return formRow(t(labelKey), h('input', {
+    attrs: { id, type: 'number', min, max },
+    props: { value: String(value) },
+  }), { htmlFor: id });
+}
+
+function prefsPanel(ctrl: SettingsCtrl): VNode {
+  const c = ctrl.curated;
+  return panel(t('settings.prefs.title'), [
+    h('p', t('settings.prefs.body')),
+    formRow(
+      t('settings.prefs.failurePreset'),
+      h(
+        'select',
+        { attrs: { id: 'set-failure' }, props: { value: c.failurePreset } },
+        FAILURE_PRESETS.map((preset) =>
+          h(
+            'option',
+            { props: { value: preset, selected: preset === c.failurePreset } },
+            failurePresetLabel(preset),
+          ),
+        ),
+      ),
+      { htmlFor: 'set-failure' },
+    ),
+    numberField(ctrl, 'set-step-back', 'settings.prefs.stepBack', c.stepBackAmount, 1, 10),
+    numberField(ctrl, 'set-retry-retain', 'settings.prefs.retryRetain', c.retryRetainAmount, 0, 10),
+    numberField(
+      ctrl,
+      'set-new-per-day',
+      'settings.prefs.newPerDay',
+      c.newIntroductionLimitPerDay,
+      0,
+      999,
+    ),
+    numberField(ctrl, 'set-relearning', 'settings.prefs.relearning', c.relearningMinutes, 1, 1440),
+    // Wrapped-checkbox shape (`div.field.checkbox > label > input + text`) has
+    // no formRow expression — see SETTINGS-FOLLOWUP-checkbox-row.
+    h('div.field.checkbox', [
+      h('label', [
+        h('input', {
+          attrs: { id: 'set-timing', type: 'checkbox' },
+          props: { checked: c.timingEnabled },
+        }),
+        ` ${t('settings.prefs.timing')}`,
+      ]),
+    ]),
+  ], [
+    // `.button.compact` has no actionButton expression — see
+    // SETTINGS-FOLLOWUP-compact-button.
+    h('button.button.compact', {
+      attrs: { type: 'button', id: 'settings-save-prefs' },
+      on: { click: () => onSaveClick(ctrl) },
+    }, t('settings.prefs.save')),
+  ]);
+}
+
+function pendingPreview(ctrl: SettingsCtrl, pending: PendingImport): VNode {
+  const s = pending.summary;
+  const date = new Date(s.exportedAt).toLocaleString();
+  return h('div.panel', [
+    h('p', t('settings.data.importSummary', {
+      date,
+      total: s.total,
+      content: s.counts.content ?? 0,
+      schedules: s.counts.schedules ?? 0,
+      attempts: s.counts.attempts ?? 0,
+    })),
+    h('div.button-row', [
+      h('button.button.compact', {
+        attrs: { type: 'button', id: 'settings-import-confirm' },
+        on: { click: () => void ctrl.confirmImport() },
+      }, t('settings.data.confirm')),
+      h('button.button.button-secondary.compact', {
+        attrs: { type: 'button', id: 'settings-import-cancel' },
+        on: { click: () => ctrl.cancelImport() },
+      }, t('settings.data.cancel')),
+    ]),
+  ]);
+}
+
+function backupsBody(ctrl: SettingsCtrl): VNode | VNode[] {
+  if (ctrl.backups.length === 0) return emptyState(t('settings.data.noBackups'));
+  return ctrl.backups.map((label) =>
+    h('div.flex-row', [
+      h('span', label),
+      h('button.button.compact', {
+        attrs: { type: 'button', 'data-restore': label },
+        on: { click: () => void ctrl.restoreBackup(label) },
+      }, t('settings.data.restore')),
+    ]),
+  );
+}
+
+/**
+ * Pure view: same information and same strings as the pre-Snabbdom template
+ * (prefs form, export summary, import preview/confirm, backup list, message),
+ * composed from the S1 `panel`/`formRow`/`statusLine`/`emptyState`
+ * primitives. Snabbdom sets copy as text, so no manual HTML escaping is
+ * needed. Control ids match the previous template (smoke + CSS hooks).
+ */
+export function view(ctrl: SettingsCtrl): VNode {
+  return h('div.settings-screen', [
+    h('h2', t('screen.settings.title')),
+    prefsPanel(ctrl),
+    panel(t('settings.data.title'), [
+      h('p', t('settings.data.body')),
+      ...(ctrl.summary ? [h('p', countsLine(ctrl.summary))] : []),
+    ], [
+      h('button.button.compact', {
+        attrs: { type: 'button', id: 'settings-export' },
+        on: { click: () => onExportClick(ctrl) },
+      }, t('settings.data.export')),
+    ]),
+    panel(t('settings.data.import'), [
+      h('div.flex-row', [
+        h('input', {
+          attrs: { type: 'file', id: 'settings-import-file', accept: '.json,application/json' },
+        }),
+        h('button.button.compact', {
+          attrs: { type: 'button', id: 'settings-import-preview' },
+          on: { click: () => onPreviewClick(ctrl) },
+        }, t('settings.data.previewButton')),
+      ]),
+      ...(ctrl.pending ? [pendingPreview(ctrl, ctrl.pending)] : []),
+    ]),
+    panel(t('settings.data.backups'), backupsBody(ctrl)),
+    h('div', { attrs: { id: 'settings-message' } }, [
+      ...(ctrl.message
+        ? [statusLine(ctrl.message.text, ctrl.message.kind === 'error' ? 'wrong' : 'correct')]
+        : []),
+    ]),
+  ]);
+}
+
 export class SettingsView implements Screen {
   readonly id = 'settings' as const;
 
   private host: HTMLElement | null = null;
-  private message: Message | null = null;
-  private summary: StoreExportSummary | null = null;
-  private backups: string[] = [];
-  private pending: PendingImport | null = null;
-  private curated: CuratedSettings = CURATED_DEFAULTS;
+  private root: HTMLElement | null = null;
+  private ctrl: SettingsCtrl | null = null;
+  private vnode: VNode | null = null;
   private readonly ctx: AppContext;
 
   constructor(ctx: AppContext) {
@@ -67,237 +396,34 @@ export class SettingsView implements Screen {
 
   async mount(host: HTMLElement): Promise<void> {
     this.host = host;
-    await this.render();
+    const placeholder = document.createElement('div');
+    host.appendChild(placeholder);
+    // Track the placeholder so an unmount during the async load below still
+    // removes exactly what this screen inserted.
+    this.root = placeholder;
+    const ctrl = new SettingsCtrl(this.ctx.service, this.ctx.adapter);
+    this.ctrl = ctrl;
+    ctrl.redraw = () => {
+      if (this.ctrl === null || this.vnode === null) return;
+      this.vnode = patch(this.vnode, view(this.ctrl));
+      this.root = this.vnode.elm as HTMLElement;
+    };
+    await ctrl.refresh();
+    // Unmounted while loading: teardown already ran; never patch.
+    if (this.ctrl === null) return;
+    this.vnode = patch(placeholder, view(ctrl));
+    // The patch replaces the placeholder; track the live root so unmount
+    // removes exactly what snabbdom inserted.
+    this.root = this.vnode.elm as HTMLElement;
   }
 
   unmount(): void {
+    // Guarded: safe to call without a prior mount, and drops the ctrl/vnode
+    // refs so any late redraw after teardown is a no-op instead of a crash.
+    this.root?.remove();
+    this.root = null;
     this.host = null;
-  }
-
-  private async render(): Promise<void> {
-    if (!this.host) return;
-    this.summary = await this.ctx.service.exportStoreSummary();
-    this.backups = await this.ctx.service.listBackups();
-    this.curated = this.ctx.service.getCuratedSettings();
-    this.host.innerHTML = this.template();
-    this.bind();
-  }
-
-  private preferencesHtml(): string {
-    const c = this.curated;
-    const options = FAILURE_PRESETS.map(
-      (preset) =>
-        `<option value="${preset}" ${preset === c.failurePreset ? 'selected' : ''}>${escapeHtml(
-          failurePresetLabel(preset),
-        )}</option>`,
-    ).join('');
-    return `
-      <section class="panel">
-        <h3>${t('settings.prefs.title')}</h3>
-        <p>${t('settings.prefs.body')}</p>
-        <div class="field">
-          <label for="set-failure">${t('settings.prefs.failurePreset')}</label>
-          <select id="set-failure">${options}</select>
-        </div>
-        <div class="field">
-          <label for="set-step-back">${t('settings.prefs.stepBack')}</label>
-          <input id="set-step-back" type="number" min="1" max="10" value="${c.stepBackAmount}" />
-        </div>
-        <div class="field">
-          <label for="set-retry-retain">${t('settings.prefs.retryRetain')}</label>
-          <input id="set-retry-retain" type="number" min="0" max="10" value="${c.retryRetainAmount}" />
-        </div>
-        <div class="field">
-          <label for="set-new-per-day">${t('settings.prefs.newPerDay')}</label>
-          <input id="set-new-per-day" type="number" min="0" max="999" value="${c.newIntroductionLimitPerDay}" />
-        </div>
-        <div class="field">
-          <label for="set-relearning">${t('settings.prefs.relearning')}</label>
-          <input id="set-relearning" type="number" min="1" max="1440" value="${c.relearningMinutes}" />
-        </div>
-        <div class="field checkbox">
-          <label><input id="set-timing" type="checkbox" ${c.timingEnabled ? 'checked' : ''} /> ${t(
-            'settings.prefs.timing',
-          )}</label>
-        </div>
-        <div class="button-row">
-          <button type="button" class="button compact" id="settings-save-prefs">${t('settings.prefs.save')}</button>
-        </div>
-      </section>
-    `;
-  }
-
-  private countsLine(summary: StoreExportSummary): string {
-    return t('settings.data.current', {
-      total: summary.total,
-      content: summary.counts.content ?? 0,
-      schedules: summary.counts.schedules ?? 0,
-      attempts: summary.counts.attempts ?? 0,
-    });
-  }
-
-  private template(): string {
-    const summary = this.summary;
-    const message = this.message
-      ? `<p class="${this.message.kind === 'error' ? 'error' : 'ok'}">${escapeHtml(this.message.text)}</p>`
-      : '';
-    const backups =
-      this.backups.length === 0
-        ? `<p>${t('settings.data.noBackups')}</p>`
-        : this.backups
-            .map(
-              (label) =>
-                `<div class="flex-row"><span>${escapeHtml(label)}</span><button type="button" class="button compact" data-restore="${escapeHtml(
-                  label,
-                )}">${t('settings.data.restore')}</button></div>`,
-            )
-            .join('');
-
-    return `
-      <h2>${t('screen.settings.title')}</h2>
-      ${this.preferencesHtml()}
-      <section class="panel">
-        <h3>${t('settings.data.title')}</h3>
-        <p>${t('settings.data.body')}</p>
-        ${summary ? `<p>${escapeHtml(this.countsLine(summary))}</p>` : ''}
-        <div class="button-row">
-          <button type="button" class="button compact" id="settings-export">${t('settings.data.export')}</button>
-        </div>
-      </section>
-      <section class="panel">
-        <h3>${t('settings.data.import')}</h3>
-        <div class="flex-row">
-          <input type="file" id="settings-import-file" accept=".json,application/json" />
-          <button type="button" class="button compact" id="settings-import-preview">${t('settings.data.previewButton')}</button>
-        </div>
-        ${this.pending ? this.pendingHtml(this.pending) : ''}
-      </section>
-      <section class="panel">
-        <h3>${t('settings.data.backups')}</h3>
-        ${backups}
-      </section>
-      <div id="settings-message">${message}</div>
-    `;
-  }
-
-  private pendingHtml(pending: PendingImport): string {
-    const s = pending.summary;
-    const date = new Date(s.exportedAt).toLocaleString();
-    return `
-      <div class="panel">
-        <p>${escapeHtml(
-          t('settings.data.importSummary', {
-            date,
-            total: s.total,
-            content: s.counts.content ?? 0,
-            schedules: s.counts.schedules ?? 0,
-            attempts: s.counts.attempts ?? 0,
-          }),
-        )}</p>
-        <div class="button-row">
-          <button type="button" class="button compact" id="settings-import-confirm">${t('settings.data.confirm')}</button>
-          <button type="button" class="button button-secondary compact" id="settings-import-cancel">${t('settings.data.cancel')}</button>
-        </div>
-      </div>
-    `;
-  }
-
-  private bind(): void {
-    document
-      .getElementById('settings-save-prefs')
-      ?.addEventListener('click', () => void this.onSavePreferences());
-    document
-      .getElementById('settings-export')
-      ?.addEventListener('click', () => void this.onExport());
-    document
-      .getElementById('settings-import-preview')
-      ?.addEventListener('click', () => void this.onPreviewImport());
-    document
-      .getElementById('settings-import-confirm')
-      ?.addEventListener('click', () => void this.onConfirmImport());
-    document
-      .getElementById('settings-import-cancel')
-      ?.addEventListener('click', () => {
-        this.pending = null;
-        void this.render();
-      });
-    document.querySelectorAll<HTMLButtonElement>('[data-restore]').forEach((button) => {
-      button.addEventListener('click', () => void this.onRestore(button.dataset.restore!));
-    });
-  }
-
-  private async onSavePreferences(): Promise<void> {
-    const number = (id: string, fallback: number): number => {
-      const input = document.getElementById(id) as HTMLInputElement | null;
-      const value = input ? Number(input.value) : NaN;
-      return Number.isFinite(value) ? value : fallback;
-    };
-    const preset = (document.getElementById('set-failure') as HTMLSelectElement | null)?.value;
-    const curated = parseCurated({
-      failurePreset: preset,
-      stepBackAmount: number('set-step-back', CURATED_DEFAULTS.stepBackAmount),
-      retryRetainAmount: number('set-retry-retain', CURATED_DEFAULTS.retryRetainAmount),
-      newIntroductionLimitPerDay: number(
-        'set-new-per-day',
-        CURATED_DEFAULTS.newIntroductionLimitPerDay,
-      ),
-      relearningMinutes: number('set-relearning', CURATED_DEFAULTS.relearningMinutes),
-      timingEnabled: (document.getElementById('set-timing') as HTMLInputElement | null)?.checked,
-    });
-    this.curated = await this.ctx.service.applyCuratedSettings(curated);
-    this.message = { kind: 'ok', text: t('settings.prefs.saved') };
-    await this.render();
-  }
-
-  private async onExport(): Promise<void> {
-    const exported = await this.ctx.service.exportStore();
-    downloadJson(`chessreps-export-${timestamp()}.json`, JSON.stringify(exported));
-    this.message = {
-      kind: 'ok',
-      text: t('settings.data.exported', { total: summarizeExport(exported).total }),
-    };
-    await this.render();
-  }
-
-  private async onPreviewImport(): Promise<void> {
-    const input = document.getElementById('settings-import-file') as HTMLInputElement | null;
-    const file = input?.files?.[0];
-    if (!file) {
-      this.message = { kind: 'error', text: t('settings.data.invalid') };
-      await this.render();
-      return;
-    }
-    const parsed = parseExport(await file.text());
-    if (!parsed.ok) {
-      this.message = { kind: 'error', text: t('settings.data.importError', { error: parsed.errors.join('; ') }) };
-      this.pending = null;
-      await this.render();
-      return;
-    }
-    this.pending = { data: parsed.data, summary: summarizeExport(parsed.data) };
-    this.message = null;
-    await this.render();
-  }
-
-  private async onConfirmImport(): Promise<void> {
-    if (!this.pending) return;
-    const label = `pre-import-${timestamp()}`;
-    const summary = await this.ctx.service.importStore(this.pending.data, label);
-    this.pending = null;
-    await this.ctx.adapter.reloadAfterDataChange(DEFAULT_PROGRAM_ID, DEFAULT_COLLECTION_ID);
-    this.message = { kind: 'ok', text: t('settings.data.imported', { total: summary.total, label }) };
-    await this.render();
-  }
-
-  private async onRestore(label: string): Promise<void> {
-    const summary = await this.ctx.service.restoreBackup(label);
-    if (!summary) {
-      this.message = { kind: 'error', text: t('settings.data.restoreMissing') };
-      await this.render();
-      return;
-    }
-    await this.ctx.adapter.reloadAfterDataChange(DEFAULT_PROGRAM_ID, DEFAULT_COLLECTION_ID);
-    this.message = { kind: 'ok', text: t('settings.data.restored', { label }) };
-    await this.render();
+    this.ctrl = null;
+    this.vnode = null;
   }
 }

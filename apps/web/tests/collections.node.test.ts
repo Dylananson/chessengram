@@ -1,5 +1,6 @@
 import { test } from 'node:test';
 import { strict as assert } from 'node:assert';
+import type { VNode } from 'snabbdom/build/vnode.js';
 import {
   DEFAULT_COLLECTION_ID,
   DEFAULT_PROGRAM_ID,
@@ -9,12 +10,33 @@ import {
 import { LocalStore } from '../src/storage/local-store.ts';
 import { InMemoryStorageBackend } from '../src/storage/memory-backend.ts';
 import { parseExport } from '../src/storage/data-port.ts';
-import { CollectionsView } from '../src/collections-view.ts';
-import { setLocale } from '../src/i18n.ts';
+import { CollectionsCtrl, CollectionsView, view } from '../src/collections-view.ts';
+import { setLocale, t } from '../src/i18n.ts';
 import { makePuzzle, makeService, PROGRAM_ID, timing } from './fixtures.ts';
 
 const a = makePuzzle({ id: 'a' });
 const b = makePuzzle({ id: 'b' });
+
+/** Collect every text node in a vnode tree (snabbdom sets copy as text). */
+function collectText(node: VNode | string | null | undefined): string[] {
+  if (node === null || node === undefined) return [];
+  if (typeof node === 'string') return [node];
+  const out: string[] = [];
+  if (typeof node.text === 'string') out.push(node.text);
+  for (const child of node.children ?? []) out.push(...collectText(child as VNode | string));
+  return out;
+}
+
+/** Every vnode in the tree matching the predicate, depth-first. */
+function findVNodes(
+  node: VNode | string | null | undefined,
+  match: (node: VNode) => boolean,
+): VNode[] {
+  if (node === null || node === undefined || typeof node === 'string') return [];
+  const out: VNode[] = match(node) ? [node] : [];
+  for (const child of node.children ?? []) out.push(...findVNodes(child as VNode, match));
+  return out;
+}
 
 async function seedDefault() {
   const service = await makeService();
@@ -344,13 +366,114 @@ test('export/import round-trips collections and the active selection', async () 
 test('CollectionsView renders collections with membership and due counts', async () => {
   setLocale('en');
   const service = await seedDefault();
-  const view = new CollectionsView({ service, adapter: undefined as never });
-  const host = { innerHTML: '' } as unknown as HTMLElement;
-  view.mount(host);
-  assert.ok(host.innerHTML.includes('Collections'));
-  assert.ok(host.innerHTML.includes('Default'));
-  assert.ok(host.innerHTML.includes('2 puzzles'));
-  view.unmount();
+  const ctrl = new CollectionsCtrl(service);
+  const texts = collectText(view(ctrl));
+  const joined = texts.join('\n');
+  assert.ok(texts.includes(t('collections.title')));
+  assert.ok(texts.includes('Default'));
+  assert.ok(joined.includes('2 puzzles'));
+  assert.ok(texts.includes('a'));
+  assert.ok(texts.includes('b'));
+});
+
+test('ctrl mutations end in redraw and refresh the snapshot', async () => {
+  setLocale('en');
+  const service = await seedDefault();
+  let redraws = 0;
+  const ctrl = new CollectionsCtrl(service, () => {
+    redraws += 1;
+  });
+  assert.equal(ctrl.snapshot.rows.length, 1);
+
+  ctrl.newName = '  Drills  ';
+  await ctrl.create();
+  assert.equal(ctrl.message?.kind, 'ok');
+  assert.equal(ctrl.snapshot.rows.length, 2);
+  const created = ctrl.snapshot.rows.find((row) => row.name === 'Drills')!;
+  assert.ok(created);
+  assert.equal(ctrl.newName, '', 'create draft resets like the old innerHTML rebuild');
+  const before = redraws;
+  assert.ok(before >= 1, 'create ends in redraw');
+
+  ctrl.addValues.set(created.id, 'a');
+  await ctrl.addMember(created.id);
+  assert.equal(ctrl.message?.kind, 'ok');
+  assert.deepEqual(
+    ctrl.snapshot.rows.find((row) => row.id === created.id)?.puzzleIds,
+    ['a'],
+  );
+
+  await ctrl.removeMember(created.id, 'a');
+  assert.deepEqual(
+    ctrl.snapshot.rows.find((row) => row.id === created.id)?.puzzleIds,
+    [],
+  );
+
+  await ctrl.deleteCollection(created.id);
+  assert.equal(ctrl.message?.kind, 'ok');
+  assert.equal(ctrl.snapshot.rows.length, 1);
+  assert.ok(redraws > before, 'every mutation path ends in redraw');
+});
+
+test('rename is a two-step start/save flow with validation errors', async () => {
+  setLocale('en');
+  const service = await seedDefault();
+  let redraws = 0;
+  const ctrl = new CollectionsCtrl(service, () => {
+    redraws += 1;
+  });
+  const target = ctrl.snapshot.rows[0]!;
+
+  await ctrl.rename(target.id);
+  assert.equal(ctrl.renamingId, target.id, 'first click starts renaming');
+  assert.equal(ctrl.renameValue, target.name, 'rename draft prefilled');
+
+  ctrl.renameValue = '';
+  await ctrl.rename(target.id);
+  assert.equal(ctrl.message?.kind, 'error', 'blank names are rejected');
+  assert.equal(ctrl.renamingId, target.id, 'failed save keeps renaming open');
+  assert.equal(
+    ctrl.snapshot.rows.find((row) => row.id === target.id)?.name,
+    target.name,
+    'failed save keeps the old name',
+  );
+
+  ctrl.renameValue = 'Tactics';
+  await ctrl.rename(target.id);
+  assert.equal(ctrl.message?.kind, 'ok');
+  assert.equal(ctrl.renamingId, null);
+  assert.equal(
+    ctrl.snapshot.rows.find((row) => row.id === target.id)?.name,
+    'Tactics',
+  );
+  assert.ok(redraws >= 3, 'each rename step ends in redraw');
+});
+
+test('default collection renders badges and a disabled delete', async () => {
+  setLocale('en');
+  const service = await seedDefault();
+  const ctrl = new CollectionsCtrl(service);
+  const root = view(ctrl);
+  const texts = collectText(root);
+  assert.ok(texts.includes(t('collections.badge.default')));
+
+  const buttons = findVNodes(
+    root,
+    (node) => typeof node.sel === 'string' && node.sel.startsWith('button'),
+  );
+  const deletes = buttons.filter((node) => collectText(node).includes(t('collections.delete')));
+  assert.equal(deletes.length, 1);
+  assert.equal(
+    (deletes[0]!.data?.attrs as Record<string, unknown> | undefined)?.['disabled'],
+    true,
+    'default collection cannot be deleted',
+  );
+});
+
+test('unmount without mount is safe', async () => {
+  const service = await seedDefault();
+  const screen = new CollectionsView({ service, adapter: undefined as never });
+  screen.unmount();
 });
 
 test('collections summary counts use the default program scope', async () => {
