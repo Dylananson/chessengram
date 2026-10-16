@@ -47,7 +47,7 @@ flowchart TD
 | STS-001 | Per-puzzle training status on Train page | BRD-004 | `train-view.ts` (status region), related tests | Done (current loop) |
 | REV-002 | Arrow-key review stepping (Left/Right/Up/Down, review-only) | STS-001 | `train-view.ts` (review region), related tests | Done (current loop) |
 | TRN-001 | Train controls polish: `>` Next (hidden when disabled), `↻` restart symbol, analyze placeholder, details-after-completion, live timer | REV-002 | `train-view.ts` (controls region), layout CSS, related tests | Done (current loop) |
-| BRD-002 | Bigger desktop board + expand toggle | MOB-001 | layout CSS, `train-view.ts` (board region) | Done (current loop) |
+| BRD-002 | Bigger desktop board; expanded default, no collapse toggle; actions beneath board | MOB-001 | layout CSS, `train-view.ts` (board region) | Done (`a26ee14`, updated per user request) |
 | THM-001 | Board theme picker (survey Lichess/chessground theming first; square colors only, pieces untouched; localStorage persistence) | BRD-002 (done) | `settings-view.ts` (picker region), board-theme CSS, related tests | Done (current loop) |
 | REV-001 | Resumed completions show no review section (keep vs fix) | **user call** | `train-view.ts` (review gating) | **Blocked: needs user call** |
 | HW | T11/T15 hardware matrix execution | Matrix written (done) | real device | **Blocked: needs device** |
@@ -70,3 +70,4 @@ Round log:
 - UX lane R7 — TRN-001 verified 2026-10-16: next/restart/analyze controls, hide rating/themes until completion, live timer. 7+35+180 tests, build + smoke 38/38 clean. Next: BRD-002.
 - UX lane R8 — BRD-002 done 2026-10-16: larger desktop board + session toggle, mobile preserved, no-remount identity test. 7+35+181 tests, build + smoke 38/38 clean. Next eligible: THM-001 board theme picker.
 - UX lane R9 — THM-001 done 2026-10-16: five clean-room square palettes; localStorage persistence applied before router to prevent flash; piece art untouched; research note added. 7+35+186 tests, typecheck + build + smoke 38/38 clean.
+- UX lane R10 — BRD-002 refinement done 2026-10-16: expanded board now default, collapse toggle removed; actions/review controls under board, puzzle details after. 7+35+187 tests, typecheck + build + smoke 38/38 clean; S6 host-outside-tree invariant retained.

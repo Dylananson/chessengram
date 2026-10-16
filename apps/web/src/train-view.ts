@@ -1102,6 +1102,71 @@ export function view(ctrl: TrainCtrl): VNode {
   const puzzle = ctrl.infoPuzzle;
   const review = ctrl.review;
   return h('div.controls', [
+    h('div.button-row.train-actions', [
+      ...(!ctrl.nextDisabled ? [h('button#next-btn.button.button-primary', {
+        attrs: { type: 'button', 'aria-label': t('next.label') },
+        on: { click: () => void ctrl.loadNext() },
+      }, '>')] : []),
+      actionButton(t('skip.label'), 'secondary', {
+        id: 'skip-btn',
+        disabled: ctrl.skipDisabled,
+        onClick: () => void ctrl.onSkip(),
+      }),
+      actionButton(
+        ctrl.revealHidesSolution ? t('reveal.hide') : t('reveal.show'),
+        'secondary',
+        {
+          id: 'reveal-btn',
+          disabled: ctrl.revealDisabled,
+          onClick: () => void ctrl.onReveal(),
+        },
+      ),
+      h(
+        `button#restart-btn.button.button-secondary${ctrl.game?.isCompleted ? '' : '.hidden'}`,
+        {
+          attrs: { type: 'button', 'aria-label': t('restart.label') },
+          on: { click: () => void ctrl.onRestart() },
+        },
+        '↻',
+      ),
+      h('button#analyze-btn.button.button-secondary', {
+        attrs: { type: 'button', disabled: true, 'aria-label': t('train.analyze.label'), title: t('train.analyze.title') },
+      }, '⌕'),
+      h(`div.button-row.review-nav${review ? '' : '.hidden'}`, [
+        actionButton(t('review.first'), 'secondary', {
+          id: 'review-first', disabled: !review?.canBack, onClick: () => ctrl.stepReview('first'),
+        }),
+        h('button.button.button-secondary', {
+          attrs: { type: 'button', id: 'review-back', 'aria-label': t('review.back'), ...(review?.canBack ? {} : { disabled: true }) },
+          on: { click: () => ctrl.stepReview('back') },
+        }, '◀'),
+        h('button.button.button-secondary', {
+          attrs: { type: 'button', id: 'review-forward', 'aria-label': t('review.forward'), ...(review?.canForward ? {} : { disabled: true }) },
+          on: { click: () => ctrl.stepReview('forward') },
+        }, '▶'),
+        actionButton(t('review.last'), 'secondary', {
+          id: 'review-last', disabled: !review?.canForward, onClick: () => ctrl.stepReview('last'),
+        }),
+      ]),
+      h(
+        `button#practice-btn.button.button-secondary${ctrl.practiceHidden ? '.hidden' : ''}`,
+        {
+          attrs: { type: 'button' },
+          on: { click: () => void ctrl.onPractice() },
+        },
+        ctrl.practiceLabel,
+      ),
+    ]),
+    h(`div.info${review ? '' : '.hidden'}`, { attrs: { id: 'review-section' } }, [
+      h('h2', { attrs: { 'data-i18n': 'review.title' } }, t('review.title')),
+      h('p.progress-note', t('review.hint')),
+      h(
+        'p#review-label',
+        review
+          ? t('review.position', { index: review.position, total: review.count - 1 })
+          : '',
+      ),
+    ]),
     h('div.info', [
       h('h2', { attrs: { 'data-i18n': 'puzzle.info' } }, t('puzzle.info')),
       h('p#puzzle-id', puzzle ? `${t('puzzle.id')}: ${puzzle.id}` : '-'),
@@ -1125,110 +1190,9 @@ export function view(ctrl: TrainCtrl): VNode {
     ]),
     h('div.info', [
       h('h2', { attrs: { 'data-i18n': 'solution.title' } }, t('solution.title')),
-      h('div.button-row', [
-        actionButton(
-          ctrl.revealHidesSolution ? t('reveal.hide') : t('reveal.show'),
-          'secondary',
-          {
-            id: 'reveal-btn',
-            disabled: ctrl.revealDisabled,
-            onClick: () => void ctrl.onReveal(),
-          },
-        ),
-      ]),
       h(
         `div#solution.solution-preview${ctrl.solutionHidden ? '.hidden' : ''}`,
         puzzle ? puzzle.solution.join(' ') : '-',
-      ),
-    ]),
-    h(`div.info${review ? '' : '.hidden'}`, { attrs: { id: 'review-section' } }, [
-      h('h2', { attrs: { 'data-i18n': 'review.title' } }, t('review.title')),
-      h('p.progress-note', t('review.hint')),
-      h(
-        'p#review-label',
-        review
-          ? t('review.position', { index: review.position, total: review.count - 1 })
-          : '',
-      ),
-      h('div.button-row.review-nav', [
-        actionButton(t('review.first'), 'secondary', {
-          id: 'review-first',
-          disabled: !review?.canBack,
-          onClick: () => ctrl.stepReview('first'),
-        }),
-        // MOB-001: Back/Forward render as small triangle symbols on all
-        // screens. Raw vnodes (same `button.button.button-secondary` shape,
-        // ids, and conditional `disabled` attrs `actionButton` would emit)
-        // because the shared helper has no aria-label slot; the accessible
-        // names reuse the existing `review.back` / `review.forward` strings.
-        h(
-          'button.button.button-secondary',
-          {
-            attrs: {
-              type: 'button',
-              id: 'review-back',
-              'aria-label': t('review.back'),
-              ...(review?.canBack ? {} : { disabled: true }),
-            },
-            on: { click: () => ctrl.stepReview('back') },
-          },
-          '◀',
-        ),
-        h(
-          'button.button.button-secondary',
-          {
-            attrs: {
-              type: 'button',
-              id: 'review-forward',
-              'aria-label': t('review.forward'),
-              ...(review?.canForward ? {} : { disabled: true }),
-            },
-            on: { click: () => ctrl.stepReview('forward') },
-          },
-          '▶',
-        ),
-        actionButton(t('review.last'), 'secondary', {
-          id: 'review-last',
-          disabled: !review?.canForward,
-          onClick: () => ctrl.stepReview('last'),
-        }),
-      ]),
-    ]),
-    h('div.button-row', [
-      actionButton(t('skip.label'), 'secondary', {
-        id: 'skip-btn',
-        disabled: ctrl.skipDisabled,
-        onClick: () => void ctrl.onSkip(),
-      }),
-      ...(!ctrl.nextDisabled ? [h('button#next-btn.button.button-primary', {
-        attrs: { type: 'button', 'aria-label': t('next.label') },
-        on: { click: () => void ctrl.loadNext() },
-      }, '>')] : []),
-      h('button#analyze-btn.button.button-secondary', {
-        attrs: { type: 'button', disabled: true, 'aria-label': t('train.analyze.label'), title: t('train.analyze.title') },
-      }, '⌕'),
-      // BRD-003: restart affordance. Hidden until the puzzle completes
-      // (success or correction-complete); the ↻ symbol keeps the button
-      // compact (TRN-001) with the accessible name on `restart.label`.
-      // Raw vnode (same `button.button.button-secondary` shape) because the
-      // conditional `.hidden` class has no `actionButton` expression.
-      h(
-        `button#restart-btn.button.button-secondary${ctrl.game?.isCompleted ? '' : '.hidden'}`,
-        {
-          attrs: { type: 'button', 'aria-label': t('restart.label') },
-          on: { click: () => void ctrl.onRestart() },
-        },
-        '↻',
-      ),
-      // Raw vnode: the conditional `.hidden` class has no `actionButton`
-      // expression (same id/classes/strings in the DOM).
-      h(
-        `button#practice-btn.button.button-secondary${ctrl.practiceHidden ? '.hidden' : ''}`,
-        {
-          attrs: { type: 'button' },
-          on: { click: () => void ctrl.onPractice() },
-        },
-        ctrl.practiceLabel,
       ),
     ]),
     h('div.info', [
@@ -1264,10 +1228,8 @@ export interface TrainShell {
   root: HTMLElement;
   /** The chessground host (`div#board`). Never part of the patched subtree. */
   boardHost: HTMLElement;
-  /** Static wrapper around the board; its class controls desktop sizing. */
+  /** Static wrapper around the board. */
   boardWrap: HTMLElement;
-  /** Static board-wrap toggle; outside Snabbdom's patched subtree. */
-  boardToggle: HTMLButtonElement;
   /** Empty placeholder the snabbdom patch replaces with `view(ctrl)`. */
   uiPlaceholder: HTMLElement;
 }
@@ -1286,13 +1248,6 @@ export function createTrainShell(doc: Document): TrainShell {
   layout.className = 'layout';
   const boardWrap = doc.createElement('div');
   boardWrap.className = 'board-wrap';
-  const boardToggle = doc.createElement('button');
-  boardToggle.type = 'button';
-  boardToggle.id = 'board-size-toggle';
-  boardToggle.className = 'button button-secondary compact board-size-toggle';
-  boardToggle.textContent = 'Expand board';
-  boardToggle.setAttribute('aria-label', 'Expand board');
-  boardToggle.setAttribute('aria-expanded', 'false');
   const info = doc.createElement('div');
   info.className = 'info';
   const heading = doc.createElement('h2');
@@ -1303,23 +1258,13 @@ export function createTrainShell(doc: Document): TrainShell {
   boardHost.className = 'board';
   boardHost.setAttribute('aria-label', t('board.title'));
   info.appendChild(heading);
-  info.appendChild(boardToggle);
   info.appendChild(boardHost);
   boardWrap.appendChild(info);
   const uiPlaceholder = doc.createElement('div');
   layout.appendChild(boardWrap);
   layout.appendChild(uiPlaceholder);
   root.appendChild(layout);
-  return { root, boardHost, boardWrap, boardToggle, uiPlaceholder };
-}
-
-/** Toggle sizing on the static wrapper only; never touch the board host/ground. */
-export function toggleTrainBoardSize(shell: TrainShell): boolean {
-  const expanded = shell.boardWrap.classList.toggle('board-expanded');
-  shell.boardToggle.textContent = expanded ? 'Collapse board' : 'Expand board';
-  shell.boardToggle.setAttribute('aria-label', expanded ? 'Collapse board' : 'Expand board');
-  shell.boardToggle.setAttribute('aria-expanded', String(expanded));
-  return expanded;
+  return { root, boardHost, boardWrap, uiPlaceholder };
 }
 
 export class TrainView implements Screen {
@@ -1364,8 +1309,6 @@ export class TrainView implements Screen {
       const shell = createTrainShell(document);
       host.appendChild(shell.root);
       this.shell = shell;
-      shell.boardToggle.addEventListener('click', () => toggleTrainBoardSize(shell));
-
       this.ground = Chessground(shell.boardHost, {
         fen: START_FEN,
         orientation: 'white',

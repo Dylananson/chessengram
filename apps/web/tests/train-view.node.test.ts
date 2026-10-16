@@ -27,7 +27,6 @@ import type { VNode } from 'snabbdom/build/vnode.js';
 import {
   TrainCtrl,
   createTrainShell,
-  toggleTrainBoardSize,
   view,
   type TrainBoardConfig,
   type TrainBoardPort,
@@ -187,11 +186,10 @@ test('createTrainShell creates the board host exactly once, apart from the patch
   assert.ok(!shell.uiPlaceholder.children.includes(shell.boardHost));
   assert.ok(shell.boardHost.className.includes('board'));
   assert.equal(shell.boardHost.attrs['aria-label'], 'Board');
-  assert.equal(shell.boardToggle.id, 'board-size-toggle');
-  assert.equal(shell.boardToggle.attrs['aria-expanded'], 'false');
+  assert.equal(shell.boardWrap.className, 'board-wrap');
 });
 
-test('BRD-002: shell toggle changes only wrapper class; board port/host stay live', async () => {
+test('train shell has no size toggle and keeps the board host outside the patch target', async () => {
   const { doc } = makeStubDoc();
   const shell = createTrainShell(doc as unknown as Document);
   const { service, adapter } = await makeWorld(['brd-size']);
@@ -200,18 +198,25 @@ test('BRD-002: shell toggle changes only wrapper class; board port/host stay liv
   const host = shell.boardHost;
   const port = ctrl.board;
 
-  assert.equal(toggleTrainBoardSize(shell), true);
-  assert.ok(shell.boardWrap.classList.contains('board-expanded'));
-  assert.equal(shell.boardToggle.attrs['aria-expanded'], 'true');
-  assert.equal(shell.boardToggle.attrs['aria-label'], 'Collapse board');
-  assert.equal(toggleTrainBoardSize(shell), false);
-  assert.ok(!shell.boardWrap.classList.contains('board-expanded'));
-  assert.equal(shell.boardToggle.attrs['aria-expanded'], 'false');
-  assert.equal(shell.boardToggle.attrs['aria-label'], 'Expand board');
   assert.equal(shell.boardHost, host, 'board host identity unchanged');
   assert.equal(ctrl.board, port, 'board port identity unchanged');
-  assert.equal(board.destroys.count, 0, 'expand/collapse never destroys Chessground');
+  assert.equal(board.destroys.count, 0, 'layout changes never destroy Chessground');
   ctrl.dispose();
+});
+
+test('train actions render before puzzle details, with review navigation in the action row', async () => {
+  const { service, adapter } = await makeWorld(['layout-a']);
+  const ctrl = new TrainCtrl(service, adapter);
+  await ctrl.beginAttempt(await adapter.loadPuzzle('layout-a'));
+  const initial = view(ctrl);
+  const initialChildren = initial.children as VNode[];
+  assert.ok(initialChildren[0]!.sel?.includes('train-actions'));
+  assert.ok(vnodeIds(initial).indexOf('puzzle-id') > vnodeIds(initial).indexOf('skip-btn'));
+  assert.ok(findById(initial, 'reveal-btn'));
+
+  const completed = view(await makeCompletedReview());
+  const actionRow = (completed.children as VNode[])[0]!;
+  assert.ok(findById(actionRow, 'review-first'));
 });
 
 // --- 2. view never renders the board host ------------------------------------
@@ -512,15 +517,14 @@ test('MOB-001: Back/Forward are ◀ ▶ symbols with aria-labels, ids and end-st
   assert.equal(buttonText(findById(view(c), 'review-last')!), 'End');
 });
 
-test('MOB-001: mobile CSS orders the review section above the detail panels', async () => {
+test('train layout keeps a large square board and a wrapping mobile action row', async () => {
   const { readFileSync } = await import('node:fs');
   const css = readFileSync(new URL('../src/app.css', import.meta.url), 'utf8');
   const mobile = css.match(/@media\s*\(\s*max-width:\s*640px\s*\)\s*\{([\s\S]*?)\n\}/);
   assert.ok(mobile, 'narrow-screen media block present');
-  assert.ok(
-    /\.controls\s+#review-section\s*\{[^}]*order:\s*-1/.test(mobile![1]!),
-    'review section ordered first inside .controls on mobile',
-  );
+  assert.ok(/\.board-wrap\s*\{[^}]*flex-basis:\s*100%/.test(mobile![1]!));
+  assert.match(css, /\.board\s*\{[^}]*max-width:\s*760px/);
+  assert.match(css, /\.train-actions\s*\{[^}]*flex-wrap:\s*wrap/);
 });
 
 test('REV-002: arrow keys step only during review and listener is removed on reset/dispose', async () => {
