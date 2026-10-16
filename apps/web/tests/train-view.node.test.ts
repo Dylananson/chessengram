@@ -570,7 +570,8 @@ test('train layout places board beside a compact panel on desktop and stacks boa
   const css = readFileSync(new URL('../src/app.css', import.meta.url), 'utf8');
   const container = css.match(/\.container\s*\{([^}]*)\}/);
   assert.ok(container, 'centered content container rule present');
-  assert.match(container![1]!, /max-width:\s*1200px/);
+  assert.match(container![1]!, /width:\s*96%;/);
+  assert.match(container![1]!, /max-width:\s*96%;/);
   assert.match(container![1]!, /margin:\s*0 auto/);
   const layout = css.match(/\.layout\s*\{([^}]*)\}/);
   assert.ok(layout, 'train layout rule present');

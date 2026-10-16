@@ -28,7 +28,8 @@ body {
   overscroll-behavior-y: contain;
 }
 .container {
-  max-width: 1200px;
+  width: 96%;
+  max-width: 96%;
   margin: 0 auto;
 }
 .app-header {
