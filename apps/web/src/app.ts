@@ -11,6 +11,7 @@ import './theme.css';
 import './app.css';
 
 import type { AppContext } from './app-context.ts';
+import { applySavedBoardTheme } from './board-theme.ts';
 import { applyTranslations, detectLocale, setLocale, t } from './i18n.ts';
 import { loadPuzzlesFromPack } from './pack-loader.ts';
 import { navigate, registerScreen, startRouter, type ScreenId } from './router.ts';
@@ -102,6 +103,7 @@ async function init(): Promise<void> {
   const ctx: AppContext = { service, adapter };
   buildNav(ctx);
   registerScreens();
+  applySavedBoardTheme();
   startRouter(ctx, document.getElementById('screen')!);
 }
 

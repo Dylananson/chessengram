@@ -38,6 +38,7 @@ import {
 import { parseExport, summarizeExport } from './storage/data-port.ts';
 import type { StoreExport, StoreExportSummary } from './storage/local-store.ts';
 import type { TrainingAdapter } from './training-adapter.ts';
+import { BOARD_THEMES, getSavedBoardTheme, saveBoardTheme } from './board-theme.ts';
 import { actionButton, checkboxRow, emptyState, formRow, panel, statusLine } from './ui/primitives.ts';
 // Shared screen patch (see `./ui/patch.ts`).
 import { screenPatch as patch } from './ui/patch.ts';
@@ -281,6 +282,23 @@ function prefsPanel(ctrl: SettingsCtrl): VNode {
   ]);
 }
 
+function boardThemePanel(): VNode {
+  const theme = getSavedBoardTheme();
+  return panel('Board appearance', [
+    formRow(
+      'Board square colors',
+      h('select', {
+        attrs: { id: 'settings-board-theme' },
+        props: { value: theme },
+        on: { change: (event: Event) => saveBoardTheme((event.target as HTMLSelectElement).value) },
+      }, BOARD_THEMES.map((name) => h('option', { props: { value: name, selected: name === theme } },
+        name[0]!.toUpperCase() + name.slice(1))),
+      ),
+      { htmlFor: 'settings-board-theme' },
+    ),
+  ]);
+}
+
 function pendingPreview(ctrl: SettingsCtrl, pending: PendingImport): VNode {
   const s = pending.summary;
   const date = new Date(s.exportedAt).toLocaleString();
@@ -332,6 +350,7 @@ function backupsBody(ctrl: SettingsCtrl): VNode | VNode[] {
 export function view(ctrl: SettingsCtrl): VNode {
   return h('div.settings-screen', [
     h('h2', t('screen.settings.title')),
+    boardThemePanel(),
     prefsPanel(ctrl),
     panel(t('settings.data.title'), [
       h('p', t('settings.data.body')),

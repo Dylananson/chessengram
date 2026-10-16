@@ -48,7 +48,7 @@ flowchart TD
 | REV-002 | Arrow-key review stepping (Left/Right/Up/Down, review-only) | STS-001 | `train-view.ts` (review region), related tests | Done (current loop) |
 | TRN-001 | Train controls polish: `>` Next (hidden when disabled), `↻` restart symbol, analyze placeholder, details-after-completion, live timer | REV-002 | `train-view.ts` (controls region), layout CSS, related tests | Done (current loop) |
 | BRD-002 | Bigger desktop board + expand toggle | MOB-001 | layout CSS, `train-view.ts` (board region) | Done (current loop) |
-| THM-001 | Board theme picker (survey Lichess/chessground theming first; square colors only, pieces untouched; localStorage persistence) | BRD-002 (shared board CSS — serialize) | `settings-view.ts` (picker region), board-theme CSS, related tests | Ready after BRD-002 |
+| THM-001 | Board theme picker (survey Lichess/chessground theming first; square colors only, pieces untouched; localStorage persistence) | BRD-002 (done) | `settings-view.ts` (picker region), board-theme CSS, related tests | Done (current loop) |
 | REV-001 | Resumed completions show no review section (keep vs fix) | **user call** | `train-view.ts` (review gating) | **Blocked: needs user call** |
 | HW | T11/T15 hardware matrix execution | Matrix written (done) | real device | **Blocked: needs device** |
 | RF-001 | React + component library (PROPOSED, see BACKLOG) | architecture decision (accepted ADR) | — | **Parked: loop must skip (UI-001 Snabbdom foundation done instead, 2026-10-16)** |
@@ -69,3 +69,4 @@ Round log:
 - UX lane R6 — REV-002 done 2026-10-16: review-only arrow keys reuse button stepping; listener lifecycle covered. 7+35+179 tests, build + smoke 38/38 clean. Next train-lane tasks: TRN-001, then BRD-002.
 - UX lane R7 — TRN-001 verified 2026-10-16: next/restart/analyze controls, hide rating/themes until completion, live timer. 7+35+180 tests, build + smoke 38/38 clean. Next: BRD-002.
 - UX lane R8 — BRD-002 done 2026-10-16: larger desktop board + session toggle, mobile preserved, no-remount identity test. 7+35+181 tests, build + smoke 38/38 clean. Next eligible: THM-001 board theme picker.
+- UX lane R9 — THM-001 done 2026-10-16: five clean-room square palettes; localStorage persistence applied before router to prevent flash; piece art untouched; research note added. 7+35+186 tests, typecheck + build + smoke 38/38 clean.
