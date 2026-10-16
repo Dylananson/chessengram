@@ -2,6 +2,8 @@
 
 Status: **research only**; recommendations below are not decisions. Read-only audit performed 2026-10-16. No source game was fetched, no code or tooling changed, and no tests were run.
 
+**Follow-up:** `docs/research/pzl-002b-context-and-rights.md` checks the distinct official standard-game CC0 export path and concludes that a matched game from that export has a documented CC0 basis. The caveat below still applies to games fetched only from the individual-game API; an exact source-game match in the licensed bulk export has not yet been demonstrated.
+
 ## Sources and method
 
 - Read the official [Lichess puzzle database documentation](https://database.lichess.org/#puzzles) live on 2026-10-16. The page identifies the current dump, documents its CSV schema and position/move convention, and links Lichess terms and CC0 information.

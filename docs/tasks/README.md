@@ -9,7 +9,7 @@ code is done (PWA offline boot verified headlessly); T11 real-device pass remain
 Work now converges on release readiness before new features. See the
 "Product build-out" table in ../PROJECT_PLAN.md for scope and status.
 
-## Next focus (recommendations — see BACKLOG.md for tracked items)
+## Next focus (user reprioritized 2026-10-16 — see BACKLOG.md)
 
 Proposed build order, highest value first; `PROJECT_PLAN.md` status stays
 coordinator-owned:
@@ -17,8 +17,8 @@ coordinator-owned:
 2. UX-002/UX-003 Progress + History (replace stubs, D09 visibility).
 3. T13-followup Collections scope confirmation (T13 marked Done but screen is a stub).
 4. AN-001a attempt review (no engine) if wanted pre-T16.
-5. T11/T15 hardware matrix + REL-001 PWA update policy + DOC-001 docs/ADR sweep → T16.
-6. Deferred: T07/T09 online, AN-001b Stockfish, F-series.
+5. **F01 Woodpecker** fixed-set cycles + separate spaced review for failures (design first; see `research/woodpecker-mode.md`).
+6. Continue feature work (F03 openings, F05 content, then evaluate F02 schedulers/F04 sync) before release sign-off. T11/T15 real-device checks and T16 are deferred by the user; T07/T09 online and AN-001b Stockfish remain deferred.
 
 | Phase | Scope | Allowed output paths | Depends |
 |---|---|---|---|
