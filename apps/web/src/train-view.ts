@@ -1102,6 +1102,11 @@ export function view(ctrl: TrainCtrl): VNode {
   const puzzle = ctrl.infoPuzzle;
   const review = ctrl.review;
   return h('div.controls', [
+    h('div.info.status-panel', [
+      h('h2', { attrs: { 'data-i18n': 'status.title' } }, t('status.title')),
+      h('p#solve-timer', formatSolveTimer(ctrl.timer.snapshot())),
+      h(statusClass(ctrl), t(ctrl.status.key, ctrl.status.params)),
+    ]),
     h('div.button-row.train-actions', [
       ...(!ctrl.nextDisabled ? [h('button#next-btn.button.button-primary', {
         attrs: { type: 'button', 'aria-label': t('next.label') },
@@ -1169,11 +1174,6 @@ export function view(ctrl: TrainCtrl): VNode {
       ),
     ]),
     h('div.info', [
-      h('h2', { attrs: { 'data-i18n': 'status.title' } }, t('status.title')),
-      h('p#solve-timer', formatSolveTimer(ctrl.timer.snapshot())),
-      h(statusClass(ctrl), t(ctrl.status.key, ctrl.status.params)),
-    ]),
-    h('div.info', [
       h('h2', { attrs: { 'data-i18n': 'puzzle.status.title' } }, t('puzzle.status.title')),
       ...puzzleStatusLines(ctrl.puzzleStatus),
     ]),
@@ -1224,7 +1224,7 @@ export interface TrainShell {
 }
 
 /**
- * Build the static Train shell in the given document: layout + board-wrap +
+ * Build the static Train shell in the given document: responsive layout + board-wrap +
  * `div#board` host + an empty controls placeholder. Called exactly once per
  * `mount`; `view()` renders only into the placeholder, so patches can never
  * create, move, or replace the board host. Takes the document as a parameter

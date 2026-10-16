@@ -67,13 +67,12 @@ h1 {
   font-size: 13px;
 }
 .layout {
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(0, 1.08fr) minmax(280px, 0.72fr);
   gap: 20px;
-  flex-wrap: wrap;
-  align-items: flex-start;
+  align-items: start;
 }
 .board-wrap {
-  flex: 1 1 100%;
   min-width: 0;
 }
 .board {
@@ -110,27 +109,32 @@ body.board-theme-wood cg-board,
 body.board-theme-slate cg-board,
 body.board-theme-classic cg-board { background-color: var(--square-light); }
 .controls {
-  flex: 1 1 100%;
   min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: 10px;
 }
 .info {
   background: var(--panel);
-  padding: 14px 16px;
+  padding: 10px 12px;
   border-radius: 8px;
   border: 1px solid var(--border);
 }
 .info h2 {
-  margin: 0 0 8px 0;
-  font-size: 15px;
+  margin: 0 0 6px 0;
+  font-size: 13px;
 }
 .info p {
-  margin: 4px 0;
-  font-size: 14px;
+  margin: 3px 0;
+  font-size: 13px;
   color: var(--muted);
   word-break: break-word;
+}
+.status-panel .status {
+  font-size: 15px;
+  min-height: 42px;
+  display: flex;
+  align-items: center;
 }
 #solve-timer {
   position: fixed;
@@ -242,6 +246,12 @@ body.board-theme-classic cg-board { background-color: var(--square-light); }
 .promotion-inner button:hover {
   background: #e8c99b;
 }
+@media (max-width: 760px) {
+  .layout {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 12px;
+  }
+}
 @media (max-width: 640px) {
   body {
     --page-inset-top: max(8px, env(safe-area-inset-top));
@@ -256,14 +266,8 @@ body.board-theme-classic cg-board { background-color: var(--square-light); }
   .app-header h1 {
     font-size: 16px;
   }
-  .layout {
-    gap: 12px;
-  }
   .board {
     max-width: none;
-  }
-  .board-wrap {
-    flex-basis: 100%;
   }
 }
 .hidden {

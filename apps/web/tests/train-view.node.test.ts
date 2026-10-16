@@ -206,19 +206,20 @@ test('train shell has no size toggle and keeps the board host outside the patch 
   ctrl.dispose();
 });
 
-test('train actions render before puzzle details, with review navigation in the action row', async () => {
+test('status leads the side panel; actions precede details with review navigation in the action row', async () => {
   const { service, adapter } = await makeWorld(['layout-a']);
   const ctrl = new TrainCtrl(service, adapter);
   await ctrl.beginAttempt(await adapter.loadPuzzle('layout-a'));
   const initial = view(ctrl);
   const initialChildren = initial.children as VNode[];
-  assert.ok(initialChildren[0]!.sel?.includes('train-actions'));
+  assert.ok(initialChildren[0]!.sel?.includes('status-panel'));
+  assert.ok(initialChildren[1]!.sel?.includes('train-actions'));
   assert.ok(vnodeIds(initial).indexOf('puzzle-id') > vnodeIds(initial).indexOf('reveal-btn'));
   assert.equal(findById(initial, 'skip-btn'), null, 'Skip is not a visible train action');
   assert.ok(findById(initial, 'reveal-btn'));
 
   const completed = view(await makeCompletedReview());
-  const actionRow = (completed.children as VNode[])[0]!;
+  const actionRow = (completed.children as VNode[])[1]!;
   assert.ok(findById(actionRow, 'review-back'));
   assert.ok(findById(actionRow, 'review-forward'));
   assert.equal(findById(actionRow, 'review-first'), null);
@@ -527,21 +528,24 @@ test('MOB-001: Back/Forward are ◀ ▶ symbols with aria-labels, ids and end-st
   assert.equal(findById(view(c), 'review-last'), null);
 });
 
-test('train layout keeps the square board full-width with the action row and wraps on mobile', async () => {
+test('train layout places board beside a compact panel on desktop and stacks board first on mobile', async () => {
   const { readFileSync } = await import('node:fs');
   const css = readFileSync(new URL('../src/app.css', import.meta.url), 'utf8');
   const container = css.match(/\.container\s*\{([^}]*)\}/);
   assert.ok(container, 'centered content container rule present');
   assert.match(container![1]!, /max-width:\s*900px/);
   assert.match(container![1]!, /margin:\s*0 auto/);
-  const mobile = css.match(/@media\s*\(\s*max-width:\s*640px\s*\)\s*\{([\s\S]*?)\n\}/);
-  assert.ok(mobile, 'narrow-screen media block present');
-  assert.ok(/\.board-wrap\s*\{[^}]*flex-basis:\s*100%/.test(mobile![1]!));
+  const layout = css.match(/\.layout\s*\{([^}]*)\}/);
+  assert.ok(layout, 'train layout rule present');
+  assert.match(layout![1]!, /display:\s*grid/);
+  assert.match(layout![1]!, /grid-template-columns:\s*minmax\(0,\s*1\.08fr\)\s+minmax\(280px,\s*0\.72fr\)/);
+  const mobile = css.match(/@media\s*\(\s*max-width:\s*760px\s*\)\s*\{([\s\S]*?)\n\}/);
+  assert.ok(mobile, 'tablet/mobile stacking breakpoint present');
+  assert.match(mobile![1]!, /grid-template-columns:\s*minmax\(0,\s*1fr\)/);
   const board = css.match(/\.board\s*\{([^}]*)\}/);
   assert.ok(board, 'board sizing rule present');
   assert.match(board![1]!, /width:\s*100%/);
   assert.doesNotMatch(board![1]!, /max-width:\s*760px/);
-  assert.match(css, /\.controls\s*\{[^}]*flex:\s*1 1 100%/);
   assert.match(css, /\.train-actions\s*\{[^}]*flex-wrap:\s*wrap/);
 });
 

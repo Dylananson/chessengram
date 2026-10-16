@@ -114,8 +114,44 @@ try {
 
   check('train board mounted', await page.$('#board').then(Boolean));
 
+  await page.setViewport({ width: 1280, height: 900 });
+  const desktopTrainLayout = await page.evaluate(() => {
+    const board = document.querySelector('.board-wrap');
+    const panel = document.querySelector('.controls');
+    if (!board || !panel) return null;
+    const b = board.getBoundingClientRect();
+    const p = panel.getBoundingClientRect();
+    return { boardLeft: b.left, boardRight: b.right, boardTop: b.top, panelLeft: p.left, panelTop: p.top, panelWidth: p.width };
+  });
+  check(
+    'desktop Train shows board left of the controls panel',
+    Boolean(desktopTrainLayout && desktopTrainLayout.boardLeft < desktopTrainLayout.panelLeft && Math.abs(desktopTrainLayout.boardTop - desktopTrainLayout.panelTop) < 8 && desktopTrainLayout.panelWidth >= 260),
+    JSON.stringify(desktopTrainLayout),
+  );
+
+  await page.setViewport({ width: 390, height: 844 });
+  await sleep(100);
+  const mobileTrainLayout = await page.evaluate(() => {
+    const board = document.querySelector('.board-wrap');
+    const panel = document.querySelector('.controls');
+    if (!board || !panel) return null;
+    const b = board.getBoundingClientRect();
+    const p = panel.getBoundingClientRect();
+    return { boardTop: b.top, boardBottom: b.bottom, panelTop: p.top, boardWidth: b.width, panelWidth: p.width };
+  });
+  check(
+    'mobile Train stacks the full-width panel below the board',
+    Boolean(mobileTrainLayout && mobileTrainLayout.boardBottom <= mobileTrainLayout.panelTop && Math.abs(mobileTrainLayout.boardWidth - mobileTrainLayout.panelWidth) < 2),
+    JSON.stringify(mobileTrainLayout),
+  );
+  await page.setViewport({ width: 1280, height: 900 });
+
   const statusText = await page.$eval('#status', (el) => el.textContent).catch(() => '');
   check('an attempt started', statusText.length > 0 && !statusText.includes('Loading'), statusText.trim());
+  check('timer remains visible in the Train panel', await page.$eval('#solve-timer', (el) => {
+    const rect = el.getBoundingClientRect();
+    return getComputedStyle(el).position === 'fixed' && rect.top >= 0 && rect.bottom <= innerHeight;
+  }));
 
   const solutionHidden = await page.$eval('#solution', (el) => el.classList.contains('hidden')).catch(() => false);
   check('solution hidden by default (no spoiler)', solutionHidden);

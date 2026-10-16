@@ -23,6 +23,7 @@ flowchart TD
   SET["SET-001 new-per-day 100"] --> T16
   LANE["train-view lane: MOB-001 done → BRD-001 → BRD-003 → BRD-004 → STS-001 → REV-002 → TRN-001 → BRD-002 (one at a time)"] --> T16
   THM["THM-001 board theme picker"] --> T16
+  PZL["PZL-001 Lichess-inspired puzzle layout"] --> T16
   REV["REV-001 resumed-review (needs user call)"] --> T16
   HW["T11/T15 hardware (needs device)"] --> T16
 ```
@@ -49,10 +50,11 @@ flowchart TD
 | TRN-001 | Train controls polish: symbolic Next, no visible Skip/First/Last, conditional Analyze, completion-only details, live timer | REV-002 | `train-view.ts` (controls region), layout CSS, related tests | Done (current loop; refined) |
 | BRD-002 | Bigger desktop board; no toggle/card/title; 900px centered container; actions beneath board; timer always visible | MOB-001 | layout CSS, `train-view.ts` (board region) | Done (refined current loop) |
 | THM-001 | Board theme picker (survey Lichess/chessground theming first; square colors only, pieces untouched; localStorage persistence) | BRD-002 (done) | `settings-view.ts` (picker region), board-theme CSS, related tests | Done (current loop) |
+| PZL-001 | Lichess-inspired puzzle layout: board+side panel desktop, stacked mobile; preserve ChessReps behavior | UI-001, BRD-002 (done) | `train-view.ts` shell/view layout, `app.css`, train view tests, smoke | Done (current loop) |
 | REV-001 | Resumed completions show no review section (keep vs fix) | **user call** | `train-view.ts` (review gating) | **Blocked: needs user call** |
 | HW | T11/T15 hardware matrix execution | Matrix written (done) | real device | **Blocked: needs device** |
 | RF-001 | React + component library (PROPOSED, see BACKLOG) | architecture decision (accepted ADR) | — | **Parked: loop must skip (UI-001 Snabbdom foundation done instead, 2026-10-16)** |
-| T16 | First usable release | B1 B2 B3 B5 B6 B4 HW UI-001 STY-001 I18N-001 REL-002 SET-001 MOB-001 BRD-001 BRD-002 BRD-003 BRD-004 STS-001 THM-001 REV-001 REV-002 TRN-001 | — | **Blocked: user sign-off** |
+| T16 | First usable release | B1 B2 B3 B5 B6 B4 HW UI-001 STY-001 I18N-001 REL-002 SET-001 MOB-001 BRD-001 BRD-002 BRD-003 BRD-004 STS-001 THM-001 PZL-001 REV-001 REV-002 TRN-001 | — | **Blocked: user sign-off** |
 
 Round log:
 - R1: B1 + B2 + B3 (disjoint paths) — Done 2026-10-15 (`a328313`). 111 tests green (7+35+69), typecheck + build clean. B1: behavior unchanged, tiebreaker locked by comment + 10 fairness tests. B2: `listAttempts` + per-attempt rows. B3: header fix + adr-sweep note (recommends accept 001/004 for local scope, defer 002/003; T13 reword proposed).
@@ -73,3 +75,4 @@ Round log:
 - UX lane R10 — BRD-002 refinement done 2026-10-16: expanded board now default, collapse toggle removed; actions/review controls under board, puzzle details after. 7+35+187 tests, typecheck + build + smoke 38/38 clean; S6 host-outside-tree invariant retained.
 - UX lane R11 — BRD-002 visual refinement done 2026-10-16: removed board card/title; timer pinned in viewport safe area. 7+35+188 tests, build + smoke 38/38 clean.
 - UX lane R12 — control/layout refinement done 2026-10-16: remove visible Skip and First/Last review buttons while preserving keyboard shortcuts; Analyze only on failure/completion; board and actions share centered 900px width. 7+35+188 tests, build + smoke 38/38 clean.
+- UX lane R13 — PZL-001 done 2026-10-16: Lichess-inspired board-left/panel-right desktop, board-first stacked mobile; prominent feedback/timer; smoke checks both geometries. 7+35+188 tests, typecheck + build + smoke 42/42 clean; board remains outside patched tree.
