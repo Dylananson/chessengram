@@ -186,20 +186,17 @@ body.board-theme-classic cg-board { background-color: var(--square-light); }
   align-items: center;
 }
 #solve-timer {
-  position: fixed;
-  right: max(12px, env(safe-area-inset-right));
-  bottom: max(12px, env(safe-area-inset-bottom));
-  z-index: 900;
-  margin: 0;
-  padding: 7px 11px;
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  background: var(--panel);
+  position: static;
+  display: inline-block;
+  margin: 0 0 8px;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
   color: var(--text);
-  font-size: 14px;
+  font-size: 16px;
   font-weight: 700;
   font-variant-numeric: tabular-nums;
-  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.2);
   pointer-events: none;
 }
 .status {

@@ -589,17 +589,15 @@ test('train layout places board beside a compact panel on desktop and stacks boa
   assert.match(css, /\.train-actions\s*\{[^}]*flex-wrap:\s*wrap/);
 });
 
-test('solve timer stays visible in a non-interactive safe-area viewport pill', async () => {
+test('solve timer is displayed inline in the right feedback section', async () => {
   const { readFileSync } = await import('node:fs');
   const css = readFileSync(new URL('../src/app.css', import.meta.url), 'utf8');
   const timer = css.match(/#solve-timer\s*\{([^}]*)\}/);
   assert.ok(timer, 'existing #solve-timer has a dedicated style rule');
-  assert.match(timer![1]!, /position:\s*fixed/);
-  assert.match(timer![1]!, /right:\s*max\([^;]*safe-area-inset-right/);
-  assert.match(timer![1]!, /bottom:\s*max\([^;]*safe-area-inset-bottom/);
+  assert.match(timer![1]!, /position:\s*static/);
+  assert.match(timer![1]!, /display:\s*inline-block/);
+  assert.doesNotMatch(timer![1]!, /safe-area-inset|position:\s*fixed/);
   assert.match(timer![1]!, /pointer-events:\s*none/);
-  assert.match(timer![1]!, /z-index:\s*900/);
-  assert.match(css, /\.promotion\s*\{[^}]*z-index:\s*1000/);
 });
 
 test('REV-002: arrow keys step only during review and listener is removed on reset/dispose', async () => {

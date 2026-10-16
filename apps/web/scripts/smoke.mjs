@@ -157,9 +157,10 @@ try {
 
   const statusText = await page.$eval('#status', (el) => el.textContent).catch(() => '');
   check('an attempt started', statusText.length > 0 && !statusText.includes('Loading'), statusText.trim());
-  check('timer remains visible in the Train panel', await page.$eval('#solve-timer', (el) => {
+  check('timer is in the right-side feedback panel', await page.$eval('#solve-timer', (el) => {
     const rect = el.getBoundingClientRect();
-    return getComputedStyle(el).position === 'fixed' && rect.top >= 0 && rect.bottom <= innerHeight;
+    return el.closest('.controls-right .status-panel') !== null &&
+      getComputedStyle(el).position === 'static' && rect.width > 0 && rect.height > 0;
   }));
 
   check('Reveal action is available without a solution text panel', Boolean(await page.$('#reveal-btn')) && !(await page.$('#solution')));
