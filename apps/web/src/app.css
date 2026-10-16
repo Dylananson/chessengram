@@ -27,7 +27,7 @@ body {
   overscroll-behavior-y: contain;
 }
 .container {
-  max-width: 960px;
+  max-width: 900px;
   margin: 0 auto;
 }
 h1 {
@@ -51,7 +51,6 @@ h1 {
 }
 .board {
   width: 100%;
-  max-width: 760px;
   margin: 0 auto;
   aspect-ratio: 1 / 1;
   border-radius: 6px;

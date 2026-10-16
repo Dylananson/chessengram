@@ -1107,11 +1107,6 @@ export function view(ctrl: TrainCtrl): VNode {
         attrs: { type: 'button', 'aria-label': t('next.label') },
         on: { click: () => void ctrl.loadNext() },
       }, '>')] : []),
-      actionButton(t('skip.label'), 'secondary', {
-        id: 'skip-btn',
-        disabled: ctrl.skipDisabled,
-        onClick: () => void ctrl.onSkip(),
-      }),
       actionButton(
         ctrl.revealHidesSolution ? t('reveal.hide') : t('reveal.show'),
         'secondary',
@@ -1129,13 +1124,10 @@ export function view(ctrl: TrainCtrl): VNode {
         },
         '↻',
       ),
-      h('button#analyze-btn.button.button-secondary', {
+      h(`button#analyze-btn.button.button-secondary${ctrl.game?.isCompleted || ctrl.game?.failedState ? '' : '.hidden'}`, {
         attrs: { type: 'button', disabled: true, 'aria-label': t('train.analyze.label'), title: t('train.analyze.title') },
       }, '⌕'),
       h(`div.button-row.review-nav${review ? '' : '.hidden'}`, [
-        actionButton(t('review.first'), 'secondary', {
-          id: 'review-first', disabled: !review?.canBack, onClick: () => ctrl.stepReview('first'),
-        }),
         h('button.button.button-secondary', {
           attrs: { type: 'button', id: 'review-back', 'aria-label': t('review.back'), ...(review?.canBack ? {} : { disabled: true }) },
           on: { click: () => ctrl.stepReview('back') },
@@ -1144,9 +1136,6 @@ export function view(ctrl: TrainCtrl): VNode {
           attrs: { type: 'button', id: 'review-forward', 'aria-label': t('review.forward'), ...(review?.canForward ? {} : { disabled: true }) },
           on: { click: () => ctrl.stepReview('forward') },
         }, '▶'),
-        actionButton(t('review.last'), 'secondary', {
-          id: 'review-last', disabled: !review?.canForward, onClick: () => ctrl.stepReview('last'),
-        }),
       ]),
       h(
         `button#practice-btn.button.button-secondary${ctrl.practiceHidden ? '.hidden' : ''}`,

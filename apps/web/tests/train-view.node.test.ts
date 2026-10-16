@@ -213,12 +213,16 @@ test('train actions render before puzzle details, with review navigation in the 
   const initial = view(ctrl);
   const initialChildren = initial.children as VNode[];
   assert.ok(initialChildren[0]!.sel?.includes('train-actions'));
-  assert.ok(vnodeIds(initial).indexOf('puzzle-id') > vnodeIds(initial).indexOf('skip-btn'));
+  assert.ok(vnodeIds(initial).indexOf('puzzle-id') > vnodeIds(initial).indexOf('reveal-btn'));
+  assert.equal(findById(initial, 'skip-btn'), null, 'Skip is not a visible train action');
   assert.ok(findById(initial, 'reveal-btn'));
 
   const completed = view(await makeCompletedReview());
   const actionRow = (completed.children as VNode[])[0]!;
-  assert.ok(findById(actionRow, 'review-first'));
+  assert.ok(findById(actionRow, 'review-back'));
+  assert.ok(findById(actionRow, 'review-forward'));
+  assert.equal(findById(actionRow, 'review-first'), null);
+  assert.equal(findById(actionRow, 'review-last'), null);
 });
 
 // --- 2. view never renders the board host ------------------------------------
@@ -231,11 +235,8 @@ const EXPECTED_IDS = [
   'solution',
   'review-section',
   'review-label',
-  'review-first',
   'review-back',
   'review-forward',
-  'review-last',
-  'skip-btn',
   'practice-btn',
   'collection-picker',
   'queue',
@@ -261,6 +262,7 @@ test('view keeps every control id and never renders a board host', async () => {
     }
     assert.ok(!ids.includes('board'), `${state.name}: no board host vnode`);
     assert.ok(!ids.includes('promotion'), `${state.name}: no promotion overlay vnode`);
+    assert.ok(!ids.includes('skip-btn'), `${state.name}: no visible Skip button`);
     assert.equal(state.vnode.sel, 'div.controls', `${state.name}: stable controls root`);
   }
   assert.ok(!vnodeSels(view(ctrl)).some((sel) => sel.includes('#board')));
@@ -280,8 +282,13 @@ test('TRN-001 hides difficulty while solving and renders accessible symbol contr
   assert.equal(enabledNext?.data?.attrs?.['aria-label'], 'Next puzzle');
   const analyze = findById(view(ctrl), 'analyze-btn');
   assert.equal(buttonText(analyze!), '⌕');
+  assert.ok(analyze?.sel.includes('.hidden'), 'analyze placeholder stays hidden while solving');
   assert.equal(analyze?.data?.attrs?.disabled, true);
   assert.equal(analyze?.data?.attrs?.title, 'Stockfish analysis is planned for AN-001b.');
+
+  await ctrl.resolveUserMove('d2', 'd4');
+  const failedAnalyze = findById(view(ctrl), 'analyze-btn');
+  assert.ok(failedAnalyze && !failedAnalyze.sel.includes('.hidden'), 'analyze appears after failure');
 });
 
 // --- 3. redraw storm mid-attempt never touches the board ---------------------
@@ -514,18 +521,27 @@ test('MOB-001: Back/Forward are ◀ ▶ symbols with aria-labels, ids and end-st
     'forward enabled at the line start',
   );
 
-  // First/Last stay text buttons with their ids.
-  assert.equal(buttonText(findById(view(c), 'review-first')!), 'Start');
-  assert.equal(buttonText(findById(view(c), 'review-last')!), 'End');
+  // Start/End controls are removed; arrows remain and keyboard navigation
+  // retains the first/last jump behavior.
+  assert.equal(findById(view(c), 'review-first'), null);
+  assert.equal(findById(view(c), 'review-last'), null);
 });
 
-test('train layout keeps a large square board and a wrapping mobile action row', async () => {
+test('train layout keeps the square board full-width with the action row and wraps on mobile', async () => {
   const { readFileSync } = await import('node:fs');
   const css = readFileSync(new URL('../src/app.css', import.meta.url), 'utf8');
+  const container = css.match(/\.container\s*\{([^}]*)\}/);
+  assert.ok(container, 'centered content container rule present');
+  assert.match(container![1]!, /max-width:\s*900px/);
+  assert.match(container![1]!, /margin:\s*0 auto/);
   const mobile = css.match(/@media\s*\(\s*max-width:\s*640px\s*\)\s*\{([\s\S]*?)\n\}/);
   assert.ok(mobile, 'narrow-screen media block present');
   assert.ok(/\.board-wrap\s*\{[^}]*flex-basis:\s*100%/.test(mobile![1]!));
-  assert.match(css, /\.board\s*\{[^}]*max-width:\s*760px/);
+  const board = css.match(/\.board\s*\{([^}]*)\}/);
+  assert.ok(board, 'board sizing rule present');
+  assert.match(board![1]!, /width:\s*100%/);
+  assert.doesNotMatch(board![1]!, /max-width:\s*760px/);
+  assert.match(css, /\.controls\s*\{[^}]*flex:\s*1 1 100%/);
   assert.match(css, /\.train-actions\s*\{[^}]*flex-wrap:\s*wrap/);
 });
 

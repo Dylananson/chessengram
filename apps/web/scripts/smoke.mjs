@@ -2,8 +2,8 @@
  * Headless browser smoke test for apps/web using puppeteer-core + system
  * Chromium. Verifies the shell boots, the train screen renders a queue, a
  * puzzle is selected, navigation works, the solution stays hidden until
- * revealed, Skip advances, and the Puzzles screen can create/import/remove
- * puzzles.
+ * revealed, navigation has no visible Skip action, and the Puzzles screen can
+ * create/import/remove puzzles.
  *
  * Usage from repo root: npm run smoke
  * Set CHROMIUM_PATH if Chromium is not found on PATH.
@@ -112,18 +112,24 @@ try {
   const revealedStatus = await page.$eval('#status', (el) => el.textContent).catch(() => '');
   check('reveal reports no score recorded', /no score recorded/.test(revealedStatus), revealedStatus.trim());
 
-  // Reload to start a fresh attempt, then Skip must move to a different puzzle.
+  // Reload to start a fresh attempt, then confirm Skip is absent. If a puzzle
+  // is available, Reveal followed by Next advances without a Skip action.
   await page.reload({ waitUntil: 'networkidle0', timeout: 20000 });
   await page.waitForSelector('#board', { timeout: 10000 });
   const idBefore = await page.$eval('#puzzle-id', (el) => el.textContent);
-  await page.click('#skip-btn');
-  await page.waitForFunction(
-    (before) => document.querySelector('#puzzle-id')?.textContent !== before,
-    { timeout: 10000 },
-    idBefore,
-  );
-  const idAfter = await page.$eval('#puzzle-id', (el) => el.textContent);
-  check('skip moves to a different puzzle', idAfter !== idBefore, `${idBefore} -> ${idAfter}`);
+  check('Skip action is not visible', !(await page.$('#skip-btn')));
+  if (await page.$('#next-btn')) {
+    await page.click('#reveal-btn');
+    await sleep(250);
+    await page.click('#next-btn');
+    await page.waitForFunction(
+      (before) => document.querySelector('#puzzle-id')?.textContent !== before,
+      { timeout: 10000 },
+      idBefore,
+    );
+    const idAfter = await page.$eval('#puzzle-id', (el) => el.textContent);
+    check('Next moves to a different puzzle after reveal', idAfter !== idBefore, `${idBefore} -> ${idAfter}`);
+  }
 
   // --- Puzzles screen: creator -------------------------------------------------
   await hash(page, 'puzzles');
