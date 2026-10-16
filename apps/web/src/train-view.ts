@@ -1264,6 +1264,10 @@ export interface TrainShell {
   root: HTMLElement;
   /** The chessground host (`div#board`). Never part of the patched subtree. */
   boardHost: HTMLElement;
+  /** Static wrapper around the board; its class controls desktop sizing. */
+  boardWrap: HTMLElement;
+  /** Static board-wrap toggle; outside Snabbdom's patched subtree. */
+  boardToggle: HTMLButtonElement;
   /** Empty placeholder the snabbdom patch replaces with `view(ctrl)`. */
   uiPlaceholder: HTMLElement;
 }
@@ -1282,6 +1286,13 @@ export function createTrainShell(doc: Document): TrainShell {
   layout.className = 'layout';
   const boardWrap = doc.createElement('div');
   boardWrap.className = 'board-wrap';
+  const boardToggle = doc.createElement('button');
+  boardToggle.type = 'button';
+  boardToggle.id = 'board-size-toggle';
+  boardToggle.className = 'button button-secondary compact board-size-toggle';
+  boardToggle.textContent = 'Expand board';
+  boardToggle.setAttribute('aria-label', 'Expand board');
+  boardToggle.setAttribute('aria-expanded', 'false');
   const info = doc.createElement('div');
   info.className = 'info';
   const heading = doc.createElement('h2');
@@ -1292,13 +1303,23 @@ export function createTrainShell(doc: Document): TrainShell {
   boardHost.className = 'board';
   boardHost.setAttribute('aria-label', t('board.title'));
   info.appendChild(heading);
+  info.appendChild(boardToggle);
   info.appendChild(boardHost);
   boardWrap.appendChild(info);
   const uiPlaceholder = doc.createElement('div');
   layout.appendChild(boardWrap);
   layout.appendChild(uiPlaceholder);
   root.appendChild(layout);
-  return { root, boardHost, uiPlaceholder };
+  return { root, boardHost, boardWrap, boardToggle, uiPlaceholder };
+}
+
+/** Toggle sizing on the static wrapper only; never touch the board host/ground. */
+export function toggleTrainBoardSize(shell: TrainShell): boolean {
+  const expanded = shell.boardWrap.classList.toggle('board-expanded');
+  shell.boardToggle.textContent = expanded ? 'Collapse board' : 'Expand board';
+  shell.boardToggle.setAttribute('aria-label', expanded ? 'Collapse board' : 'Expand board');
+  shell.boardToggle.setAttribute('aria-expanded', String(expanded));
+  return expanded;
 }
 
 export class TrainView implements Screen {
@@ -1343,6 +1364,7 @@ export class TrainView implements Screen {
       const shell = createTrainShell(document);
       host.appendChild(shell.root);
       this.shell = shell;
+      shell.boardToggle.addEventListener('click', () => toggleTrainBoardSize(shell));
 
       this.ground = Chessground(shell.boardHost, {
         fen: START_FEN,

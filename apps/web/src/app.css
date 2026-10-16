@@ -46,18 +46,28 @@ h1 {
   align-items: flex-start;
 }
 .board-wrap {
-  flex: 1 1 320px;
+  flex: 1 1 520px;
   min-width: 0;
+}
+.board-size-toggle {
+  display: block;
+  margin: 0 0 10px auto;
 }
 .board {
   width: 100%;
-  max-width: 560px;
+  max-width: 640px;
   margin: 0 auto;
   aspect-ratio: 1 / 1;
   border-radius: 6px;
   overflow: hidden;
   box-shadow: 0 2px 10px rgba(0, 0, 0, 0.12);
   touch-action: manipulation;
+}
+.board-wrap.board-expanded {
+  flex-basis: 100%;
+}
+.board-wrap.board-expanded .board {
+  max-width: 760px;
 }
 .controls {
   flex: 1 1 300px;
@@ -184,6 +194,12 @@ h1 {
     gap: 12px;
   }
   .board {
+    max-width: none;
+  }
+  .board-wrap {
+    flex-basis: 100%;
+  }
+  .board-wrap.board-expanded .board {
     max-width: none;
   }
   /* MOB-001: mobile review order is board → review arrows → details. The

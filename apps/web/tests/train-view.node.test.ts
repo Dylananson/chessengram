@@ -27,6 +27,7 @@ import type { VNode } from 'snabbdom/build/vnode.js';
 import {
   TrainCtrl,
   createTrainShell,
+  toggleTrainBoardSize,
   view,
   type TrainBoardConfig,
   type TrainBoardPort,
@@ -47,6 +48,8 @@ interface StubEl {
   className: string;
   textContent: string | null;
   attrs: Record<string, string>;
+  type: string;
+  classList: { toggle(name: string): boolean; contains(name: string): boolean };
   children: StubEl[];
   appendChild(child: StubEl): void;
   setAttribute(key: string, value: string): void;
@@ -62,6 +65,19 @@ function makeStubDoc(): { doc: unknown; created: StubEl[] } {
         className: '',
         textContent: null,
         attrs: {},
+        type: '',
+        classList: {
+          toggle(name: string): boolean {
+            const classes = new Set(el.className.split(/\s+/).filter(Boolean));
+            if (classes.has(name)) classes.delete(name);
+            else classes.add(name);
+            el.className = [...classes].join(' ');
+            return classes.has(name);
+          },
+          contains(name: string): boolean {
+            return el.className.split(/\s+/).includes(name);
+          },
+        },
         children: [],
         appendChild(child: StubEl): void {
           el.children.push(child);
@@ -171,6 +187,31 @@ test('createTrainShell creates the board host exactly once, apart from the patch
   assert.ok(!shell.uiPlaceholder.children.includes(shell.boardHost));
   assert.ok(shell.boardHost.className.includes('board'));
   assert.equal(shell.boardHost.attrs['aria-label'], 'Board');
+  assert.equal(shell.boardToggle.id, 'board-size-toggle');
+  assert.equal(shell.boardToggle.attrs['aria-expanded'], 'false');
+});
+
+test('BRD-002: shell toggle changes only wrapper class; board port/host stay live', async () => {
+  const { doc } = makeStubDoc();
+  const shell = createTrainShell(doc as unknown as Document);
+  const { service, adapter } = await makeWorld(['brd-size']);
+  const board = makeRecordingBoard();
+  const ctrl = new TrainCtrl(service, adapter, board.port);
+  const host = shell.boardHost;
+  const port = ctrl.board;
+
+  assert.equal(toggleTrainBoardSize(shell), true);
+  assert.ok(shell.boardWrap.classList.contains('board-expanded'));
+  assert.equal(shell.boardToggle.attrs['aria-expanded'], 'true');
+  assert.equal(shell.boardToggle.attrs['aria-label'], 'Collapse board');
+  assert.equal(toggleTrainBoardSize(shell), false);
+  assert.ok(!shell.boardWrap.classList.contains('board-expanded'));
+  assert.equal(shell.boardToggle.attrs['aria-expanded'], 'false');
+  assert.equal(shell.boardToggle.attrs['aria-label'], 'Expand board');
+  assert.equal(shell.boardHost, host, 'board host identity unchanged');
+  assert.equal(ctrl.board, port, 'board port identity unchanged');
+  assert.equal(board.destroys.count, 0, 'expand/collapse never destroys Chessground');
+  ctrl.dispose();
 });
 
 // --- 2. view never renders the board host ------------------------------------
