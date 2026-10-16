@@ -166,6 +166,7 @@ export class TrainCtrl {
   /** Last chessground selection, re-asserted when a reply render would drop it. */
   private selectedKey: Key | null = null;
   revealed = false;
+  private hintSquare: Key | null = null;
   /**
    * Puzzle shown in the info panel. Set by both `beginAttempt` and resume
    * (both painted the info DOM pre-Snabbdom). Kept separate from
@@ -253,6 +254,7 @@ export class TrainCtrl {
     this.disposed = true;
     this.stopReviewKeys();
     this.stopPlayback();
+    this.clearHint();
     this.board = NoopBoard;
     this.promotionUi = NoopPromotionUi;
     this.redraw = () => {};
@@ -318,6 +320,7 @@ export class TrainCtrl {
       },
       events: { select: (key) => this.onBoardSelect(key) },
       ...(this.selectedKey ? { selected: this.selectedKey } : {}),
+      drawable: { shapes: this.hintSquare ? [{ orig: this.hintSquare, brush: 'green' }] : [] },
       draggable: { enabled: true, showGhost: true },
       selectable: { enabled: true },
     });
@@ -401,6 +404,26 @@ export class TrainCtrl {
     this.board.cancelPremove?.();
   }
 
+  private clearHint(): void {
+    if (!this.hintSquare) return;
+    this.hintSquare = null;
+    this.board.set({ drawable: { shapes: [] } });
+  }
+
+  async onHint(): Promise<void> {
+    const puzzle = this.currentPuzzle;
+    if (!puzzle || !this.game || this.game.isCompleted || this.revealed || !this.adapter.getActiveAttemptId()) return;
+    const attempt = this.attemptMoves(puzzle.id);
+    const correctMoves = (attempt?.events ?? []).filter(
+      (event) => event.type === 'move' && event.payload?.correct === true,
+    ).length;
+    const source = uciToKeys(puzzle.solution[correctMoves * 2] ?? '')?.[0];
+    if (!source) return;
+    this.hintSquare = source;
+    this.board.set({ drawable: { shapes: [{ orig: source, brush: 'green' }] } });
+    await this.adapter.recordAssistance('hint');
+  }
+
   async resolveUserMove(
     from: SquareName,
     to: SquareName,
@@ -417,6 +440,7 @@ export class TrainCtrl {
 
     // An executed move (right or wrong) supersedes any tracked selection.
     this.selectedKey = null;
+    this.clearHint();
 
     if (result.kind === 'wrong') {
       await this.adapter.recordWrongMove(result.uci);
@@ -691,6 +715,7 @@ export class TrainCtrl {
 
   async beginAttempt(p: NormalizedPuzzle): Promise<void> {
     this.stopPlayback();
+    this.clearHint();
     this.game = new PuzzleGame(p);
     this.infoPuzzle = p;
     this.currentPuzzle = p;
@@ -959,6 +984,7 @@ export class TrainCtrl {
       return;
     }
     this.revealed = true;
+    this.clearHint();
     if (this.game && !this.game.isCompleted && this.adapter.getActiveAttemptId()) {
       this.clearPremoveState();
       this.timer.interrupt();
@@ -1116,11 +1142,6 @@ function viewActions(ctrl: TrainCtrl): VNode {
         attrs: { type: 'button', 'aria-label': t('next.label') },
         on: { click: () => void ctrl.loadNext() },
       }, '>')] : []),
-      actionButton(
-        ctrl.revealHidesSolution ? t('reveal.hide') : t('reveal.show'),
-        'secondary',
-        { id: 'reveal-btn', disabled: ctrl.revealDisabled, onClick: () => void ctrl.onReveal() },
-      ),
       h(`button#restart-btn.button.button-secondary${ctrl.game?.isCompleted ? '' : '.hidden'}`, {
         attrs: { type: 'button', 'aria-label': t('restart.label') },
         on: { click: () => void ctrl.onRestart() },
@@ -1137,8 +1158,12 @@ function viewActions(ctrl: TrainCtrl): VNode {
 function viewDetails(ctrl: TrainCtrl): VNode[] {
   const puzzle = ctrl.infoPuzzle;
   return [
-    h('div.info', [
-      h('h2', { attrs: { 'data-i18n': 'puzzle.info' } }, t('puzzle.info')),
+    h('section.info.train-section.training-status-section', [
+      h('h2', 'Training Status'),
+      ...puzzleStatusLines(ctrl.puzzleStatus),
+    ]),
+    h('section.info.train-section.puzzle-section', [
+      h('h2', 'Puzzle'),
       h('p#puzzle-id', puzzle ? `${t('puzzle.id')}: ${puzzle.id}` : '-'),
       ...(ctrl.game?.isCompleted ? [
         h('p#rating', puzzle ? `${t('puzzle.rating')}: ${puzzle.rating}` : '-'),
@@ -1148,20 +1173,7 @@ function viewDetails(ctrl: TrainCtrl): VNode[] {
         'p#solver-color',
         puzzle ? `${t('puzzle.solver')}: ${t(`color.${puzzle.solverColor}`)}` : '-',
       ),
-    ]),
-    h('div.info', [
-      h('h2', { attrs: { 'data-i18n': 'puzzle.status.title' } }, t('puzzle.status.title')),
-      ...puzzleStatusLines(ctrl.puzzleStatus),
-    ]),
-    h('div.info', [
-      h('h2', { attrs: { 'data-i18n': 'solution.title' } }, t('solution.title')),
-      h(
-        `div#solution.solution-preview${ctrl.solutionHidden ? '.hidden' : ''}`,
-        puzzle ? puzzle.solution.join(' ') : '-',
-      ),
-    ]),
-    h('div.info', [
-      h('h2', t('collections.active.label')),
+      h('h2.train-subheading', { attrs: { 'data-i18n': 'collections.active.label' } }, t('collections.active.label')),
       h('p.progress-note', t('collections.active.hint')),
       h(
         'select#collection-picker',
@@ -1176,12 +1188,8 @@ function viewDetails(ctrl: TrainCtrl): VNode[] {
           h('option', { attrs: { value: collection.id } }, collection.name),
         ),
       ),
-    ]),
-    h('div.info', [
-      h('h2', { attrs: { 'data-i18n': 'queue.title' } }, t('queue.title')),
+      h('h2.train-subheading', { attrs: { 'data-i18n': 'queue.title' } }, t('queue.title')),
       h('p#queue.progress-note', ctrl.queueText),
-    ]),
-    h('div', [
       h('p#progress.progress-note', ctrl.progressText),
       h('p#storage.progress-note', ctrl.storageText),
     ]),
@@ -1203,6 +1211,10 @@ function viewRight(ctrl: TrainCtrl): VNode {
       h('h2', { attrs: { 'data-i18n': 'status.title' } }, t('status.title')),
       h('p#solve-timer', formatSolveTimer(ctrl.timer.snapshot())),
       h(statusClass(ctrl), t(ctrl.status.key, ctrl.status.params)),
+      h('div.button-row.feedback-actions', [
+        actionButton(t(ctrl.revealHidesSolution ? 'reveal.hide' : 'reveal.show'), 'secondary', { id: 'reveal-btn', disabled: ctrl.revealDisabled, onClick: () => void ctrl.onReveal() }),
+        actionButton(t('hint.label'), 'secondary', { id: 'hint-btn', disabled: !ctrl.game || ctrl.game.isCompleted || ctrl.revealed, onClick: () => void ctrl.onHint() }),
+      ]),
       h(`div.info${review ? '' : '.hidden'}`, { attrs: { id: 'review-section' } }, [
         h('h2', { attrs: { 'data-i18n': 'review.title' } }, t('review.title')),
         h('p.progress-note', t('review.hint')),

@@ -68,14 +68,24 @@ h1 {
 }
 .layout {
   display: grid;
-  grid-template-columns: minmax(220px, 0.8fr) minmax(0, 1.2fr) minmax(220px, 0.8fr);
-  gap: 20px;
+  grid-template-columns: minmax(190px, 0.85fr) minmax(0, 1.3fr) minmax(190px, 0.85fr);
+  gap: 16px;
   align-items: start;
 }
 .controls-slot, .controls-left, .controls-right { min-width: 0; }
 .controls-left { grid-column: 1; grid-row: 1; }
 .board-wrap { grid-column: 2; grid-row: 1; }
 .controls-right { grid-column: 3; grid-row: 1; }
+.controls-right {
+  min-height: 100%;
+  display: flex;
+  flex-direction: column;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel);
+}
+.controls-right .review-nav { margin-top: auto; }
 .board-actions-slot { margin-top: 10px; }
 .move-list ol { margin: 0; padding-left: 24px; font: 14px ui-monospace, SFMono-Regular, Menlo, monospace; }
 .move-list li { padding: 3px 4px; }
@@ -83,6 +93,8 @@ h1 {
 .move-list li.current { background: rgba(0, 123, 255, 0.16); border-radius: 4px; font-weight: 700; }
 .move-list-empty { color: var(--muted); }
 .status-panel .status { font-size: 18px; min-height: 52px; }
+.status-panel #status.status { font-size: 13px; min-height: 0; padding: 6px 8px; }
+.feedback-actions .button { padding: 9px 10px; font-size: 14px; }
 .board-wrap {
   min-width: 0;
 }
@@ -131,9 +143,33 @@ body.board-theme-classic cg-board { background-color: var(--square-light); }
   border-radius: 8px;
   border: 1px solid var(--border);
 }
+.controls-left .info,
+.controls-right .info {
+  background: transparent;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+}
+.controls-left {
+  gap: 14px;
+}
+.train-section {
+  padding: 0 0 12px;
+  border-bottom: 1px solid var(--border);
+}
+.train-section:last-child {
+  border-bottom: 0;
+}
 .info h2 {
   margin: 0 0 6px 0;
   font-size: 13px;
+}
+.controls-left .info h2,
+.controls-right .info h2 {
+  margin-bottom: 8px;
+}
+.train-subheading {
+  margin-top: 12px !important;
 }
 .info p {
   margin: 3px 0;
@@ -207,15 +243,6 @@ body.board-theme-classic cg-board { background-color: var(--square-light); }
 .button:disabled {
   background: #ccc;
   cursor: not-allowed;
-}
-.solution-preview {
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 12px;
-  background: rgba(127, 127, 127, 0.1);
-  padding: 8px;
-  border-radius: 4px;
-  overflow-x: auto;
-  white-space: nowrap;
 }
 .progress-note {
   font-size: 12px;

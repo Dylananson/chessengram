@@ -224,7 +224,10 @@ test('desktop view separates details, solve sections, and board actions in the r
   assert.ok(initialChildren[0]!.sel?.includes('controls-left'));
   assert.ok(initialChildren[1]!.sel?.includes('controls-right'));
   const leftChildren = initialChildren[0]!.children as VNode[];
-  assert.ok(leftChildren[0]!.sel?.includes('info'));
+  assert.equal(leftChildren.length, 2, 'details column has exactly two sections');
+  assert.ok(leftChildren[0]!.sel?.includes('training-status-section'));
+  assert.ok(leftChildren[1]!.sel?.includes('puzzle-section'));
+  assert.ok(!vnodeIds(initial).includes('solution'), 'standalone solution display removed');
   const rightChildren = initialChildren[1]!.children as VNode[];
   assert.ok(rightChildren[0]!.sel?.includes('move-list'));
   assert.ok(rightChildren[1]!.sel?.includes('status-panel'));
@@ -235,6 +238,7 @@ test('desktop view separates details, solve sections, and board actions in the r
   assert.ok(vnodeIds(initial).indexOf('puzzle-id') < vnodeIds(initial).indexOf('status'));
   assert.equal(findById(initial, 'skip-btn'), null, 'Skip is not a visible train action');
   assert.ok(findById(initial, 'reveal-btn'));
+  assert.ok(findById(initial, 'hint-btn'));
 
   const completed = view(await makeCompletedReview());
   assert.ok(findById(completed, 'review-back'));
@@ -250,7 +254,6 @@ const EXPECTED_IDS = [
   'puzzle-id',
   'solver-color',
   'reveal-btn',
-  'solution',
   'review-section',
   'review-label',
   'review-back',
@@ -343,6 +346,23 @@ test('N redraws mid-attempt produce zero board traffic and keep the port live', 
   await ctrl.resolveUserMove('d2', 'd4');
   assert.ok(board.sets.length > setsAfterBegin, 'imperative board updates still flow');
   assert.equal(ctrl.status.key, 'status.wrong');
+});
+
+test('hint highlights only the next solver source and records assistance without grading', async () => {
+  const { service, adapter } = await makeWorld(['hint-a']);
+  const board = makeRecordingBoard();
+  const ctrl = new TrainCtrl(service, adapter, board.port);
+  await ctrl.beginAttempt(await adapter.loadPuzzle('hint-a'));
+  const before = board.sets.length;
+  await ctrl.onHint();
+  const hintConfig = board.sets.at(-1) as { drawable?: { shapes?: Array<{ orig: string; dest?: string }> } };
+  assert.deepEqual(hintConfig.drawable?.shapes, [{ orig: 'e2', brush: 'green' }]);
+  assert.equal(ctrl.game?.failedState, false);
+  assert.equal(ctrl.nextDisabled, true);
+  assert.equal(board.destroys.count, 0);
+  assert.ok(board.sets.length > before, 'hint uses imperative board update without remount');
+  await ctrl.resolveUserMove('e2', 'e4');
+  assert.deepEqual((board.sets.at(-1) as { drawable?: { shapes?: unknown[] } }).drawable?.shapes, []);
 });
 
 // --- 4. attempt lifecycle through the ctrl -----------------------------------
@@ -555,7 +575,7 @@ test('train layout places board beside a compact panel on desktop and stacks boa
   const layout = css.match(/\.layout\s*\{([^}]*)\}/);
   assert.ok(layout, 'train layout rule present');
   assert.match(layout![1]!, /display:\s*grid/);
-  assert.match(layout![1]!, /grid-template-columns:\s*minmax\(220px,\s*0\.8fr\)\s+minmax\(0,\s*1\.2fr\)\s+minmax\(220px,\s*0\.8fr\)/);
+  assert.match(layout![1]!, /grid-template-columns:\s*minmax\(190px,\s*0\.85fr\)\s+minmax\(0,\s*1\.3fr\)\s+minmax\(190px,\s*0\.85fr\)/);
   assert.match(css, /\.controls-left\s*\{[^}]*grid-column:\s*1/);
   assert.match(css, /\.controls-right\s*\{[^}]*grid-column:\s*3/);
   const mobile = css.match(/@media\s*\(\s*max-width:\s*760px\s*\)\s*\{([\s\S]*?)\n\}/);

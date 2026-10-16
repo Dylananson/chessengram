@@ -163,6 +163,7 @@ const en: LocaleMessages = {
   'color.white': 'white',
   'color.black': 'black',
   'solution.title': 'Solution',
+  'hint.label': 'Hint',
   'board.title': 'Board',
   'next.label': 'Next puzzle',
   'train.analyze.label': 'Analyze (planned for AN-001b)',

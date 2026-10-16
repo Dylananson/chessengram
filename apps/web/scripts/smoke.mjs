@@ -111,6 +111,11 @@ try {
 
   const queueText = await page.$eval('#queue', (el) => el.textContent).catch(() => '');
   check('queue summary rendered', /puzzles/.test(queueText), queueText.trim());
+  const detailsSections = await page.$$eval('.controls-left > .train-section', (els) =>
+    els.map((el) => el.querySelector('h2')?.textContent?.trim()),
+  );
+  check('details column has Training Status and Puzzle sections', JSON.stringify(detailsSections) === JSON.stringify(['Training Status', 'Puzzle']), JSON.stringify(detailsSections));
+  check('standalone solution panel is absent', !(await page.$('#solution')));
 
   check('train board mounted', await page.$('#board').then(Boolean));
 
@@ -157,13 +162,12 @@ try {
     return getComputedStyle(el).position === 'fixed' && rect.top >= 0 && rect.bottom <= innerHeight;
   }));
 
-  const solutionHidden = await page.$eval('#solution', (el) => el.classList.contains('hidden')).catch(() => false);
-  check('solution hidden by default (no spoiler)', solutionHidden);
+  check('Reveal action is available without a solution text panel', Boolean(await page.$('#reveal-btn')) && !(await page.$('#solution')));
 
-  // Reveal shows the solution and abandons the attempt without scoring.
+  // Reveal starts on-board playback and abandons the attempt without scoring.
   await page.click('#reveal-btn');
   await sleep(250);
-  check('reveal shows the solution', await page.$eval('#solution', (el) => !el.classList.contains('hidden')));
+  check('reveal keeps solution text panel absent', !(await page.$('#solution')));
   const revealedStatus = await page.$eval('#status', (el) => el.textContent).catch(() => '');
   check('reveal reports no score recorded', /no score recorded/.test(revealedStatus), revealedStatus.trim());
 
