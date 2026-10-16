@@ -187,6 +187,8 @@ test('createTrainShell creates the board host exactly once, apart from the patch
   assert.ok(shell.boardHost.className.includes('board'));
   assert.equal(shell.boardHost.attrs['aria-label'], 'Board');
   assert.equal(shell.boardWrap.className, 'board-wrap');
+  assert.deepEqual(shell.boardWrap.children, [shell.boardHost], 'no card wrapper or Board heading');
+  assert.equal(created.some((el) => el.tag === 'h2' && el.textContent === 'Board'), false);
 });
 
 test('train shell has no size toggle and keeps the board host outside the patch target', async () => {
@@ -525,6 +527,19 @@ test('train layout keeps a large square board and a wrapping mobile action row',
   assert.ok(/\.board-wrap\s*\{[^}]*flex-basis:\s*100%/.test(mobile![1]!));
   assert.match(css, /\.board\s*\{[^}]*max-width:\s*760px/);
   assert.match(css, /\.train-actions\s*\{[^}]*flex-wrap:\s*wrap/);
+});
+
+test('solve timer stays visible in a non-interactive safe-area viewport pill', async () => {
+  const { readFileSync } = await import('node:fs');
+  const css = readFileSync(new URL('../src/app.css', import.meta.url), 'utf8');
+  const timer = css.match(/#solve-timer\s*\{([^}]*)\}/);
+  assert.ok(timer, 'existing #solve-timer has a dedicated style rule');
+  assert.match(timer![1]!, /position:\s*fixed/);
+  assert.match(timer![1]!, /right:\s*max\([^;]*safe-area-inset-right/);
+  assert.match(timer![1]!, /bottom:\s*max\([^;]*safe-area-inset-bottom/);
+  assert.match(timer![1]!, /pointer-events:\s*none/);
+  assert.match(timer![1]!, /z-index:\s*900/);
+  assert.match(css, /\.promotion\s*\{[^}]*z-index:\s*1000/);
 });
 
 test('REV-002: arrow keys step only during review and listener is removed on reset/dispose', async () => {
