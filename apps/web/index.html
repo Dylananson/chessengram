@@ -14,12 +14,16 @@
     <title>ChessReps</title>
   </head>
   <body>
-    <div id="promotion" class="promotion hidden" role="dialog" aria-modal="true" data-i18n-title="promotion.title">
+    <div id="promotion" class="promotion hidden" role="dialog" aria-modal="true" aria-labelledby="promotion-title" data-i18n-title="promotion.title">
       <div class="promotion-inner">
-        <button data-promotion="q" type="button"></button>
-        <button data-promotion="r" type="button"></button>
-        <button data-promotion="b" type="button"></button>
-        <button data-promotion="n" type="button"></button>
+        <p id="promotion-title" class="promotion-title" data-i18n="promotion.title">Choose a promotion piece</p>
+        <div class="promotion-choices cg-wrap">
+          <button data-promotion="q" type="button" aria-label="Promote to queen"><piece class="white queen"></piece></button>
+          <button data-promotion="r" type="button" aria-label="Promote to rook"><piece class="white rook"></piece></button>
+          <button data-promotion="b" type="button" aria-label="Promote to bishop"><piece class="white bishop"></piece></button>
+          <button data-promotion="n" type="button" aria-label="Promote to knight"><piece class="white knight"></piece></button>
+        </div>
+        <button class="promotion-cancel" data-promotion-cancel type="button" data-i18n="promotion.cancel">Cancel</button>
       </div>
     </div>
     <div class="container">

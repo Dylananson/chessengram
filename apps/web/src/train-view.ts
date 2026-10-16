@@ -975,17 +975,8 @@ export class TrainCtrl {
   }
 }
 
-export const PROMOTION_GLYPHS: Record<'white' | 'black', Record<PromotionRole, string>> = {
-  white: { q: '♕', r: '♖', b: '♗', n: '♘' },
-  black: { q: '♛', r: '♜', b: '♝', n: '♞' },
-};
-
 export function roleName(role: PromotionRole): string {
   return role === 'q' ? 'queen' : role === 'r' ? 'rook' : role === 'b' ? 'bishop' : 'knight';
-}
-
-export function promotionGlyph(color: 'white' | 'black', role: PromotionRole): string {
-  return PROMOTION_GLYPHS[color][role];
 }
 
 /** Last-move highlight squares for a review step (`e2e4` → `['e2', 'e4']`). */
@@ -1324,7 +1315,9 @@ export class TrainView implements Screen {
     if (!overlay) return;
     overlay.querySelectorAll<HTMLButtonElement>('[data-promotion]').forEach((b) => {
       const role = b.getAttribute('data-promotion') as PromotionRole;
-      b.textContent = promotionGlyph(color, role);
+      // Reuse the board's own cburnett piece art: `<piece class="white queen">`.
+      const piece = b.querySelector('piece');
+      if (piece) piece.className = `${color} ${roleName(role)}`;
       b.setAttribute('aria-label', t(`promotion.${roleName(role)}`));
     });
     overlay.classList.remove('hidden');
@@ -1344,19 +1337,26 @@ export class TrainView implements Screen {
       const role = (e.currentTarget as HTMLElement).getAttribute('data-promotion') as PromotionRole;
       this.ctrl?.choosePromotion(role);
     };
+    const onCancel = (e: Event): void => {
+      e.preventDefault();
+      this.ctrl?.cancelPromotion();
+    };
     const onOverlayClick = (e: Event): void => {
       if (e.target === overlay) {
         this.ctrl?.cancelPromotion();
       }
     };
+    const cancelButton = overlay.querySelector<HTMLButtonElement>('[data-promotion-cancel]');
     overlay.querySelectorAll<HTMLButtonElement>('[data-promotion]').forEach((b) => {
       b.addEventListener('click', onChoice);
     });
+    cancelButton?.addEventListener('click', onCancel);
     overlay.addEventListener('click', onOverlayClick);
     this.unbindPromotion = () => {
       overlay.querySelectorAll<HTMLButtonElement>('[data-promotion]').forEach((b) => {
         b.removeEventListener('click', onChoice);
       });
+      cancelButton?.removeEventListener('click', onCancel);
       overlay.removeEventListener('click', onOverlayClick);
     };
   }

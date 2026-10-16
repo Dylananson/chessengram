@@ -247,13 +247,18 @@ body.board-theme-classic cg-board { background-color: var(--square-light); }
   font-size: 12px;
   color: var(--muted);
 }
+/* Promotion picker: a mini board rank. Each choice is a themed square carrying
+   the same cburnett piece art as the board, so symbols stay crisp and match the
+   selected board theme. */
 .promotion {
   position: fixed;
   inset: 0;
   display: flex;
   align-items: center;
   justify-content: center;
-  background: rgba(0, 0, 0, 0.5);
+  background: rgba(14, 20, 33, 0.55);
+  backdrop-filter: blur(3px);
+  -webkit-backdrop-filter: blur(3px);
   z-index: 1000;
   padding: 16px;
 }
@@ -261,27 +266,88 @@ body.board-theme-classic cg-board { background-color: var(--square-light); }
   display: none;
 }
 .promotion-inner {
-  background: var(--panel);
-  border-radius: 12px;
-  padding: 16px;
   display: flex;
-  gap: 8px;
-  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.3);
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+  padding: 18px 18px 16px;
+  background: var(--panel, #ffffff);
+  border: 1px solid var(--border, rgba(0, 0, 0, 0.08));
+  border-radius: var(--radius-card, 18px);
+  box-shadow: var(--shadow-card, 0 8px 28px rgba(33, 53, 99, 0.12));
 }
-.promotion-inner button {
-  width: 64px;
-  height: 64px;
-  font-size: 40px;
-  line-height: 1;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: #f0d9b5;
+.promotion-title {
+  margin: 0;
+  color: var(--muted, #555555);
+  font-size: 11px;
+  font-weight: 760;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.promotion-choices {
+  display: grid;
+  grid-template-columns: repeat(4, auto);
+  border: 2px solid var(--square-dark, #b58863);
+  border-radius: 12px;
+  overflow: hidden;
+  box-shadow: 0 2px 6px rgba(24, 38, 69, 0.18);
+}
+.promotion-choices button {
+  width: clamp(56px, 16vw, 76px);
+  height: clamp(56px, 16vw, 76px);
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  background: var(--square-light, #f0d9b5);
   cursor: pointer;
+  line-height: 1;
   touch-action: manipulation;
-  -webkit-tap-highlight-color: transparent;
+  transition: background 120ms ease, transform 120ms ease;
 }
-.promotion-inner button:hover {
-  background: #e8c99b;
+.promotion-choices button + button {
+  box-shadow: inset 1px 0 0 rgba(0, 0, 0, 0.16);
+}
+.promotion-choices button:hover,
+.promotion-choices button:focus-visible {
+  background: var(--square-dark, #b58863);
+}
+.promotion-choices button:active {
+  transform: scale(0.96);
+}
+.promotion-choices button:focus-visible,
+.promotion-cancel:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring, 0 0 0 3px rgba(54, 95, 232, 0.2));
+}
+.promotion-choices piece {
+  position: relative;
+  top: 0;
+  left: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+  background-size: cover;
+  background-repeat: no-repeat;
+  pointer-events: none;
+  z-index: 0;
+}
+.promotion-cancel {
+  appearance: none;
+  padding: 7px 18px;
+  border: 1px solid var(--border, rgba(0, 0, 0, 0.08));
+  border-radius: 999px;
+  background: var(--surface-soft, #f4f6f9);
+  color: var(--muted, #555555);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 650;
+  cursor: pointer;
+  transition: color 140ms ease, border-color 140ms ease;
+}
+.promotion-cancel:hover {
+  color: var(--text, #1a1a1a);
+  border-color: var(--accent, #007bff);
 }
 @media (max-width: 760px) {
   .layout {
