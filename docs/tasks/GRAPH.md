@@ -50,7 +50,7 @@ flowchart TD
 | TRN-001 | Train controls polish: symbolic Next, no visible Skip/First/Last, conditional Analyze, completion-only details, live timer | REV-002 | `train-view.ts` (controls region), layout CSS, related tests | Done (current loop; refined) |
 | BRD-002 | Bigger desktop board; no toggle/card/title; 900px centered container; actions beneath board; timer always visible | MOB-001 | layout CSS, `train-view.ts` (board region) | Done (refined current loop) |
 | THM-001 | Board theme picker (survey Lichess/chessground theming first; square colors only, pieces untouched; localStorage persistence) | BRD-002 (done) | `settings-view.ts` (picker region), board-theme CSS, related tests | Done (current loop) |
-| PZL-001 | Lichess-inspired puzzle layout: board+side panel desktop, stacked mobile; preserve ChessReps behavior | UI-001, BRD-002 (done) | `train-view.ts` shell/view layout, `app.css`, train view tests, smoke | Done (current loop) |
+| PZL-001 | Lichess-inspired puzzle layout: controls/feedback, board, details in three desktop columns; board-first stack mobile | UI-001, BRD-002 (done) | `train-view.ts` shell/view layout, `app.css`, train view tests, smoke | Done (refined current loop) |
 | REV-001 | Resumed completions show no review section (keep vs fix) | **user call** | `train-view.ts` (review gating) | **Blocked: needs user call** |
 | HW | T11/T15 hardware matrix execution | Matrix written (done) | real device | **Blocked: needs device** |
 | RF-001 | React + component library (PROPOSED, see BACKLOG) | architecture decision (accepted ADR) | — | **Parked: loop must skip (UI-001 Snabbdom foundation done instead, 2026-10-16)** |
@@ -76,3 +76,4 @@ Round log:
 - UX lane R11 — BRD-002 visual refinement done 2026-10-16: removed board card/title; timer pinned in viewport safe area. 7+35+188 tests, build + smoke 38/38 clean.
 - UX lane R12 — control/layout refinement done 2026-10-16: remove visible Skip and First/Last review buttons while preserving keyboard shortcuts; Analyze only on failure/completion; board and actions share centered 900px width. 7+35+188 tests, build + smoke 38/38 clean.
 - UX lane R13 — PZL-001 done 2026-10-16: Lichess-inspired board-left/panel-right desktop, board-first stacked mobile; prominent feedback/timer; smoke checks both geometries. 7+35+188 tests, typecheck + build + smoke 42/42 clean; board remains outside patched tree.
+- UX lane R14 — PZL-001 refined per user: desktop three columns (controls/feedback, board, details); mobile board → controls → details. Multiple patch roots keep board host static; smoke checks desktop/mobile. 7+35+188 tests, typecheck + build + smoke 42/42 clean.

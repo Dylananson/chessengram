@@ -21,9 +21,9 @@
  *    Only `TrainView.mount` touches the DOM.
  *  - The chessground host element lives OUTSIDE the patched subtree.
  *    `mount` builds a static shell via {@link createTrainShell} (layout +
- *    board-wrap + `div#board` + an empty controls placeholder), creates the
- *    `Chessground` instance on the host once, and patches ONLY the
- *    placeholder with `view(ctrl)`. The board vnode never exists, so no
+ *    board-wrap + `div#board` + separate left/right placeholders), creates the
+ *    `Chessground` instance on the host once, and patches only the two panel
+ *    placeholders. The board vnode never exists, so no
  *    patch can remount it; all board updates go through the imperative
  *    {@link TrainBoardPort} (`ground.set(...)`), and unmount destroys the
  *    ground. The global `#promotion` overlay (owned by `index.html`) likewise
@@ -1098,10 +1098,9 @@ function formatSolveTimer(snapshot: ReturnType<AttemptTimer['snapshot']>): strin
  * state (review position, button disabled states, solution visibility,
  * picker options) reads live ctrl fields.
  */
-export function view(ctrl: TrainCtrl): VNode {
-  const puzzle = ctrl.infoPuzzle;
+function viewLeft(ctrl: TrainCtrl): VNode {
   const review = ctrl.review;
-  return h('div.controls', [
+  return h('div.controls.controls-left', [
     h('div.info.status-panel', [
       h('h2', { attrs: { 'data-i18n': 'status.title' } }, t('status.title')),
       h('p#solve-timer', formatSolveTimer(ctrl.timer.snapshot())),
@@ -1115,20 +1114,12 @@ export function view(ctrl: TrainCtrl): VNode {
       actionButton(
         ctrl.revealHidesSolution ? t('reveal.hide') : t('reveal.show'),
         'secondary',
-        {
-          id: 'reveal-btn',
-          disabled: ctrl.revealDisabled,
-          onClick: () => void ctrl.onReveal(),
-        },
+        { id: 'reveal-btn', disabled: ctrl.revealDisabled, onClick: () => void ctrl.onReveal() },
       ),
-      h(
-        `button#restart-btn.button.button-secondary${ctrl.game?.isCompleted ? '' : '.hidden'}`,
-        {
-          attrs: { type: 'button', 'aria-label': t('restart.label') },
-          on: { click: () => void ctrl.onRestart() },
-        },
-        '↻',
-      ),
+      h(`button#restart-btn.button.button-secondary${ctrl.game?.isCompleted ? '' : '.hidden'}`, {
+        attrs: { type: 'button', 'aria-label': t('restart.label') },
+        on: { click: () => void ctrl.onRestart() },
+      }, '↻'),
       h(`button#analyze-btn.button.button-secondary${ctrl.game?.isCompleted || ctrl.game?.failedState ? '' : '.hidden'}`, {
         attrs: { type: 'button', disabled: true, 'aria-label': t('train.analyze.label'), title: t('train.analyze.title') },
       }, '⌕'),
@@ -1142,25 +1133,21 @@ export function view(ctrl: TrainCtrl): VNode {
           on: { click: () => ctrl.stepReview('forward') },
         }, '▶'),
       ]),
-      h(
-        `button#practice-btn.button.button-secondary${ctrl.practiceHidden ? '.hidden' : ''}`,
-        {
-          attrs: { type: 'button' },
-          on: { click: () => void ctrl.onPractice() },
-        },
-        ctrl.practiceLabel,
-      ),
+      h(`button#practice-btn.button.button-secondary${ctrl.practiceHidden ? '.hidden' : ''}`, {
+        attrs: { type: 'button' }, on: { click: () => void ctrl.onPractice() },
+      }, ctrl.practiceLabel),
     ]),
     h(`div.info${review ? '' : '.hidden'}`, { attrs: { id: 'review-section' } }, [
       h('h2', { attrs: { 'data-i18n': 'review.title' } }, t('review.title')),
       h('p.progress-note', t('review.hint')),
-      h(
-        'p#review-label',
-        review
-          ? t('review.position', { index: review.position, total: review.count - 1 })
-          : '',
-      ),
+      h('p#review-label', review ? t('review.position', { index: review.position, total: review.count - 1 }) : ''),
     ]),
+  ]);
+}
+
+function viewRight(ctrl: TrainCtrl): VNode {
+  const puzzle = ctrl.infoPuzzle;
+  return h('div.controls.controls-right', [
     h('div.info', [
       h('h2', { attrs: { 'data-i18n': 'puzzle.info' } }, t('puzzle.info')),
       h('p#puzzle-id', puzzle ? `${t('puzzle.id')}: ${puzzle.id}` : '-'),
@@ -1212,6 +1199,11 @@ export function view(ctrl: TrainCtrl): VNode {
   ]);
 }
 
+/** Combined DOM-free view retained for callers/tests; mount patches each panel independently. */
+export function view(ctrl: TrainCtrl): VNode {
+  return h('div.train-panels', [viewLeft(ctrl), viewRight(ctrl)]);
+}
+
 export interface TrainShell {
   /** Static root appended to the screen host; removed on unmount. */
   root: HTMLElement;
@@ -1219,14 +1211,14 @@ export interface TrainShell {
   boardHost: HTMLElement;
   /** Static wrapper around the board. */
   boardWrap: HTMLElement;
-  /** Empty placeholder the snabbdom patch replaces with `view(ctrl)`. */
-  uiPlaceholder: HTMLElement;
+  leftPlaceholder: HTMLElement;
+  rightPlaceholder: HTMLElement;
 }
 
 /**
  * Build the static Train shell in the given document: responsive layout + board-wrap +
- * `div#board` host + an empty controls placeholder. Called exactly once per
- * `mount`; `view()` renders only into the placeholder, so patches can never
+ * `div#board` host + separate left/right patch placeholders. Called once per
+ * mount; panel views never include or touch the board, so patches can never
  * create, move, or replace the board host. Takes the document as a parameter
  * so the one-creation-per-mount property is assertable without a browser.
  */
@@ -1242,11 +1234,15 @@ export function createTrainShell(doc: Document): TrainShell {
   boardHost.className = 'board';
   boardHost.setAttribute('aria-label', t('board.title'));
   boardWrap.appendChild(boardHost);
-  const uiPlaceholder = doc.createElement('div');
+  const leftPlaceholder = doc.createElement('div');
+  leftPlaceholder.className = 'controls-slot controls-left-slot';
+  const rightPlaceholder = doc.createElement('div');
+  rightPlaceholder.className = 'controls-slot controls-right-slot';
+  layout.appendChild(leftPlaceholder);
   layout.appendChild(boardWrap);
-  layout.appendChild(uiPlaceholder);
+  layout.appendChild(rightPlaceholder);
   root.appendChild(layout);
-  return { root, boardHost, boardWrap, uiPlaceholder };
+  return { root, boardHost, boardWrap, leftPlaceholder, rightPlaceholder };
 }
 
 export class TrainView implements Screen {
@@ -1257,7 +1253,8 @@ export class TrainView implements Screen {
   private shell: TrainShell | null = null;
   private ground: Api | null = null;
   private ctrl: TrainCtrl | null = null;
-  private vnode: VNode | null = null;
+  private leftVnode: VNode | null = null;
+  private rightVnode: VNode | null = null;
   private unbindPromotion: (() => void) | null = null;
   private timerInterval: ReturnType<typeof setInterval> | null = null;
 
@@ -1324,11 +1321,13 @@ export class TrainView implements Screen {
         },
       );
       this.ctrl = ctrl;
-      this.vnode = patch(shell.uiPlaceholder, view(ctrl));
+      this.leftVnode = patch(shell.leftPlaceholder, viewLeft(ctrl));
+      this.rightVnode = patch(shell.rightPlaceholder, viewRight(ctrl));
       this.timerInterval = setInterval(() => ctrl.redraw(), 1000);
       ctrl.redraw = () => {
-        if (this.ctrl === null || this.vnode === null) return;
-        this.vnode = patch(this.vnode, view(this.ctrl));
+        if (this.ctrl === null || this.leftVnode === null || this.rightVnode === null) return;
+        this.leftVnode = patch(this.leftVnode, viewLeft(this.ctrl));
+        this.rightVnode = patch(this.rightVnode, viewRight(this.ctrl));
       };
 
       const resumed = await ctrl.resumeIfPossible();
@@ -1373,7 +1372,8 @@ export class TrainView implements Screen {
     }
     this.shell?.root.remove();
     this.shell = null;
-    this.vnode = null;
+     this.leftVnode = null;
+     this.rightVnode = null;
     this.host = null;
   }
 

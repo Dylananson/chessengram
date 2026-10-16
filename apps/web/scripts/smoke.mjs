@@ -117,15 +117,17 @@ try {
   await page.setViewport({ width: 1280, height: 900 });
   const desktopTrainLayout = await page.evaluate(() => {
     const board = document.querySelector('.board-wrap');
-    const panel = document.querySelector('.controls');
-    if (!board || !panel) return null;
+    const left = document.querySelector('.controls-left');
+    const right = document.querySelector('.controls-right');
+    if (!board || !left || !right) return { board: Boolean(board), left: Boolean(left), right: Boolean(right) };
     const b = board.getBoundingClientRect();
-    const p = panel.getBoundingClientRect();
-    return { boardLeft: b.left, boardRight: b.right, boardTop: b.top, panelLeft: p.left, panelTop: p.top, panelWidth: p.width };
+    const l = left.getBoundingClientRect();
+    const r = right.getBoundingClientRect();
+    return { boardLeft: b.left, boardRight: b.right, boardTop: b.top, leftRight: l.right, leftTop: l.top, rightLeft: r.left, rightTop: r.top, boardWidth: b.width };
   });
   check(
-    'desktop Train shows board left of the controls panel',
-    Boolean(desktopTrainLayout && desktopTrainLayout.boardLeft < desktopTrainLayout.panelLeft && Math.abs(desktopTrainLayout.boardTop - desktopTrainLayout.panelTop) < 8 && desktopTrainLayout.panelWidth >= 260),
+    'desktop Train has left controls, centered board, and right details',
+    Boolean(desktopTrainLayout && desktopTrainLayout.leftRight < desktopTrainLayout.boardLeft && desktopTrainLayout.boardLeft < desktopTrainLayout.rightLeft && Math.abs(desktopTrainLayout.boardTop - desktopTrainLayout.leftTop) < 8 && Math.abs(desktopTrainLayout.boardTop - desktopTrainLayout.rightTop) < 8 && desktopTrainLayout.boardWidth >= 300),
     JSON.stringify(desktopTrainLayout),
   );
 
@@ -133,15 +135,17 @@ try {
   await sleep(100);
   const mobileTrainLayout = await page.evaluate(() => {
     const board = document.querySelector('.board-wrap');
-    const panel = document.querySelector('.controls');
-    if (!board || !panel) return null;
+    const left = document.querySelector('.controls-left');
+    const right = document.querySelector('.controls-right');
+    if (!board || !left || !right) return { board: Boolean(board), left: Boolean(left), right: Boolean(right) };
     const b = board.getBoundingClientRect();
-    const p = panel.getBoundingClientRect();
-    return { boardTop: b.top, boardBottom: b.bottom, panelTop: p.top, boardWidth: b.width, panelWidth: p.width };
+    const l = left.getBoundingClientRect();
+    const r = right.getBoundingClientRect();
+    return { boardTop: b.top, boardBottom: b.bottom, leftTop: l.top, leftBottom: l.bottom, rightTop: r.top, boardWidth: b.width, leftWidth: l.width, rightWidth: r.width };
   });
   check(
-    'mobile Train stacks the full-width panel below the board',
-    Boolean(mobileTrainLayout && mobileTrainLayout.boardBottom <= mobileTrainLayout.panelTop && Math.abs(mobileTrainLayout.boardWidth - mobileTrainLayout.panelWidth) < 2),
+    'mobile Train stacks board, controls, then details',
+    Boolean(mobileTrainLayout && mobileTrainLayout.boardBottom <= mobileTrainLayout.leftTop && mobileTrainLayout.leftBottom <= mobileTrainLayout.rightTop && Math.abs(mobileTrainLayout.boardWidth - mobileTrainLayout.leftWidth) < 2 && Math.abs(mobileTrainLayout.boardWidth - mobileTrainLayout.rightWidth) < 2),
     JSON.stringify(mobileTrainLayout),
   );
   await page.setViewport({ width: 1280, height: 900 });

@@ -182,8 +182,10 @@ test('createTrainShell creates the board host exactly once, apart from the patch
   const boardHosts = created.filter((el) => el.id === 'board');
   assert.equal(boardHosts.length, 1, 'exactly one div#board per shell');
   assert.equal(shell.boardHost, boardHosts[0]);
-  assert.notEqual(shell.uiPlaceholder, shell.boardHost);
-  assert.ok(!shell.uiPlaceholder.children.includes(shell.boardHost));
+  assert.notEqual(shell.leftPlaceholder, shell.boardHost);
+  assert.notEqual(shell.rightPlaceholder, shell.boardHost);
+  assert.ok(!shell.leftPlaceholder.children.includes(shell.boardHost));
+  assert.ok(!shell.rightPlaceholder.children.includes(shell.boardHost));
   assert.ok(shell.boardHost.className.includes('board'));
   assert.equal(shell.boardHost.attrs['aria-label'], 'Board');
   assert.equal(shell.boardWrap.className, 'board-wrap');
@@ -199,6 +201,12 @@ test('train shell has no size toggle and keeps the board host outside the patch 
   const ctrl = new TrainCtrl(service, adapter, board.port);
   const host = shell.boardHost;
   const port = ctrl.board;
+  for (let i = 0; i < 20; i += 1) {
+    ctrl.redraw = () => { view(ctrl); };
+    ctrl.redraw();
+    assert.equal(shell.boardHost, host, 'redraws preserve the static chessground host identity');
+    assert.ok(!vnodeSels(view(ctrl)).some((sel) => sel.includes('#board')));
+  }
 
   assert.equal(shell.boardHost, host, 'board host identity unchanged');
   assert.equal(ctrl.board, port, 'board port identity unchanged');
@@ -212,14 +220,17 @@ test('status leads the side panel; actions precede details with review navigatio
   await ctrl.beginAttempt(await adapter.loadPuzzle('layout-a'));
   const initial = view(ctrl);
   const initialChildren = initial.children as VNode[];
-  assert.ok(initialChildren[0]!.sel?.includes('status-panel'));
-  assert.ok(initialChildren[1]!.sel?.includes('train-actions'));
+  assert.ok(initialChildren[0]!.sel?.includes('controls-left'));
+  assert.ok(initialChildren[1]!.sel?.includes('controls-right'));
+  const leftChildren = initialChildren[0]!.children as VNode[];
+  assert.ok(leftChildren[0]!.sel?.includes('status-panel'));
+  assert.ok(leftChildren[1]!.sel?.includes('train-actions'));
   assert.ok(vnodeIds(initial).indexOf('puzzle-id') > vnodeIds(initial).indexOf('reveal-btn'));
   assert.equal(findById(initial, 'skip-btn'), null, 'Skip is not a visible train action');
   assert.ok(findById(initial, 'reveal-btn'));
 
   const completed = view(await makeCompletedReview());
-  const actionRow = (completed.children as VNode[])[1]!;
+  const actionRow = ((completed.children as VNode[])[0]!.children as VNode[])[1]!;
   assert.ok(findById(actionRow, 'review-back'));
   assert.ok(findById(actionRow, 'review-forward'));
   assert.equal(findById(actionRow, 'review-first'), null);
@@ -264,7 +275,7 @@ test('view keeps every control id and never renders a board host', async () => {
     assert.ok(!ids.includes('board'), `${state.name}: no board host vnode`);
     assert.ok(!ids.includes('promotion'), `${state.name}: no promotion overlay vnode`);
     assert.ok(!ids.includes('skip-btn'), `${state.name}: no visible Skip button`);
-    assert.equal(state.vnode.sel, 'div.controls', `${state.name}: stable controls root`);
+    assert.equal(state.vnode.sel, 'div.train-panels', `${state.name}: stable combined view root`);
   }
   assert.ok(!vnodeSels(view(ctrl)).some((sel) => sel.includes('#board')));
 });
@@ -313,7 +324,7 @@ test('N redraws mid-attempt produce zero board traffic and keep the port live', 
     if (i % 10 === 0) {
       ctrl.updateProgress();
       ctrl.refreshPicker();
-      assert.equal(view(ctrl).sel, 'div.controls');
+      assert.equal(view(ctrl).sel, 'div.train-panels');
       assert.ok(!vnodeIds(view(ctrl)).includes('board'));
     }
   }
@@ -533,12 +544,14 @@ test('train layout places board beside a compact panel on desktop and stacks boa
   const css = readFileSync(new URL('../src/app.css', import.meta.url), 'utf8');
   const container = css.match(/\.container\s*\{([^}]*)\}/);
   assert.ok(container, 'centered content container rule present');
-  assert.match(container![1]!, /max-width:\s*900px/);
+  assert.match(container![1]!, /max-width:\s*1200px/);
   assert.match(container![1]!, /margin:\s*0 auto/);
   const layout = css.match(/\.layout\s*\{([^}]*)\}/);
   assert.ok(layout, 'train layout rule present');
   assert.match(layout![1]!, /display:\s*grid/);
-  assert.match(layout![1]!, /grid-template-columns:\s*minmax\(0,\s*1\.08fr\)\s+minmax\(280px,\s*0\.72fr\)/);
+  assert.match(layout![1]!, /grid-template-columns:\s*minmax\(220px,\s*0\.8fr\)\s+minmax\(0,\s*1\.2fr\)\s+minmax\(220px,\s*0\.8fr\)/);
+  assert.match(css, /\.controls-left\s*\{[^}]*grid-column:\s*1/);
+  assert.match(css, /\.controls-right\s*\{[^}]*grid-column:\s*3/);
   const mobile = css.match(/@media\s*\(\s*max-width:\s*760px\s*\)\s*\{([\s\S]*?)\n\}/);
   assert.ok(mobile, 'tablet/mobile stacking breakpoint present');
   assert.match(mobile![1]!, /grid-template-columns:\s*minmax\(0,\s*1fr\)/);
