@@ -10,7 +10,7 @@ import {
 import { LocalStore } from '../src/storage/local-store.ts';
 import { InMemoryStorageBackend } from '../src/storage/memory-backend.ts';
 import { parseExport } from '../src/storage/data-port.ts';
-import { CollectionsCtrl, CollectionsView, view } from '../src/collections-view.ts';
+import { CollectionsCtrl, CollectionsView, collectionIdFromHash, view } from '../src/collections-view.ts';
 import { setLocale, t } from '../src/i18n.ts';
 import { makePuzzle, makeService, PROGRAM_ID, timing } from './fixtures.ts';
 
@@ -157,13 +157,14 @@ test('the new-per-day cap applies per collection', async () => {
   // learned (future-due) and `b` is still new but capped.
   await startAndSucceed(service, sessionId, 'a', DEFAULT_COLLECTION_ID, 'cap-def');
 
-  const blocked = await service.selectNext({
+  const continued = await service.selectNext({
     sessionId,
     programId: PROGRAM_ID,
     collectionId: DEFAULT_COLLECTION_ID,
   });
-  assert.equal(blocked.puzzleId, null);
-  assert.equal(blocked.reason, 'daily-limit-reached');
+  // The capped new puzzle `b` stays unavailable, but ordinary Next continues
+  // with the already-scheduled future review `a`.
+  assert.equal(continued.puzzleId, 'a');
 
   // The second scope has its own cap accounting: `a` is still new there.
   const allowed = await service.selectNext({
@@ -297,7 +298,7 @@ test('init live-migrates legacy program:puzzle schedules into the default scope'
   assert.deepEqual(attempt!.progressKey, { programId: PROGRAM_ID, puzzleId: 'a' });
 });
 
-test('export 1.0.0 migrates to 1.1.0: schedules rekeyed, default seeded, attempts untouched', async () => {
+test('export 1.0.0 migrates through 1.1.0 to 1.2.0: schedules rekeyed, set seeded, attempts untouched', async () => {
   const source = await makeService();
   await source.seedContent([a]);
   const session = await source.startSession({ programId: PROGRAM_ID });
@@ -329,7 +330,8 @@ test('export 1.0.0 migrates to 1.1.0: schedules rekeyed, default seeded, attempt
   const parsed = parseExport(JSON.stringify(legacy));
   assert.equal(parsed.ok, true, !parsed.ok ? parsed.errors.join('; ') : '');
   if (!parsed.ok) return;
-  assert.equal(parsed.data.formatVersion, '1.1.0');
+  assert.equal(parsed.data.formatVersion, '1.2.0');
+  assert.deepEqual(parsed.data.collections.woodpecker, {}, 'new Woodpecker collection starts empty');
 
   const keys = Object.keys(parsed.data.collections.schedules ?? {});
   assert.deepEqual(keys, [`${PROGRAM_ID}:${DEFAULT_COLLECTION_ID}:a`]);
@@ -349,7 +351,7 @@ test('export/import round-trips collections and the active selection', async () 
   await source.setActiveCollectionId(second.id);
   const exported = await source.exportStore();
   assert.ok(exported.collections.collections);
-  assert.equal(exported.formatVersion, '1.1.0');
+  assert.equal(exported.formatVersion, '1.2.0');
 
   const target = await makeService();
   const roundTripped = parseExport(JSON.stringify(exported));
@@ -363,17 +365,108 @@ test('export/import round-trips collections and the active selection', async () 
   assert.equal(target.getActiveCollectionId(), second.id);
 });
 
-test('CollectionsView renders collections with membership and due counts', async () => {
+test('collections grid renders one card per collection without the add-puzzle input', async () => {
   setLocale('en');
   const service = await seedDefault();
   const ctrl = new CollectionsCtrl(service);
-  const texts = collectText(view(ctrl));
-  const joined = texts.join('\n');
-  assert.ok(texts.includes(t('collections.title')));
-  assert.ok(texts.includes('Default'));
-  assert.ok(joined.includes('2 puzzles'));
-  assert.ok(texts.includes('a'));
-  assert.ok(texts.includes('b'));
+  const root = view(ctrl);
+
+  const grids = findVNodes(root, (node) => node.sel === 'div.collections-grid');
+  assert.equal(grids.length, 1, 'list view wraps cards in a grid');
+
+  const cards = findVNodes(
+    root,
+    (node) => (node.data?.attrs as Record<string, unknown> | undefined)?.['data-collection'] !== undefined,
+  );
+  assert.equal(cards.length, ctrl.snapshot.rows.length);
+  assert.equal(
+    (cards[0]!.data?.attrs as Record<string, unknown>)['data-collection'],
+    DEFAULT_COLLECTION_ID,
+  );
+
+  const addInputs = findVNodes(
+    root,
+    (node) =>
+      typeof node.sel === 'string' &&
+      node.sel.startsWith('input') &&
+      typeof (node.data?.attrs as Record<string, unknown> | undefined)?.['id'] === 'string' &&
+      ((node.data!.attrs as Record<string, unknown>)['id'] as string).startsWith('add-'),
+  );
+  assert.equal(addInputs.length, 0, 'list cards have no add-puzzle input');
+});
+
+test('collectionIdFromHash parses the detail route and ignores the list route', () => {
+  assert.equal(collectionIdFromHash('#/collections'), null);
+  assert.equal(collectionIdFromHash('#/collections/'), null);
+  assert.equal(collectionIdFromHash('#/collections/abc'), 'abc');
+  assert.equal(collectionIdFromHash('#/collections/a%2Fb'), 'a/b');
+  assert.equal(collectionIdFromHash('#/collections/abc?x=1'), 'abc');
+  assert.equal(collectionIdFromHash('#/train'), null);
+});
+
+test('collection detail hides puzzle members by default and toggles them', async () => {
+  setLocale('en');
+  const service = await seedDefault();
+  let redraws = 0;
+  const ctrl = new CollectionsCtrl(service, () => {
+    redraws += 1;
+  });
+  ctrl.select(DEFAULT_COLLECTION_ID);
+
+  const collapsed = collectText(view(ctrl));
+  assert.ok(collapsed.includes(t('collections.details.members.title')));
+  assert.ok(collapsed.includes('Default'));
+  assert.ok(collapsed.join('\n').includes('2 puzzles'));
+  assert.ok(collapsed.includes(t('collections.members.show', { count: 2 })));
+  assert.ok(!collapsed.includes('a'), 'puzzle ids hidden by default');
+  assert.ok(!collapsed.includes('b'), 'puzzle ids hidden by default');
+
+  await ctrl.toggleMembers(DEFAULT_COLLECTION_ID);
+  const expanded = collectText(view(ctrl));
+  assert.ok(expanded.includes(t('collections.members.hide', { count: 2 })));
+  assert.ok(expanded.includes('a'));
+  assert.ok(expanded.includes('b'));
+  assert.ok(redraws >= 1, 'toggle ends in redraw');
+
+  await ctrl.toggleMembers(DEFAULT_COLLECTION_ID);
+  assert.ok(!collectText(view(ctrl)).includes('a'), 'second toggle collapses again');
+});
+
+test('cards and the detail page show Start until the collection has progress', async () => {
+  setLocale('en');
+  const service = await makeService();
+  await service.seedContent([a, b]);
+  const ctrl = new CollectionsCtrl(service);
+
+  // Fresh collection: both modes read "Start".
+  let texts = collectText(view(ctrl));
+  assert.ok(texts.includes(t('collections.start.spaced')));
+  assert.ok(texts.includes(t('collections.start.woodpecker')));
+
+  // Spaced progress (default program scope): learned puzzle flips only Spaced.
+  const session = await service.startSession({ programId: DEFAULT_PROGRAM_ID });
+  const started = await service.startAttempt({
+    sessionId: session.session.sessionId,
+    progressKey: { programId: DEFAULT_PROGRAM_ID, puzzleId: 'a', collectionId: DEFAULT_COLLECTION_ID },
+    expectedScheduleRevision: 0,
+  });
+  await service.commitOutcome({
+    attemptId: started.attemptId,
+    outcome: 'success',
+    timing: timing(),
+    expectedScheduleRevision: started.scheduleRevision,
+    idempotencyKey: 'resume-spaced',
+  });
+  ctrl.refresh();
+  texts = collectText(view(ctrl));
+  assert.ok(texts.includes(t('collections.resume.spaced')), 'spaced reads Resume after progress');
+  assert.ok(texts.includes(t('collections.start.woodpecker')), 'woodpecker still Start');
+
+  // Woodpecker progress: the internal set snapshot flips the Woodpecker label.
+  await service.getOrCreateWoodpeckerSetForCollection(DEFAULT_COLLECTION_ID);
+  ctrl.refresh();
+  texts = collectText(view(ctrl));
+  assert.ok(texts.includes(t('collections.resume.woodpecker')), 'woodpecker reads Resume after progress');
 });
 
 test('ctrl mutations end in redraw and refresh the snapshot', async () => {
@@ -449,10 +542,11 @@ test('rename is a two-step start/save flow with validation errors', async () => 
   assert.ok(redraws >= 3, 'each rename step ends in redraw');
 });
 
-test('default collection renders badges and a disabled delete', async () => {
+test('default collection detail renders badges and a disabled delete', async () => {
   setLocale('en');
   const service = await seedDefault();
   const ctrl = new CollectionsCtrl(service);
+  ctrl.select(DEFAULT_COLLECTION_ID);
   const root = view(ctrl);
   const texts = collectText(root);
   assert.ok(texts.includes(t('collections.badge.default')));
