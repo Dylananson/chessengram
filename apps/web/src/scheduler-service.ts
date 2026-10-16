@@ -55,7 +55,7 @@ import type {
   StartSessionResponse,
   TrainingService,
 } from '@chessreps/contracts';
-import { LocalStore, META_ACTIVE_SESSIONS, META_CONTENT_SET, META_PUZZLE_ORDER } from './storage/local-store.ts';
+import { LocalStore, META_ACTIVE_SESSIONS, META_BUNDLED_BANDS, META_CONTENT_SET, META_PUZZLE_ORDER } from './storage/local-store.ts';
 import {
   DEFAULT_COLLECTION_ID,
   META_ACTIVE_COLLECTION,
@@ -424,6 +424,51 @@ export class LocalTrainingService implements TrainingService {
       if (changed) await this.store.saveCollection({ ...record, puzzleIds: [...record.puzzleIds] });
     }
     return { added, replaced };
+  }
+
+  // --- bundled rating-band collections (F02) --------------------------------
+
+  /** Pack id already seeded as bundled bands, if any (meta read, no writes). */
+  async bundledBandsPackId(): Promise<string | undefined> {
+    return this.store.loadMeta<string>(META_BUNDLED_BANDS);
+  }
+
+  /**
+   * Seed bundled rating-band content exactly once per `packId`. Unlike
+   * {@link upsertPuzzles}, this never adds the new puzzles to the default (or
+   * any existing) collection: the starter collection keeps its original
+   * membership and each band becomes its own collection. Idempotent per pack
+   * via {@link META_BUNDLED_BANDS}, so a deleted band collection stays deleted.
+   */
+  async seedBundledCollections(
+    packId: string,
+    puzzles: readonly NormalizedPuzzle[],
+    collections: ReadonlyArray<{ id: string; name: string; puzzleIds: readonly string[] }>,
+  ): Promise<boolean> {
+    if ((await this.bundledBandsPackId()) === packId) return false;
+    if (puzzles.length > 0) {
+      for (const puzzle of puzzles) {
+        if (!this.puzzles.has(puzzle.id)) this.puzzleOrder.push(puzzle.id);
+        this.puzzles.set(puzzle.id, puzzle);
+      }
+      await this.store.savePuzzles(puzzles);
+      await this.store.saveMeta(META_PUZZLE_ORDER, [...this.puzzleOrder]);
+      await this.refreshContentMeta();
+    }
+    for (const definition of collections) {
+      if (this.collections.has(definition.id)) continue;
+      const record: CollectionRecord = {
+        id: definition.id,
+        name: definition.name,
+        // Stale ids are filtered now and at read time, like other collections.
+        puzzleIds: definition.puzzleIds.filter((id) => this.puzzles.has(id)),
+        createdAt: this.clock.now(),
+      };
+      this.collections.set(record.id, record);
+      await this.store.saveCollection(record);
+    }
+    await this.store.saveMeta(META_BUNDLED_BANDS, packId);
+    return true;
   }
 
   /**
