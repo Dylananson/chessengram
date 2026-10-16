@@ -39,8 +39,13 @@ IDs, or the IndexedDB DB name (`chessreps-player-spike`) are involved.
 
 - Smoke (`apps/web/scripts/smoke.mjs`, headless Chromium) covers: SW active,
   page controlled, cache holds shell + hashed bundle, **single versioned shell
-  cache (no stale shell)**, offline boot with network disabled.
-- Smoke cannot cover: cross-version activation (old worker → new worker
-  handover), PWA install prompts, OS-level offline reload, or backgrounding on
-  mobile. Those are rows 5, 8, 9 of `docs/tasks/T11-T15-MATRIX.md` — real-device
-  only.
+  cache (no stale shell)**, offline boot with network disabled, and — since
+  REL-001 — **cross-version activation**: it rewrites the served `sw.js` with a
+  bumped `CACHE_VERSION` plus a changed shell marker, calls
+  `registration.update()`, and asserts the new worker takes over the open page
+  (`controllerchange`), that only the new `chessreps-shell-v2` cache survives,
+  and that the reloaded page serves the new bundle. The rewritten files are
+  restored afterwards; `dist/` is a build artifact.
+- Smoke cannot cover: PWA install prompts, OS-level offline reload, or
+  backgrounding on mobile. Those are rows 5, 8, 9 of
+  `docs/tasks/T11-T15-MATRIX.md` — real-device only.

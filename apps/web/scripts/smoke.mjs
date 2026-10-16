@@ -12,7 +12,7 @@
 import puppeteer from 'puppeteer-core';
 import { createRequire } from 'node:module';
 import { spawn } from 'node:child_process';
-import { writeFileSync, mkdtempSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -611,6 +611,49 @@ try {
     check('app boots offline from the service worker', await page.$('#puzzle-id').then(Boolean));
   } finally {
     await page.setOfflineMode(false);
+  }
+
+  // --- REL-001: a new deploy activates and drops the old shell cache ----------
+  // Simulate the next release the way it really happens: bump the served
+  // worker's CACHE_VERSION and change the shell, then let the running page pick
+  // it up. This exercises the old-worker -> new-worker handover headlessly
+  // (previously real-device only), and proves a bump replaces the stale shell.
+  const swPath = join(root, 'dist', 'sw.js');
+  const indexPath = join(root, 'dist', 'index.html');
+  if (!existsSync(swPath) || !existsSync(indexPath)) {
+    check('a new deploy activates and replaces the stale shell', false, 'dist/sw.js or dist/index.html missing');
+  } else {
+    const originalSw = readFileSync(swPath, 'utf8');
+    const originalIndex = readFileSync(indexPath, 'utf8');
+    try {
+      writeFileSync(swPath, `${originalSw.replace('chessreps-shell-v1', 'chessreps-shell-v2')}\n// REL-001 smoke marker\n`);
+      writeFileSync(indexPath, originalIndex.replace('</body>', '<!-- rel-001-new-bundle -->\n</body>'));
+      const handover = await page.evaluate(async () => {
+        const registration = await navigator.serviceWorker.getRegistration();
+        if (!registration) return 'no-registration';
+        const changed = new Promise((resolve) => {
+          navigator.serviceWorker.addEventListener('controllerchange', () => resolve('controllerchange'), { once: true });
+          setTimeout(() => resolve('timeout'), 10000);
+        });
+        await registration.update();
+        return changed;
+      });
+      check('a new deploy takes over the open page', handover === 'controllerchange', handover);
+      await page.reload({ waitUntil: 'networkidle0', timeout: 20000 });
+      await page.waitForSelector('#board', { timeout: 10000 });
+      const afterKeys = await page.evaluate(async () =>
+        (await caches.keys()).filter((k) => k.startsWith('chessreps-shell-')));
+      check(
+        'the version bump replaced the old shell cache (no stale shell)',
+        afterKeys.length === 1 && afterKeys[0] === 'chessreps-shell-v2',
+        afterKeys.join(', ') || 'none',
+      );
+      const servedNewBundle = await page.evaluate(() => document.documentElement.outerHTML.includes('rel-001-new-bundle'));
+      check('the updated shell serves the new bundle', servedNewBundle);
+    } finally {
+      writeFileSync(swPath, originalSw);
+      writeFileSync(indexPath, originalIndex);
+    }
   }
 
   check('no page errors across the whole run', pageErrors.length === 0, pageErrors.join(' | '));
