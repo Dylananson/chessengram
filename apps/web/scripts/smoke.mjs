@@ -357,6 +357,28 @@ try {
   await page.click('[data-woodpecker-collection] button');
   await page.waitForSelector('.woodpecker-mode', { timeout: 5000 });
   check('Woodpecker cycle resumes from the collection card', await page.$eval('.woodpecker-mode', (el) => /Woodpecker cycle/.test(el.textContent)));
+
+  // --- F01: the isolated Failed-review queue is reachable and correctly routed ---
+  const failedSetId = await page.evaluate(() => new URLSearchParams(location.hash.split('?')[1] ?? '').get('setId'));
+  await page.evaluate((setId) => {
+    window.location.hash = `/train/woodpecker?mode=failed&setId=${encodeURIComponent(setId)}`;
+  }, failedSetId);
+  await page.waitForSelector('.woodpecker-mode', { timeout: 5000 });
+  const failedReview = await page.evaluate(() => ({
+    mode: document.querySelector('.woodpecker-mode')?.textContent ?? '',
+    heading: document.querySelector('.woodpecker-context h2')?.textContent ?? '',
+    status: document.querySelector('#status')?.textContent ?? '',
+  }));
+  check(
+    'Failed review route opens the isolated queue in its own mode',
+    /failed review/i.test(failedReview.mode) && failedReview.heading === 'Woodpecker · Failed review',
+    JSON.stringify(failedReview),
+  );
+  check(
+    'an empty Failed-review queue reports the empty state without crashing',
+    /No puzzles available/.test(failedReview.status),
+    failedReview.status,
+  );
   await page.click('[data-nav="dashboard"]');
   await page.waitForSelector('.dashboard-page', { timeout: 5000 });
   check('Dashboard shows spaced repetition and Woodpecker progress', await page.$('[data-dashboard-mode="spaced-repetition"]') !== null && await page.$('[data-dashboard-woodpecker]') !== null);
