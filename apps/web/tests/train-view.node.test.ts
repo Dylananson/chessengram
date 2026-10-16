@@ -178,8 +178,6 @@ test('createTrainShell creates the board host exactly once, apart from the patch
 const EXPECTED_IDS = [
   'status',
   'puzzle-id',
-  'rating',
-  'themes',
   'solver-color',
   'reveal-btn',
   'solution',
@@ -190,7 +188,6 @@ const EXPECTED_IDS = [
   'review-forward',
   'review-last',
   'skip-btn',
-  'next-btn',
   'practice-btn',
   'collection-picker',
   'queue',
@@ -219,6 +216,24 @@ test('view keeps every control id and never renders a board host', async () => {
     assert.equal(state.vnode.sel, 'div.controls', `${state.name}: stable controls root`);
   }
   assert.ok(!vnodeSels(view(ctrl)).some((sel) => sel.includes('#board')));
+});
+
+test('TRN-001 hides difficulty while solving and renders accessible symbol controls', async () => {
+  const { service, adapter } = await makeWorld(['trn-a']);
+  const ctrl = new TrainCtrl(service, adapter);
+  await ctrl.beginAttempt(await adapter.loadPuzzle('trn-a'));
+  let nodes = vnodeIds(view(ctrl));
+  assert.ok(!nodes.includes('rating') && !nodes.includes('themes'));
+  const next = findById(view(ctrl), 'next-btn');
+  assert.equal(next, null, 'Next is absent while disabled');
+  ctrl.nextDisabled = false;
+  const enabledNext = findById(view(ctrl), 'next-btn');
+  assert.equal(buttonText(enabledNext!), '>');
+  assert.equal(enabledNext?.data?.attrs?.['aria-label'], 'Next puzzle');
+  const analyze = findById(view(ctrl), 'analyze-btn');
+  assert.equal(buttonText(analyze!), '⌕');
+  assert.equal(analyze?.data?.attrs?.disabled, true);
+  assert.equal(analyze?.data?.attrs?.title, 'Stockfish analysis is planned for AN-001b.');
 });
 
 // --- 3. redraw storm mid-attempt never touches the board ---------------------

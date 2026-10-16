@@ -165,6 +165,8 @@ const en: LocaleMessages = {
   'solution.title': 'Solution',
   'board.title': 'Board',
   'next.label': 'Next puzzle',
+  'train.analyze.label': 'Analyze (planned for AN-001b)',
+  'train.analyze.title': 'Stockfish analysis is planned for AN-001b.',
   'next.none': 'No puzzle due',
   'restart.label': 'Try again',
   'promotion.title': 'Choose a promotion piece',

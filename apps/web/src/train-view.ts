@@ -1087,6 +1087,11 @@ function puzzleStatusLines(summary: PuzzleStatusSummary | null): VNode[] {
   ];
 }
 
+function formatSolveTimer(snapshot: ReturnType<AttemptTimer['snapshot']>): string {
+  const seconds = snapshot.activeSolvingSeconds + snapshot.correctionSeconds;
+  return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`;
+}
+
 /**
  * Pure view: same information, ids, classes, and strings as the pre-Snabbdom
  * template (board excluded — see {@link createTrainShell}). Board-adjacent
@@ -1100,13 +1105,10 @@ export function view(ctrl: TrainCtrl): VNode {
     h('div.info', [
       h('h2', { attrs: { 'data-i18n': 'puzzle.info' } }, t('puzzle.info')),
       h('p#puzzle-id', puzzle ? `${t('puzzle.id')}: ${puzzle.id}` : '-'),
-      h('p#rating', puzzle ? `${t('puzzle.rating')}: ${puzzle.rating}` : '-'),
-      h(
-        'p#themes',
-        puzzle
-          ? `${t('puzzle.themes')}: ${puzzle.themes.slice(0, 4).join(', ') || t('puzzle.none')}`
-          : '-',
-      ),
+      ...(ctrl.game?.isCompleted ? [
+        h('p#rating', puzzle ? `${t('puzzle.rating')}: ${puzzle.rating}` : '-'),
+        h('p#themes', puzzle ? `${t('puzzle.themes')}: ${puzzle.themes.slice(0, 4).join(', ') || t('puzzle.none')}` : '-'),
+      ] : []),
       h(
         'p#solver-color',
         puzzle ? `${t('puzzle.solver')}: ${t(`color.${puzzle.solverColor}`)}` : '-',
@@ -1114,6 +1116,7 @@ export function view(ctrl: TrainCtrl): VNode {
     ]),
     h('div.info', [
       h('h2', { attrs: { 'data-i18n': 'status.title' } }, t('status.title')),
+      h('p#solve-timer', formatSolveTimer(ctrl.timer.snapshot())),
       h(statusClass(ctrl), t(ctrl.status.key, ctrl.status.params)),
     ]),
     h('div.info', [
@@ -1197,11 +1200,13 @@ export function view(ctrl: TrainCtrl): VNode {
         disabled: ctrl.skipDisabled,
         onClick: () => void ctrl.onSkip(),
       }),
-      actionButton(t('next.label'), 'primary', {
-        id: 'next-btn',
-        disabled: ctrl.nextDisabled,
-        onClick: () => void ctrl.loadNext(),
-      }),
+      ...(!ctrl.nextDisabled ? [h('button#next-btn.button.button-primary', {
+        attrs: { type: 'button', 'aria-label': t('next.label') },
+        on: { click: () => void ctrl.loadNext() },
+      }, '>')] : []),
+      h('button#analyze-btn.button.button-secondary', {
+        attrs: { type: 'button', disabled: true, 'aria-label': t('train.analyze.label'), title: t('train.analyze.title') },
+      }, '⌕'),
       // BRD-003: restart affordance. Hidden until the puzzle completes
       // (success or correction-complete); the ↻ symbol keeps the button
       // compact (TRN-001) with the accessible name on `restart.label`.
@@ -1306,6 +1311,7 @@ export class TrainView implements Screen {
   private ctrl: TrainCtrl | null = null;
   private vnode: VNode | null = null;
   private unbindPromotion: (() => void) | null = null;
+  private timerInterval: ReturnType<typeof setInterval> | null = null;
 
   private get service() {
     return this.ctx.service;
@@ -1372,6 +1378,7 @@ export class TrainView implements Screen {
       );
       this.ctrl = ctrl;
       this.vnode = patch(shell.uiPlaceholder, view(ctrl));
+      this.timerInterval = setInterval(() => ctrl.redraw(), 1000);
       ctrl.redraw = () => {
         if (this.ctrl === null || this.vnode === null) return;
         this.vnode = patch(this.vnode, view(this.ctrl));
@@ -1401,6 +1408,8 @@ export class TrainView implements Screen {
   }
 
   unmount(): void {
+    if (this.timerInterval !== null) clearInterval(this.timerInterval);
+    this.timerInterval = null;
     document.removeEventListener('visibilitychange', this.onVisibility);
     window.removeEventListener('beforeunload', this.onBeforeUnload);
     this.hidePromotion();
