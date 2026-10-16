@@ -11,10 +11,8 @@ import { InMemoryStorageBackend } from '../src/storage/memory-backend.ts';
 import { makePuzzle, PROGRAM_ID, timing } from './fixtures.ts';
 
 /**
- * UX-001 regression: `selectNext` must never strand the user with a
- * non-empty library. The daily new-puzzle cap surfaces as
- * `daily-limit-reached`, plain all-future-due as `no-due-work`, both with the
- * earliest future due time; an empty library still reports `queue-empty`.
+ * UX-005 regression: normal due/new selection wins; when exhausted, Next
+ * falls back to scheduled future-due work, without introducing capped new work.
  */
 
 // Local noon avoids day-boundary surprises in the new-per-day cap accounting.
@@ -43,7 +41,7 @@ async function makeClockedService(
   return service;
 }
 
-test('(a) new-cap reached + learning future-due reports daily-limit-reached with nextDueAt', async () => {
+test('(a) new-cap reached falls back to earliest scheduled review, not capped new work', async () => {
   const { clock, set } = makeClock(T0);
   const service = await makeClockedService(clock, { newIntroductionLimitPerDay: 1 });
   await service.seedContent([makePuzzle({ id: 'n1' }), makePuzzle({ id: 'n2' })]);
@@ -60,9 +58,8 @@ test('(a) new-cap reached + learning future-due reports daily-limit-reached with
 
   // n2 is still new but the cap (1/day) is exhausted; n1 is future-due.
   const next = await adapter.selectNext();
-  assert.equal(next.puzzleId, null);
-  assert.equal(next.reason, 'daily-limit-reached');
-  assert.equal(next.nextDueAt, due);
+  assert.equal(next.puzzleId, 'n1');
+  assert.equal(next.reason, undefined);
 
   // Once the due time passes, normal eligible selection resumes (n1 due, n2 still capped).
   set(due + 1000);
@@ -70,7 +67,7 @@ test('(a) new-cap reached + learning future-due reports daily-limit-reached with
   assert.equal(later.puzzleId, 'n1');
 });
 
-test('(b) all future-due without cap pressure reports no-due-work with nextDueAt', async () => {
+test('(b) all future-due reviews fall back in earliest-due order', async () => {
   const { clock } = makeClock(T0);
   const service = await makeClockedService(clock);
   await service.seedContent([makePuzzle({ id: 'r1' }), makePuzzle({ id: 'r2' })]);
@@ -90,9 +87,7 @@ test('(b) all future-due without cap pressure reports no-due-work with nextDueAt
   assert.ok(due2 !== undefined && due2 > T0);
 
   const next = await adapter.selectNext();
-  assert.equal(next.puzzleId, null);
-  assert.equal(next.reason, 'no-due-work');
-  assert.equal(next.nextDueAt, Math.min(due1, due2));
+  assert.equal(next.puzzleId, due1 <= due2 ? 'r1' : 'r2');
 });
 
 test('(c) empty library still returns queue-empty', async () => {
@@ -107,7 +102,7 @@ test('(c) empty library still returns queue-empty', async () => {
   assert.equal(next.reason, 'queue-empty');
 });
 
-test('(d) future-due work is never selected early; normal selection resumes when due', async () => {
+test('(d) fallback is limited to active collection scope and scheduled candidates', async () => {
   const { clock, set } = makeClock(T0);
   const service = await makeClockedService(clock);
   await service.seedContent([makePuzzle({ id: 'shared' }), makePuzzle({ id: 'solo' })]);
@@ -158,9 +153,7 @@ test('(d) future-due work is never selected early; normal selection resumes when
   assert.ok(customDue !== undefined && customDue > defaultDue, 'scopes advance independently');
 
   const tooEarly = await customAdapter.selectNext();
-  assert.equal(tooEarly.puzzleId, null);
-  assert.equal(tooEarly.reason, 'no-due-work');
-  assert.equal(tooEarly.nextDueAt, customDue);
+  assert.equal(tooEarly.puzzleId, 'shared');
   set(customDue!);
   const duePick = await customAdapter.selectNext();
   assert.equal(duePick.puzzleId, 'shared');

@@ -929,10 +929,6 @@ export class LocalTrainingService implements TrainingService {
       : this.puzzleOrder;
     const newIntroductionsAllowed =
       this.countIntroducedToday(programId, now, scope?.id) < this.settings.newIntroductionLimitPerDay;
-    // UX-001: remember new puzzles suppressed by the daily cap so the
-    // no-eligible fallback can report `daily-limit-reached` distinctly from
-    // plain all-future-due (`no-due-work`).
-    let newCappedOut = false;
 
     for (const puzzleId of memberIds) {
       if (excluded.has(puzzleId)) continue;
@@ -942,7 +938,6 @@ export class LocalTrainingService implements TrainingService {
       const key = entry.key;
       const state = entry.schedule ?? this.scheduler.createState().schedule;
       if (state.state === 'new' && !newIntroductionsAllowed) {
-        newCappedOut = true;
         continue;
       }
       seen.add(key);
@@ -966,8 +961,23 @@ export class LocalTrainingService implements TrainingService {
 
     const chosen = selectNextDue(candidates, { now, reservedKeys: reserved, newOrder });
     if (!chosen) {
-      // Non-empty library with nothing eligible: preserve the next-due
-      // status without making future-due work selectable.
+      // Continue ordinary Next navigation with the earliest scheduled review
+      // when nothing is normally eligible. New puzzles suppressed by the
+      // introduction cap are deliberately not fallback candidates.
+      const futureScheduled = candidates
+        .filter((candidate) =>
+          candidate.state.state !== 'new' &&
+          candidate.state.dueAt !== undefined &&
+          candidate.state.dueAt > now &&
+          !reserved.has(candidate.progressKey),
+        )
+        .sort((a, b) =>
+          a.state.dueAt! - b.state.dueAt! ||
+          (a.orderKey < b.orderKey ? -1 : a.orderKey > b.orderKey ? 1 : 0),
+        );
+      if (futureScheduled[0]) {
+        return { puzzleId: parseScheduleKey(futureScheduled[0].progressKey)?.puzzleId ?? futureScheduled[0].progressKey };
+      }
       let nextDueAt: number | undefined;
       for (const candidate of candidates) {
         const dueAt = candidate.state.dueAt;
@@ -976,7 +986,7 @@ export class LocalTrainingService implements TrainingService {
       }
       return {
         puzzleId: null,
-        reason: newCappedOut ? 'daily-limit-reached' : 'no-due-work',
+        reason: 'no-due-work',
         nextDueAt,
       };
     }
