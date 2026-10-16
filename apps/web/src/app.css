@@ -9,6 +9,21 @@
   --accent: #007bff;
   --accent-dark: #0056b3;
 }
+
+.woodpecker-page { max-width: 900px; margin: 0 auto; padding: 1rem; }
+.woodpecker-page > section { margin-top: 1rem; }
+.woodpecker-set { margin: 0.75rem 0; }
+.woodpecker-members { margin: 0.75rem 0; }
+.woodpecker-members summary { cursor: pointer; font-weight: 600; }
+.woodpecker-puzzle-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(12rem, 1fr)); gap: 0.35rem; max-height: 18rem; overflow: auto; padding: 0.75rem 0; }
+.woodpecker-cycles { padding-left: 1.5rem; }
+.woodpecker-mode { font-weight: 600; }
+.dashboard-page { max-width: 1000px; margin: 0 auto; padding: 1rem; }
+.dashboard-page > .panel, .dashboard-section { margin: 1rem 0; }
+.dashboard-section > .panel { margin: 0.75rem 0; }
+.dashboard-woodpecker-set, .dashboard-collection { display: grid; gap: 0.35rem; }
+.dashboard-failed-summary { border-top: 1px solid var(--border); margin-top: 0.5rem; padding-top: 0.5rem; }
+.woodpecker-create-from-collection { display: flex; flex-wrap: wrap; align-items: end; gap: 0.5rem; margin-top: 0.75rem; }
 * {
   box-sizing: border-box;
 }
@@ -90,6 +105,7 @@ h1 {
 .board-actions-slot { margin-top: 10px; }
 .move-list ol { margin: 0; padding-left: 24px; font: 14px ui-monospace, SFMono-Regular, Menlo, monospace; }
 .move-list li { padding: 3px 4px; }
+.move-list li.setup-move { color: var(--muted); border-bottom: 1px solid var(--border); margin-bottom: 4px; padding-bottom: 6px; }
 .move-list li.wrong { color: #b42318; text-decoration: line-through; }
 .move-list li.current { background: rgba(0, 123, 255, 0.16); border-radius: 4px; font-weight: 700; }
 .move-list-empty { color: var(--muted); }
@@ -246,6 +262,31 @@ body.board-theme-classic cg-board { background-color: var(--square-light); }
 .progress-note {
   font-size: 12px;
   color: var(--muted);
+}
+.progress-bar {
+  display: block;
+  width: 100%;
+  height: 8px;
+  margin: 6px 0;
+  border: none;
+  border-radius: 999px;
+  background: var(--border);
+  overflow: hidden;
+  -webkit-appearance: none;
+  appearance: none;
+}
+.progress-bar::-webkit-progress-bar {
+  background: var(--border);
+  border-radius: 999px;
+}
+.progress-bar::-webkit-progress-value {
+  background: var(--accent);
+  border-radius: 999px;
+  transition: width 0.15s;
+}
+.progress-bar::-moz-progress-bar {
+  background: var(--accent);
+  border-radius: 999px;
 }
 /* Promotion picker: a mini board rank. Each choice is a themed square carrying
    the same cburnett piece art as the board, so symbols stay crisp and match the
@@ -497,6 +538,149 @@ body.board-theme-classic cg-board { background-color: var(--square-light); }
   flex-wrap: wrap;
   gap: 8px;
   align-items: center;
+}
+/* --- Collections: grid of cards + collection detail page (2026-10-16) --- */
+.collections-header {
+  margin-bottom: 20px;
+}
+.collections-header h1 {
+  margin: 0 0 6px;
+}
+.collections-subtitle {
+  max-width: 68ch;
+  margin: 0 0 14px;
+  color: var(--muted);
+}
+.collections-create {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+.collections-create input {
+  flex: 1 1 220px;
+  max-width: 320px;
+}
+.collections-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 18px;
+  margin: 14px 0 0;
+  color: var(--muted);
+  font-size: 12.5px;
+}
+.collections-legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.collections-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 16px;
+  align-items: stretch;
+}
+.collections-grid .panel {
+  margin-bottom: 0;
+}
+.collection-card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.collection-card h3.collection-card-title {
+  min-width: 0;
+  margin: 0;
+  font-size: 17px;
+}
+.collection-card-link {
+  color: inherit;
+  text-decoration: none;
+}
+.collection-card-link:hover,
+.collection-card-link:focus-visible {
+  color: var(--accent);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.collection-card-chevron {
+  margin-left: 5px;
+  color: var(--muted);
+  font-weight: 500;
+}
+.collection-card p {
+  margin: 0;
+}
+.collection-card-counts {
+  color: var(--muted);
+  font-size: 13px;
+}
+.collection-card-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: auto;
+}
+.collection-card-actions .button,
+.collection-card .woodpecker-create-from-collection .button {
+  width: 100%;
+}
+.collection-card .woodpecker-create-from-collection {
+  display: block;
+  padding: 0;
+  margin: 0;
+  border: 0;
+}
+.collection-card .woodpecker-create-from-collection .progress-note {
+  margin-top: 6px;
+}
+.collections-screen.collection-detail {
+  max-width: 900px;
+}
+.collection-detail .collection-detail-back {
+  margin-bottom: 10px;
+}
+.collection-detail-modes {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: 16px;
+  align-items: start;
+}
+.collection-detail-modes .panel {
+  margin-bottom: 0;
+}
+.collection-detail .button-tertiary:disabled {
+  background: transparent;
+  border-color: var(--border);
+  color: var(--muted);
+  opacity: 0.6;
+}
+.collection-detail-header h1 {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 6px 0;
+  font-size: clamp(22px, 3vw, 28px);
+}
+.collection-detail .member-list {
+  list-style: none;
+  margin: 10px 0 0 0;
+  padding: 0;
+  max-height: 22rem;
+  overflow: auto;
+}
+.collection-detail .member-list li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 0;
+  font-size: 14px;
+  border-bottom: 1px solid var(--border);
+}
+.collection-detail .member-list li:last-child {
+  border-bottom: none;
 }
 .field {
   display: flex;
