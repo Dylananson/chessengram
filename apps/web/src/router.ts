@@ -9,7 +9,15 @@
 
 import type { AppContext } from './app-context.ts';
 
-export type ScreenId = 'train' | 'puzzles' | 'collections' | 'settings' | 'history';
+export type ScreenId =
+  | 'dashboard'
+  | 'train'
+  | 'spaced'
+  | 'puzzles'
+  | 'collections'
+  | 'settings'
+  | 'history'
+  | 'woodpecker';
 
 export interface Screen {
   readonly id: ScreenId;
@@ -30,8 +38,12 @@ export function registerScreen(id: ScreenId, factory: ScreenFactory): void {
 
 export function parseHash(): ScreenId {
   const raw = window.location.hash.replace(/^#\/?/, '');
-  const id = raw.split('/')[0] as ScreenId;
-  return factories.has(id) ? id : 'train';
+  if (!raw) return factories.has('dashboard') ? 'dashboard' : 'train';
+  const [head, sub] = raw.split(/[/?]/);
+  // `#/train` is the Spaced Repetition hub; the board itself lives at
+  // `#/train/session` (and Woodpecker runs at `#/train/woodpecker?...`).
+  if (head === 'train') return sub ? 'train' : 'spaced';
+  return factories.has(head as ScreenId) ? (head as ScreenId) : 'train';
 }
 
 export function navigate(id: ScreenId): void {
@@ -52,7 +64,14 @@ export function startRouter(ctx: AppContext, host: HTMLElement): () => void {
     if (!factory) throw new Error(`no screen registered for '${id}'`);
     currentScreen = factory(ctx);
     updateNav(id);
-    await currentScreen.mount(hostEl!);
+    // Keep the router's host stable. Snabbdom screen views replace their
+    // mount node during the initial patch, so mounting directly into hostEl
+    // would leave subsequent navigations targeting a detached node.
+    hostEl!.replaceChildren();
+    const mountHost = document.createElement('div');
+    mountHost.className = 'screen-content';
+    hostEl!.appendChild(mountHost);
+    await currentScreen.mount(mountHost);
   };
   registeredNav = () => void render();
   window.addEventListener('hashchange', registeredNav);
@@ -63,8 +82,18 @@ export function startRouter(ctx: AppContext, host: HTMLElement): () => void {
 }
 
 function updateNav(active: ScreenId): void {
+  // Woodpecker cycle and Failed-review sessions share the Train board screen,
+  // but belong to the Woodpecker workflow in the app navigation. The Spaced
+  // Repetition hub (`spaced`) owns the `train` nav item; the board (`train`)
+  // keeps it highlighted while training.
+  const route = window.location.hash.replace(/^#\/?/, '').split('?')[0] ?? '';
+  const activeNav = active === 'train' && route.startsWith('train/woodpecker')
+    ? 'woodpecker'
+    : active === 'spaced'
+      ? 'train'
+      : active;
   document.querySelectorAll<HTMLElement>('[data-nav]').forEach((el) => {
-    const isActive = el.dataset.nav === active;
+    const isActive = el.dataset.nav === activeNav;
     el.classList.toggle('nav-active', isActive);
     el.setAttribute('aria-current', isActive ? 'page' : 'false');
   });
