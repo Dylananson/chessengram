@@ -70,6 +70,7 @@ try {
   if (!executablePath) throw new Error('no chromium binary found; set CHROMIUM_PATH');
   browser = await puppeteer.launch({
     executablePath,
+    userDataDir: mkdtempSync(join(tmpdir(), 'chessreps-browser-')),
     headless: true,
     args: ['--no-sandbox', '--disable-gpu'],
   });
@@ -81,7 +82,13 @@ try {
   });
   page.on('dialog', (d) => void d.accept());
 
-  await page.goto(BASE, { waitUntil: 'networkidle0', timeout: 20000 });
+  // Start from a known-empty store so stale browser state cannot make the
+  // bundled collection appear empty or skew row-count assertions. Boot straight
+  // onto the board (`#/train/session`); the hub is exercised below.
+  await page.goto(`${BASE}?reset=1#/train/session`, { waitUntil: 'networkidle0', timeout: 20000 });
+  // The reset flag is only for first boot; remove it so page reload assertions
+  // below verify persistence instead of intentionally clearing the store.
+  await page.evaluate(() => history.replaceState(null, '', `${location.pathname}${location.hash}`));
 
   check('no page errors on boot', pageErrors.length === 0, pageErrors.join(' | '));
 
@@ -104,10 +111,11 @@ try {
     els.map((el) => el.getAttribute('data-nav')),
   );
   check(
-    'nav has all five screens',
-    JSON.stringify(navIds) === JSON.stringify(['train', 'puzzles', 'collections', 'settings', 'history']),
+    'nav has all seven screens',
+    JSON.stringify(navIds) === JSON.stringify(['dashboard', 'woodpecker', 'train', 'puzzles', 'collections', 'settings', 'history']),
     `got [${navIds}]`,
   );
+  check('normal training tab is labeled Spaced Repetition', await page.$eval('[data-nav="train"]', (el) => el.textContent) === 'Spaced Repetition');
 
   const queueText = await page.$eval('#queue', (el) => el.textContent).catch(() => '');
   check('queue summary rendered', /puzzles/.test(queueText), queueText.trim());
@@ -115,9 +123,49 @@ try {
     els.map((el) => el.querySelector('h2')?.textContent?.trim()),
   );
   check('details column has Training Status and Puzzle sections', JSON.stringify(detailsSections) === JSON.stringify(['Training Status', 'Puzzle']), JSON.stringify(detailsSections));
+  const leftCardPadding = await page.$eval('.controls-left > .train-section', (el) => getComputedStyle(el).paddingLeft);
+  check('Train left-column cards have breathing room inside their borders', parseFloat(leftCardPadding) >= 14, leftCardPadding);
   check('standalone solution panel is absent', !(await page.$('#solution')));
 
   check('train board mounted', await page.$('#board').then(Boolean));
+
+  // PZL-004: starting a puzzle shows the opponent's setup move with an
+  // animation; its squares stay highlighted as the last move once it settles.
+  await sleep(700);
+  const setupHighlights = await page.$$eval('cg-board square.last-move', (els) => els.length);
+  check(
+    'starting a puzzle animates the opponent setup move (last-move highlight)',
+    setupHighlights >= 2,
+    `last-move squares: ${setupHighlights}`,
+  );
+  const currentMoves = await page.$$eval('.move-list .moves-move.current .moves-san', (els) =>
+    els.map((el) => el.textContent?.trim()),
+  );
+  check(
+    'the current move is highlighted in the move list',
+    currentMoves.length === 1,
+    JSON.stringify(currentMoves),
+  );
+
+  // Reload resumes the in-progress attempt; the setup move and the stepper must
+  // survive it (regression guard, user report 2026-10-16: a reload dropped both).
+  await page.reload({ waitUntil: 'networkidle0', timeout: 20000 });
+  await page.waitForSelector('#board', { timeout: 10000 });
+  await sleep(700);
+  const resumedBoard = await page.evaluate(() => ({
+    lastMoveSquares: document.querySelectorAll('cg-board square.last-move').length,
+    navHidden: document.querySelector('.review-nav')?.classList.contains('hidden') ?? true,
+    backDisabled: document.querySelector('#review-back')?.hasAttribute('disabled') ?? true,
+    currentCells: document.querySelectorAll('.move-list .current').length,
+  }));
+  check(
+    'a reload keeps the setup move and a usable stepper (◀ back)',
+    resumedBoard.lastMoveSquares >= 2
+      && resumedBoard.navHidden === false
+      && resumedBoard.backDisabled === false
+      && resumedBoard.currentCells === 1,
+    JSON.stringify(resumedBoard),
+  );
 
   await page.setViewport({ width: 1280, height: 900 });
   const desktopTrainLayout = await page.evaluate(() => {
@@ -165,10 +213,57 @@ try {
 
   check('Reveal action is available without a solution text panel', Boolean(await page.$('#reveal-btn')) && !(await page.$('#solution')));
 
+  // Hint highlights the next solver source square (green circle). It must also
+  // work after a reload, where the open attempt is resumed and the ctrl's
+  // `currentPuzzle` fallback kicks in.
+  const hintCircles = () => page.$$eval('.cg-shapes circle', (els) => els.length);
+  await page.click('#hint-btn');
+  await sleep(150);
+  check('Hint draws a source-square shape', (await hintCircles()) >= 1, `circles: ${await hintCircles()}`);
+  await page.reload({ waitUntil: 'networkidle0', timeout: 20000 });
+  await page.waitForSelector('#board', { timeout: 10000 });
+  await sleep(500);
+  await page.click('#hint-btn');
+  await sleep(150);
+  check('Hint still draws after a reload resumes the attempt', (await hintCircles()) >= 1, `circles: ${await hintCircles()}`);
+
   // Reveal starts on-board playback and abandons the attempt without scoring.
   await page.click('#reveal-btn');
   await sleep(250);
   check('reveal keeps solution text panel absent', !(await page.$('#solution')));
+  const revealedMoves = await page.evaluate(() => {
+    const root = document.querySelector('.controls-right .move-list');
+    if (!root) return null;
+    const rows = [...root.querySelectorAll('ol.moves-list > li.moves-row')];
+    return {
+      heading: root.querySelector('h2')?.textContent?.trim(),
+      indexes: rows.map((row) => row.querySelector('.moves-index')?.textContent?.trim() ?? ''),
+      san: rows.flatMap((row) =>
+        [...row.querySelectorAll('.moves-move:not(.empty)')].map(
+          (cell) => cell.querySelector('.moves-san')?.textContent?.trim() ?? '',
+        ),
+      ),
+      glyphs: rows.flatMap((row) =>
+        [...row.querySelectorAll('.moves-move:not(.empty) .moves-piece')].map(
+          (piece) => piece.textContent?.trim() ?? '',
+        ),
+      ),
+    };
+  });
+  check(
+    'move list renders Lichess-style numbered rows with SAN and piece glyphs',
+    Boolean(
+      revealedMoves &&
+        revealedMoves.heading === 'Moves' &&
+        revealedMoves.indexes.length > 0 &&
+        revealedMoves.indexes.every((index) => /^\d+$/.test(index)) &&
+        revealedMoves.san.length > 0 &&
+        revealedMoves.san.every(Boolean) &&
+        revealedMoves.glyphs.length === revealedMoves.san.length &&
+        revealedMoves.glyphs.every(Boolean),
+    ),
+    JSON.stringify(revealedMoves),
+  );
   const revealedStatus = await page.$eval('#status', (el) => el.textContent).catch(() => '');
   check('reveal reports no score recorded', /no score recorded/.test(revealedStatus), revealedStatus.trim());
 
@@ -191,13 +286,90 @@ try {
     check('Next moves to a different puzzle after reveal', idAfter !== idBefore, `${idBefore} -> ${idAfter}`);
   }
 
+  // --- Collections create shared content and Woodpecker set --------------------
+  await hash(page, 'collections');
+  await page.waitForSelector('.collections-screen', { timeout: 5000 });
+  const bandSummaries = await page.$$eval(
+    '[data-collection^="lichess-bands-v1-"] > p',
+    (els) => els.map((el) => el.textContent),
+  );
+  check(
+    'Collections includes five bundled rating bands of 500 varied puzzles',
+    bandSummaries.length === 5 && bandSummaries.every((text) => /500 puzzles/.test(text)),
+    JSON.stringify(bandSummaries),
+  );
+  const bandThemes = await page.evaluate(async () => {
+    const response = await fetch('/data/puzzles/lichess-bands-v1/bands.json');
+    const document = await response.json();
+    return document.bands.map((band) => new Set(band.puzzleIds).size);
+  });
+  check(
+    'each bundled band has 500 distinct puzzles',
+    bandThemes.length === 5 && bandThemes.every((size) => size === 500),
+    JSON.stringify(bandThemes),
+  );
+  check('Collections renders a responsive grid of cards', (await page.$('.collections-grid')) !== null);
+  check('Collections cards omit the add-puzzle input', (await page.$('.collections-grid input[id^="add-"]')) === null);
+  await page.click('.collections-grid [data-collection] [id^="collection-view-"]');
+  await page.waitForSelector('[data-collection-detail]', { timeout: 5000 });
+  check('Collection card opens a detail page', (await page.$('[data-collection-detail]')) !== null);
+  check('Collection detail collapses puzzle members by default', (await page.$('.member-list')) === null);
+  await page.click('[id^="members-toggle-"]');
+  await page.waitForSelector('.member-list li', { timeout: 5000 });
+  check('Collection detail expands puzzle members on toggle', (await page.$$('.member-list li')).length > 0);
+  // Back to the grid for the Woodpecker start check below.
+  await hash(page, 'collections');
+  await page.waitForSelector('.collections-grid', { timeout: 5000 });
+
+  // --- Woodpecker starts from a collection (no user-facing "set") --------------
+  check('Collections starts Woodpecker directly without a set form', (await page.$('input[id^="woodpecker-name-"]')) === null);
+  await page.click('.collections-screen [data-collection] .woodpecker-create-from-collection button');
+  await page.waitForSelector('.woodpecker-mode', { timeout: 5000 });
+  const woodpeckerMode = await page.$eval('.woodpecker-mode', (el) => el.textContent);
+  check('Starting Woodpecker from a collection opens the trainer', /Woodpecker cycle/.test(woodpeckerMode), woodpeckerMode);
+  check('Woodpecker trainer identifies collection and cycle position', await page.$eval('.woodpecker-context', (el) => /Default/.test(el.textContent) && /Cycle 1/.test(el.textContent) && /Puzzle 1 of 100/.test(el.textContent)));
+  check('Woodpecker trainer shows cycle progress as a bar', await page.$eval('.woodpecker-context progress.progress-bar', (el) => el.max === 100 && el.value === 0));
+  check('Woodpecker trainer offers Previous/Next review controls', (await page.$('#woodpecker-prev-btn')) !== null && (await page.$('#woodpecker-next-btn')) !== null);
+  // At the start of the cycle (puzzle 1, nothing covered) neither direction may
+  // move: Next must never skip ahead of real progress.
+  check('Woodpecker review cannot skip ahead of progress', await page.$eval('#woodpecker-next-btn', (el) => el.disabled) && await page.$eval('#woodpecker-prev-btn', (el) => el.disabled));
+  check('Woodpecker trainer hides ordinary schedule and collection controls', !(await page.$('#queue')) && !(await page.$('#collection-picker')) && !(await page.$('.training-status-section')));
+  check('Woodpecker solver selects the Woodpecker menu tab', await page.$eval('[data-nav="woodpecker"]', (el) => el.getAttribute('aria-current') === 'page') && await page.$eval('[data-nav="train"]', (el) => el.getAttribute('aria-current') === 'false'));
+
+  // --- Woodpecker overview lists collections, not sets -------------------------
+  await hash(page, 'woodpecker');
+  await page.waitForSelector('.woodpecker-page', { timeout: 5000 });
+  check('Woodpecker overview lists collections instead of sets', (await page.$('[data-woodpecker-collection]')) !== null && (await page.$('[data-woodpecker-set]')) === null && (await page.$('#woodpecker-create')) === null);
+  const wpSize = await page.$eval('[data-woodpecker-collection] > p', (el) => el.textContent);
+  check('Woodpecker collection card names the collection snapshot', /100 puzzles/.test(wpSize), wpSize);
+  check('Woodpecker collection overview shows accumulated progress', await page.$eval('[data-woodpecker-collection] .woodpecker-set-progress', (el) => /Progress/.test(el.textContent) && /0 scored attempts/.test(el.textContent)));
+  check('Woodpecker overview shows cycle progress as a bar', await page.$eval('[data-woodpecker-collection] .woodpecker-set-progress progress.progress-bar', (el) => el.max === 100 && el.value === 0) && await page.$eval('[data-woodpecker-collection] .woodpecker-cycles progress.progress-bar', (el) => el.max === 100));
+
+  await page.click('[data-nav="train"]');
+  await page.waitForSelector('.spaced-page', { timeout: 5000 });
+  check('Spaced Repetition tab opens the hub and is selected', await page.$eval('[data-nav="train"]', (el) => el.getAttribute('aria-current') === 'page') && (await page.$('.spaced-collection')) !== null);
+  await page.click('.spaced-collection button');
+  await page.waitForSelector('#queue', { timeout: 5000 });
+  check('Spaced Repetition hub start opens normal training', (await page.$('#board')) !== null && !(await page.$('.woodpecker-mode')));
+  await page.click('[data-nav="woodpecker"]');
+  await page.waitForSelector('.woodpecker-page', { timeout: 5000 });
+  check('Woodpecker tab returns to the collection overview', await page.$eval('[data-nav="woodpecker"]', (el) => el.getAttribute('aria-current') === 'page'));
+  await page.click('[data-woodpecker-collection] button');
+  await page.waitForSelector('.woodpecker-mode', { timeout: 5000 });
+  check('Woodpecker cycle resumes from the collection card', await page.$eval('.woodpecker-mode', (el) => /Woodpecker cycle/.test(el.textContent)));
+  await page.click('[data-nav="dashboard"]');
+  await page.waitForSelector('.dashboard-page', { timeout: 5000 });
+  check('Dashboard shows spaced repetition and Woodpecker progress', await page.$('[data-dashboard-mode="spaced-repetition"]') !== null && await page.$('[data-dashboard-woodpecker]') !== null);
+  check('Dashboard identifies in-progress Woodpecker work', await page.$eval('[data-dashboard-woodpecker]', (el) => /Currently solving/.test(el.textContent)));
+  check('Dashboard shows Woodpecker cycle progress as a bar', await page.$eval('[data-dashboard-woodpecker] progress.progress-bar', (el) => el.max === 100 && el.value === 0));
+
   // --- Puzzles screen: creator -------------------------------------------------
   await hash(page, 'puzzles');
   const packVisible = await page.$eval('#screen .panel h3', (el) => el.textContent).catch(() => '');
   check('puzzles screen shows the pack panel', /Pack/.test(packVisible), packVisible);
 
   const rowsBefore = await page.$$eval('#puzzles-list tbody tr', (r) => r.length);
-  check('library lists the bundled pack', rowsBefore === 100, `${rowsBefore} rows`);
+  check('library lists the starter and bundled band packs', rowsBefore === 2600, `${rowsBefore} rows`);
 
   await page.click('#puzzles-new-btn');
   await page.waitForSelector('#pc-save', { timeout: 5000 });
@@ -214,7 +386,7 @@ try {
   check('creator produced an id', Boolean(createdId), createdId);
 
   const rowsAfterCreate = await page.$$eval('#puzzles-list tbody tr', (r) => r.length);
-  check('created puzzle appears in the library', rowsAfterCreate === 101, `${rowsAfterCreate} rows`);
+  check('created puzzle appears in the library', rowsAfterCreate === 2601, `${rowsAfterCreate} rows`);
   const createdInList = createdId
     ? await page.$$eval('#puzzles-list tbody tr td:first-child', (cells, id) =>
         cells.some((c) => c.textContent === id), createdId)
@@ -360,7 +532,14 @@ try {
 
   // Restore the pre-import snapshot; this must bring the library back.
   await page.click('[data-restore]');
-  await sleep(500);
+  // Restoring rewrites the whole (now larger) library, so wait for the result
+  // rather than a fixed delay.
+  await page
+    .waitForFunction(
+      () => /Restored/.test(document.querySelector('#settings-message')?.textContent ?? ''),
+      { timeout: 20000 },
+    )
+    .catch(() => {});
   const restoredMessage = await page.$eval('#settings-message', (el) => el.textContent).catch(() => '');
   check('restore reports success', /Restored/.test(restoredMessage), restoredMessage.trim());
   await hash(page, 'puzzles');
@@ -379,7 +558,7 @@ try {
   check('service worker is active', swState === 'ready', swState);
 
   // Warm the cache under SW control, then boot with the network disabled.
-  await hash(page, 'train');
+  await hash(page, 'train/session');
   await page.waitForSelector('#board', { timeout: 10000 });
   await page.reload({ waitUntil: 'networkidle0', timeout: 20000 });
   await page.waitForSelector('#board', { timeout: 10000 });
