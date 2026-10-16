@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import { strict as assert } from 'node:assert';
-import { PuzzleGame, buildPlaybackSteps } from '../src/puzzle-game.ts';
+import { PuzzleGame, buildMoveList, buildPlaybackSteps } from '../src/puzzle-game.ts';
 import { makePuzzle, promotionPuzzle, setupMovePuzzle } from './fixtures.ts';
 
 test('correct solver move advances and auto-plays the opponent reply', () => {
@@ -203,4 +203,65 @@ test('BRD-004: buildPlaybackSteps renders promotion plies and the final mate', (
   const mate = buildPlaybackSteps(mateFen, ['h5f7']);
   assert.equal(mate.length, 1);
   assert.ok(mate[0]!.fen.includes('pppp1Qpp'), 'queen delivered mate on f7');
+});
+
+test('PZL-002: buildMoveList pairs white and black by move number with SAN and glyphs', () => {
+  const puzzle = makePuzzle({ id: 'list', solution: ['e2e4', 'e7e5', 'g1f3'] });
+  const rows = buildMoveList(
+    puzzle,
+    [{ uci: 'e2e4', correct: true }, { uci: 'g1f3', correct: true }],
+    { complete: true },
+  );
+  assert.deepEqual(
+    rows.map((row) => row.number),
+    [1, 2],
+  );
+  assert.equal(rows[0]!.white!.san, 'e4');
+  assert.equal(rows[0]!.white!.glyph, '♙');
+  assert.equal(rows[0]!.black!.san, 'e5');
+  assert.equal(rows[0]!.black!.glyph, '♟');
+  assert.equal(rows[1]!.white!.san, 'Nf3');
+  assert.equal(rows[1]!.white!.glyph, '♘');
+  assert.equal(rows[1]!.black, null, 'unplayed black slot stays empty');
+});
+
+test('PZL-002: buildMoveList keeps the setup move as numbered context', () => {
+  const rows = buildMoveList(setupMovePuzzle, []);
+  assert.equal(rows.length, 1);
+  const setup = rows[0]!.black!;
+  assert.equal(rows[0]!.number, 33, 'setup ply keeps the source move number');
+  assert.equal(rows[0]!.white, null);
+  assert.equal(setup.san, 'Rxf4');
+  assert.equal(setup.glyph, '♜');
+  assert.equal(setup.setup, true);
+});
+
+test('PZL-003: reverted wrong attempts are omitted from the played line', () => {
+  const puzzle = makePuzzle({ id: 'list-wrong', solution: ['e2e4', 'e7e5'] });
+  const rows = buildMoveList(puzzle, [
+    { uci: 'd2d4', correct: false },
+    { uci: 'e2e4', correct: true },
+  ]);
+  assert.equal(rows.length, 1, 'the reverted attempt leaves no row');
+  assert.equal(rows[0]!.white!.san, 'e4');
+  assert.equal(rows[0]!.black!.san, 'e5');
+
+  const onlyWrong = buildMoveList(puzzle, [{ uci: 'd2d4', correct: false }]);
+  assert.deepEqual(onlyWrong, [], 'a reverted attempt alone shows no moves');
+});
+
+test('PZL-002: a completed line reveals the remaining solution; spoiler-free when incomplete', () => {
+  const puzzle = makePuzzle({ id: 'list-complete', solution: ['e2e4', 'e7e5', 'g1f3'] });
+  const partial = buildMoveList(puzzle, [{ uci: 'e2e4', correct: true }]);
+  assert.equal(partial.length, 1, 'only played plies are shown while solving');
+  assert.equal(partial[0]!.black!.san, 'e5');
+  const full = buildMoveList(puzzle, [{ uci: 'e2e4', correct: true }], { complete: true });
+  assert.equal(full.length, 2);
+  assert.equal(full[1]!.white!.san, 'Nf3');
+});
+
+test('PZL-002: promotion plies show the pawn glyph and promotion SAN', () => {
+  const rows = buildMoveList(promotionPuzzle, [{ uci: 'b7b8q', correct: true }], { complete: true });
+  assert.equal(rows[0]!.white!.glyph, '♙');
+  assert.match(rows[0]!.white!.san, /^b8=Q/);
 });

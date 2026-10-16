@@ -108,10 +108,33 @@ test('multi-ply setup-move puzzle projects the full attempt', () => {
   ]);
   assert.deepEqual(
     steps.map((s) => s.mover),
-    ['start', 'solver', 'opponent', 'wrong', 'solver'],
+    ['start', 'setup', 'solver', 'opponent', 'wrong', 'solver'],
   );
-  assert.equal(steps[3]!.fen, steps[2]!.fen);
-  assert.equal(steps[4]!.ply, 3);
+  assert.equal(steps[4]!.fen, steps[3]!.fen);
+  assert.equal(steps[5]!.ply, 3);
+});
+
+test('the setup move is the first reviewable step, reachable from the source position', () => {
+  const line = buildReviewLine(setupMovePuzzle, []);
+  assert.deepEqual(line.map((s) => s.mover), ['start', 'setup']);
+  assert.equal(line[0]!.fen, setupMovePuzzle.sourceFen, 'step 0 is the position before the setup move');
+  assert.equal(line[0]!.uci, null);
+
+  const nav = new ReviewNavigator(line);
+  nav.first();
+  assert.equal(nav.position, 0);
+  nav.forward();
+  assert.equal(nav.current().uci, 'f8f4', 'the first move played is the setup move');
+  assert.equal(nav.current().fen, setupMovePuzzle.solverFen, 'stepping forward lands on the solver position');
+  assert.equal(nav.canForward, false);
+});
+
+test('a puzzle without a setup move has no setup step', () => {
+  const line = buildReviewLine(makePuzzle({ id: 'no-setup', solution: ['e2e4'] }), [
+    event('move', 'e2e4', true),
+  ]);
+  assert.deepEqual(line.map((s) => s.mover), ['start', 'solver']);
+  assert.equal(line[0]!.fen, 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1');
 });
 
 test('ReviewNavigator starts at the end and walks the full line both ways', () => {

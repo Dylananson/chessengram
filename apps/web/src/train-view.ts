@@ -55,20 +55,27 @@ import { t } from './i18n.ts';
 import {
   PuzzleGame,
   ReviewNavigator,
+  buildMoveList,
   buildPlaybackSteps,
   buildReviewLine,
+  orderedAttemptMoves,
+  type MoveListCell,
   type PlaybackStep,
   type PromotionRole,
 } from './puzzle-game.ts';
 import type { Screen } from './router.ts';
 import {
   DEFAULT_PROGRAM_ID,
+  WOODPECKER_CYCLE_PROGRAM_ID,
+  WOODPECKER_FAILED_PROGRAM_ID,
+  WOODPECKER_REVIEW_PROGRAM_ID,
+  woodpeckerScopeId,
   progressKeyToString,
   type LocalTrainingService,
 } from './scheduler-service.ts';
 import { AttemptTimer } from './timing.ts';
 import type { TrainingAdapter } from './training-adapter.ts';
-import { actionButton } from './ui/primitives.ts';
+import { actionButton, progressBar } from './ui/primitives.ts';
 import { projectPuzzleStatus, type PuzzleStatusSummary } from './puzzle-status.ts';
 // Screen patch function: the shared `./ui/patch.ts` setup (`attributes`
 // for ids/disabled, `eventListeners` for `on: { click/change }`, `props`
@@ -95,6 +102,11 @@ export interface TrainBoardPort {
    * keep working.
    */
   cancelPremove?(): void;
+  /**
+   * PZL-004: animate a programmatic move (the puzzle's setup move) without
+   * going through the grading path. Optional so existing fakes keep working.
+   */
+  move?(orig: Key, dest: Key): void;
   destroy(): void;
 }
 
@@ -174,6 +186,7 @@ export class TrainCtrl {
   infoPuzzle: NormalizedPuzzle | null = null;
   currentPuzzle: NormalizedPuzzle | null = null;
   review: ReviewNavigator | null = null;
+  private reviewSignature = '';
   /**
    * BRD-004 reveal playback: paced, read-only replay of the solution line
    * after a reveal-abandon. Steps are precomputed FENs (never graded, never
@@ -183,12 +196,31 @@ export class TrainCtrl {
    */
   playingBack = false;
   playbackPaceMs = 650;
+  /**
+   * PZL-004 setup-move prelude: after a puzzle loads, the board shows the
+   * position before the opponent's setup move, then animates that move. This
+   * is the pause before the animation starts. Public so Node tests can speed
+   * the clock without touching the production pace.
+   */
+  setupMoveDelayMs = 400;
   private playbackSteps: PlaybackStep[] = [];
   private playbackIndex = 0;
   private playbackTimer: ReturnType<typeof setTimeout> | null = null;
+  private setupAnimTimer: ReturnType<typeof setTimeout> | null = null;
   private reviewKeyTarget: Pick<Window, 'addEventListener' | 'removeEventListener'> | null = null;
   private readonly onReviewKeydown = (event: KeyboardEvent): void => {
-    if (!this.review || !this.game?.isCompleted || this.disposed) return;
+    if (!this.review || !this.game || this.disposed) return;
+    // Never hijack arrow keys inside form controls (collection picker, etc.).
+    const target = event.target as HTMLElement | null;
+    if (
+      target &&
+      (target.tagName === 'INPUT' ||
+        target.tagName === 'SELECT' ||
+        target.tagName === 'TEXTAREA' ||
+        target.isContentEditable)
+    ) {
+      return;
+    }
     const direction = ({
       ArrowLeft: 'back',
       ArrowRight: 'forward',
@@ -209,9 +241,16 @@ export class TrainCtrl {
   collections: TrainCollectionOption[] = [];
   activeCollectionId = '';
   progressText = '';
-  storageText = '';
   queueText = '';
   puzzleStatus: PuzzleStatusSummary | null = null;
+  woodpeckerRun: { kind: 'cycle' | 'failed'; setId: string; cycleId?: string } | null = null;
+  /**
+   * User request 2026-10-16: 1-based index into the cycle's puzzle list when
+   * the current attempt is an unscored review of an earlier puzzle, else null.
+   * Public for the view's Prev/Next state.
+   */
+  woodpeckerReviewPosition: number | null = null;
+  private woodpeckerResultRecorded = false;
 
   board: TrainBoardPort;
   promotionUi: TrainPromotionUi;
@@ -251,6 +290,7 @@ export class TrainCtrl {
     this.disposed = true;
     this.stopReviewKeys();
     this.stopPlayback();
+    this.clearSetupAnimation();
     this.clearHint();
     this.board = NoopBoard;
     this.promotionUi = NoopPromotionUi;
@@ -266,6 +306,60 @@ export class TrainCtrl {
   }
 
   // --- board rendering -----------------------------------------------------
+
+  /** PZL-004: drop any pending setup-move animation (navigation, teardown). */
+  private clearSetupAnimation(): void {
+    if (this.setupAnimTimer === null) return;
+    clearTimeout(this.setupAnimTimer);
+    this.setupAnimTimer = null;
+    // The prelude disables animation for its snap; restore the mount default
+    // so later user/reply moves animate again even if the prelude was cut off.
+    this.board.set({ animation: { enabled: true } });
+  }
+
+  /**
+   * PZL-004: when a puzzle starts with an opponent setup move, show the
+   * position before it and animate the move into the solver position. Purely
+   * presentational — never graded and never written to attempt history; the
+   * solver's own first move is handled by the normal flow once this lands.
+   * Returns true when it took over the initial board render.
+   *
+   * `puzzle` defaults to the current puzzle; the resume path passes the resumed
+   * puzzle explicitly because it deliberately leaves `currentPuzzle` unset.
+   */
+  private startSetupAnimation(puzzle: NormalizedPuzzle | null | undefined = this.currentPuzzle): boolean {
+    const game = this.game;
+    const keys = puzzle?.setupMove ? uciToKeys(puzzle.setupMove) : undefined;
+    if (!puzzle || !game || !keys || this.disposed) return false;
+    const [from, to] = keys as [Key, Key];
+    const opponent = game.orientation === 'white' ? 'black' : 'white';
+    // Snap to the pre-move position without animating the cross-puzzle jump,
+    // then animate just the setup move once the player has seen it.
+    this.board.set({
+      fen: puzzle.sourceFen,
+      orientation: game.orientation,
+      turnColor: opponent,
+      lastMove: undefined,
+      movable: { free: false, color: undefined, dests: new Map(), showDests: false },
+      premovable: { enabled: false, showDests: false },
+      draggable: { enabled: false, showGhost: false },
+      selectable: { enabled: false },
+      drawable: { shapes: [] },
+      animation: { enabled: false },
+    });
+    this.setupAnimTimer = setTimeout(() => {
+      this.setupAnimTimer = null;
+      if (this.disposed || !this.game) return;
+      // If the user rewound the stepper past the setup move, don't force it
+      // back onto the board — they are reviewing the earlier position.
+      if (this.review && this.review.position < this.review.count - 1) return;
+      this.board.set({ animation: { enabled: true } });
+      this.board.move?.(from, to);
+      this.renderPosition({ lastMove: [from, to] });
+      this.redraw();
+    }, this.setupMoveDelayMs);
+    return true;
+  }
 
   private renderPosition(
     opts: { fen?: string; lastMove?: Key[]; interactive?: boolean; replyPending?: boolean } = {},
@@ -408,7 +502,11 @@ export class TrainCtrl {
   }
 
   async onHint(): Promise<void> {
-    const puzzle = this.currentPuzzle;
+    // After a reload the in-progress attempt is resumed and `currentPuzzle`
+    // is intentionally left unset (see `resumeIfPossible`); fall back to the
+    // info-panel puzzle the same way reveal/restart do, or the hint silently
+    // no-ops on every resumed attempt.
+    const puzzle = this.currentPuzzle ?? this.infoPuzzle;
     if (!puzzle || !this.game || this.game.isCompleted || this.revealed || !this.adapter.getActiveAttemptId()) return;
     const attempt = this.attemptMoves(puzzle.id);
     const correctMoves = (attempt?.events ?? []).filter(
@@ -419,6 +517,67 @@ export class TrainCtrl {
     this.hintSquare = source;
     this.board.set({ drawable: { shapes: [{ orig: source, brush: 'green' }] } });
     await this.adapter.recordAssistance('hint');
+  }
+
+  configureWoodpecker(run: { kind: 'cycle' | 'failed'; setId: string; cycleId?: string }): void {
+    this.woodpeckerRun = run;
+    this.woodpeckerResultRecorded = false;
+  }
+
+  woodpeckerCycle() {
+    const run = this.woodpeckerRun;
+    return run?.kind === 'cycle' && run.cycleId
+      ? this.service.getWoodpeckerCycle(run.cycleId)
+      : undefined;
+  }
+
+  woodpeckerSet() {
+    const run = this.woodpeckerRun;
+    return run ? this.service.getWoodpeckerSet(run.setId) : undefined;
+  }
+
+  woodpeckerFailedCount(): number {
+    const run = this.woodpeckerRun;
+    return run ? this.service.getWoodpeckerFailedPuzzleIds(run.setId).length : 0;
+  }
+
+  /** True when the live attempt belongs to the isolated unscored-review scope. */
+  private isWoodpeckerReviewAttempt(): boolean {
+    return this.adapter.describeCurrentAttempt().progressKey?.programId === WOODPECKER_REVIEW_PROGRAM_ID;
+  }
+
+  private async recordWoodpeckerCycleResult(result: 'clean' | 'failed', activeSeconds: number): Promise<void> {
+    const run = this.woodpeckerRun;
+    const puzzleId = this.currentPuzzle?.id;
+    if (run?.kind !== 'cycle' || !run.cycleId || !puzzleId || this.woodpeckerResultRecorded) return;
+    // Revisiting an earlier puzzle runs as unscored practice and must never
+    // alter the cycle's result list (double-recording would skew progress).
+    if (this.woodpeckerReviewPosition !== null || this.isWoodpeckerReviewAttempt()) return;
+    await this.service.recordWoodpeckerCycleResult(run.cycleId, puzzleId, result, activeSeconds);
+    this.woodpeckerResultRecorded = true;
+  }
+
+  private async reconcileResumedWoodpeckerResult(
+    puzzleId: string,
+    outcome: 'success' | 'failure' | undefined,
+    activeSeconds: number,
+  ): Promise<void> {
+    const run = this.woodpeckerRun;
+    if (run?.kind !== 'cycle' || !run.cycleId || !outcome) return;
+    // A resumed unscored-review attempt must never be folded into cycle results.
+    if (this.isWoodpeckerReviewAttempt()) return;
+    const cycle = this.service.getWoodpeckerCycle(run.cycleId)?.cycle;
+    if (!cycle || cycle.results.some((result) => result.puzzleId === puzzleId)) {
+      this.woodpeckerResultRecorded = true;
+      return;
+    }
+    await this.service.recordWoodpeckerCycleResult(
+      run.cycleId,
+      puzzleId,
+      outcome === 'success' ? 'clean' : 'failed',
+      activeSeconds,
+    );
+    this.woodpeckerResultRecorded = true;
   }
 
   async resolveUserMove(
@@ -446,9 +605,11 @@ export class TrainCtrl {
         this.scoredCommitted = true;
         this.timer.markFailure();
         await this.adapter.commitFailure(this.timer.snapshot());
+        await this.recordWoodpeckerCycleResult('failed', this.timer.snapshot().activeSolvingSeconds);
         if (this.disposed) return;
       }
       this.status = { key: 'status.wrong', tone: 'wrong' };
+      this.refreshReview();
       this.renderPosition();
       this.redraw();
       return;
@@ -456,6 +617,7 @@ export class TrainCtrl {
 
     await this.adapter.recordMove(result.uci, true);
     if (this.disposed) return;
+    this.refreshReview();
     this.renderPosition({
       fen: result.fenAfterSolver,
       lastMove: [from as Key, to as Key],
@@ -523,6 +685,7 @@ export class TrainCtrl {
       if (!this.scoredCommitted) {
         this.scoredCommitted = true;
         await this.adapter.commitSuccess(this.timer.snapshot());
+        await this.recordWoodpeckerCycleResult('clean', this.timer.snapshot().activeSolvingSeconds);
         if (this.disposed) return;
       }
       this.status = { key: 'status.completed', tone: 'completed' };
@@ -535,18 +698,22 @@ export class TrainCtrl {
     this.redraw();
   }
 
-  // --- attempt review (read-only, completed puzzles only) -------------------
+  // --- attempt review (live replay + completed-puzzle review) ----------------
   //
-  // B5/AN-001a: after a puzzle completes, the user can step back/forward
-  // through their own attempt (solver plies + auto-played opponent replies,
-  // wrong attempts included) with the board rendered at each step. Review is
-  // entered only from the completed state, renders non-interactively, and
-  // performs no schedule or attempt writes (read via `listAttemptsForPuzzle`).
+  // B5/AN-001a + live replay: the board can be stepped back/forward through the
+  // moves played so far (setup move, solver plies and auto-played opponent
+  // replies, wrong attempts included) with the board rendered read-only at each
+  // step. Before completion the line is live: while the cursor sits on the last
+  // step the board is interactive (normal solving); stepping back makes it
+  // read-only and stepping forward again returns to live play. After completion
+  // it is a plain read-only review. Never grades and never writes schedule or
+  // attempt state (read via `listAttemptsForPuzzle`).
 
   /** Drop review state (new attempt starting); the view hides the section. */
   resetReview(): void {
     this.stopReviewKeys();
     this.review = null;
+    this.reviewSignature = '';
   }
 
   private startReviewKeys(): void {
@@ -560,31 +727,55 @@ export class TrainCtrl {
     this.reviewKeyTarget = null;
   }
 
-  /**
-   * Build the review line from the recorded attempt events. No-op unless the
-   * puzzle is completed.
-   */
-  enterReview(): void {
-    if (!this.game?.isCompleted || !this.currentPuzzle) {
+  /** Latest attempt events signature: rebuild the line only when it changes. */
+  refreshReview(puzzle: NormalizedPuzzle | null | undefined = this.currentPuzzle ?? this.infoPuzzle): void {
+    if (!puzzle || !this.game || this.disposed) {
       this.resetReview();
       return;
     }
-    const [latest] = this.adapter.listAttemptsForPuzzle(this.currentPuzzle.id, 1);
-    const events = latest?.events ?? [];
-    const line = buildReviewLine(this.currentPuzzle, events);
+    const [latest] = this.adapter.listAttemptsForPuzzle(puzzle.id, 1);
+    const signature = latest ? `${latest.attemptId.value}:${latest.events.length}` : 'none';
+    if (this.review && signature === this.reviewSignature) return;
+    const atEnd = !this.review || this.review.position >= this.review.count - 1;
+    const line = buildReviewLine(puzzle, latest?.events ?? []);
     if (line.length < 2) {
       this.resetReview();
       return;
     }
-    this.review = new ReviewNavigator(line);
+    const next = new ReviewNavigator(line);
+    if (!atEnd && this.review) next.goTo(Math.min(this.review.position, next.count - 1));
+    this.review = next;
+    this.reviewSignature = signature;
     this.startReviewKeys();
+  }
+
+  /**
+   * Build the review line from the recorded attempt events and render its
+   * current step (used when a puzzle completes).
+   */
+  enterReview(): void {
+    this.refreshReview();
     this.renderReviewStep();
   }
 
-  /** Render the navigator's current step. Non-interactive; no state writes. */
+  /**
+   * Render the navigator's current step. On the last step of an unfinished
+   * puzzle the board renders live (interactive); any earlier step renders
+   * read-only. No state writes.
+   */
   renderReviewStep(): void {
-    if (!this.review || !this.game?.isCompleted || this.disposed) return;
-    const step = this.review.current();
+    const review = this.review;
+    const game = this.game;
+    if (!review || !game || this.disposed) return;
+    const step = review.current();
+    const live = !game.isCompleted && !this.revealed && review.position >= review.count - 1;
+    if (live) {
+      this.renderPosition({
+        lastMove: step.uci ? uciToKeys(step.uci) : undefined,
+        replyPending: this.awaitingReply,
+      });
+      return;
+    }
     this.renderPosition({
       fen: step.fen,
       lastMove: step.uci ? uciToKeys(step.uci) : undefined,
@@ -593,7 +784,9 @@ export class TrainCtrl {
   }
 
   stepReview(direction: 'first' | 'back' | 'forward' | 'last'): void {
-    if (!this.review || !this.game?.isCompleted) return;
+    if (!this.game || this.disposed) return;
+    this.refreshReview();
+    if (!this.review) return;
     if (direction === 'first') this.review.first();
     else if (direction === 'back') this.review.back();
     else if (direction === 'forward') this.review.forward();
@@ -712,6 +905,7 @@ export class TrainCtrl {
 
   async beginAttempt(p: NormalizedPuzzle): Promise<void> {
     this.stopPlayback();
+    this.clearSetupAnimation();
     this.clearHint();
     this.game = new PuzzleGame(p);
     this.infoPuzzle = p;
@@ -725,7 +919,19 @@ export class TrainCtrl {
     this.revealed = false;
     this.promotionUi.hide();
 
-    await this.adapter.startAttempt(p);
+    const run = this.woodpeckerRun;
+    const review = this.woodpeckerReviewPosition !== null;
+    const progressKey = run
+      ? {
+          programId: run.kind === 'cycle'
+            ? (review ? WOODPECKER_REVIEW_PROGRAM_ID : WOODPECKER_CYCLE_PROGRAM_ID)
+            : WOODPECKER_FAILED_PROGRAM_ID,
+          collectionId: woodpeckerScopeId(run.setId),
+          puzzleId: p.id,
+        }
+      : undefined;
+    this.woodpeckerResultRecorded = false;
+    await this.adapter.startAttempt(p, progressKey);
     if (this.disposed) return;
     this.timer.start();
 
@@ -739,8 +945,9 @@ export class TrainCtrl {
       tone: 'info',
       params: { color: t(`color.${p.solverColor}`) },
     };
-    this.renderPosition();
+    if (!this.startSetupAnimation()) this.renderPosition();
     this.updateProgress();
+    this.refreshReview();
     this.redraw();
   }
 
@@ -748,15 +955,126 @@ export class TrainCtrl {
     if (this.disposed) return;
     this.stopPlayback();
     if (this.game?.isCompleted === false && this.adapter.getActiveAttemptId()) return;
+    // Continuing the cycle leaves unscored review and returns to scored play.
+    this.woodpeckerReviewPosition = null;
     this.nextDisabled = true;
     this.redraw();
-    const selection = await this.adapter.selectNext();
+    const run = this.woodpeckerRun;
+    const selection = run?.kind === 'cycle' && run.cycleId
+      ? this.nextWoodpeckerCyclePuzzle(run.cycleId)
+      : run?.kind === 'failed'
+        ? this.service.selectWoodpeckerFailed(run.setId)
+        : await this.adapter.selectNext();
     if (this.disposed) return;
     if (!selection.puzzleId) {
       this.showNoDue(selection);
       return;
     }
     await this.beginAttempt(await this.adapter.loadPuzzle(selection.puzzleId));
+  }
+
+  nextWoodpeckerCyclePuzzle(cycleId: string): { puzzleId: string | null; reason?: string } {
+    const saved = this.service.getWoodpeckerCycle(cycleId);
+    if (!saved) return { puzzleId: null, reason: 'queue-empty' };
+    const completed = new Set(saved.cycle.results.map((result) => result.puzzleId));
+    const puzzleId = saved.cycle.puzzleIds.find((id) => !completed.has(id)) ?? null;
+    return { puzzleId, reason: puzzleId ? undefined : 'woodpecker-cycle-complete' };
+  }
+
+  /** Cycle puzzle ids in order (empty unless the run is a cycle). */
+  private woodpeckerCyclePuzzleIds(): readonly string[] {
+    const run = this.woodpeckerRun;
+    if (run?.kind !== 'cycle' || !run.cycleId) return [];
+    return this.service.getWoodpeckerCycle(run.cycleId)?.cycle.puzzleIds ?? [];
+  }
+
+  /** 0-based index the Prev/Next controls step from, or null when unavailable. */
+  private woodpeckerBaseIndex(): number | null {
+    const ids = this.woodpeckerCyclePuzzleIds();
+    if (ids.length === 0) return null;
+    if (this.woodpeckerReviewPosition !== null) return this.woodpeckerReviewPosition - 1;
+    if (this.currentPuzzle) {
+      const index = ids.indexOf(this.currentPuzzle.id);
+      return index >= 0 ? index : null;
+    }
+    return null;
+  }
+
+  /**
+   * Index of the cycle's progress frontier: the first puzzle not yet covered by
+   * a recorded result (or `ids.length` once the cycle is complete). This bounds
+   * review navigation so Next can never skip ahead of real progress.
+   */
+  private woodpeckerFrontierIndex(): number {
+    const ids = this.woodpeckerCyclePuzzleIds();
+    if (ids.length === 0) return -1;
+    const run = this.woodpeckerRun;
+    if (run?.kind !== 'cycle' || !run.cycleId) return -1;
+    const saved = this.service.getWoodpeckerCycle(run.cycleId);
+    const completed = new Set(saved?.cycle.results.map((result) => result.puzzleId) ?? []);
+    const index = ids.findIndex((id) => !completed.has(id));
+    return index === -1 ? ids.length : index;
+  }
+
+  /** Highest index the user may navigate to: the current frontier (never past it). */
+  private woodpeckerMaxIndex(): number {
+    const ids = this.woodpeckerCyclePuzzleIds();
+    if (ids.length === 0) return -1;
+    return Math.min(this.woodpeckerFrontierIndex(), ids.length - 1);
+  }
+
+  /** Whether Previous/Next can move `delta` positions without passing progress. */
+  canStepWoodpeckerReview(delta: number): boolean {
+    const base = this.woodpeckerBaseIndex();
+    if (base === null) return false;
+    const next = base + delta;
+    return next >= 0 && next <= this.woodpeckerMaxIndex();
+  }
+
+  /**
+   * User request 2026-10-16: step to another puzzle in the cycle list and run it
+   * as unscored practice (Show solution available; never written to the cycle
+   * results). Cannot move past the progress frontier; landing on the frontier
+   * returns to scored play. Releases any open attempt first so navigation cannot
+   * orphan one.
+   */
+  async stepWoodpeckerReview(delta: number): Promise<void> {
+    if (this.disposed) return;
+    const ids = this.woodpeckerCyclePuzzleIds();
+    const base = this.woodpeckerBaseIndex();
+    if (base === null) return;
+    const next = base + delta;
+    if (next < 0 || next > this.woodpeckerMaxIndex()) return;
+    this.stopPlayback();
+    this.clearSetupAnimation();
+    if (this.adapter.getActiveAttemptId()) {
+      this.clearPremoveState();
+      this.timer.interrupt();
+      await this.adapter.abandonCurrentAttempt({ skip: false });
+      if (this.disposed) return;
+    }
+    // Landing on the frontier is the live cycle puzzle: continue it scored.
+    const onFrontier = next === this.woodpeckerFrontierIndex();
+    this.woodpeckerReviewPosition = onFrontier ? null : next + 1;
+    await this.beginAttempt(await this.adapter.loadPuzzle(ids[next]!));
+  }
+
+  /**
+   * Jump from unscored review back to the current cycle puzzle (the progress
+   * frontier) as a scored attempt. Releases any open attempt first.
+   */
+  async goToWoodpeckerCurrent(): Promise<void> {
+    if (this.disposed) return;
+    this.stopPlayback();
+    this.clearSetupAnimation();
+    this.woodpeckerReviewPosition = null;
+    if (this.adapter.getActiveAttemptId()) {
+      this.clearPremoveState();
+      this.timer.interrupt();
+      await this.adapter.abandonCurrentAttempt({ skip: false });
+      if (this.disposed) return;
+    }
+    await this.loadNext();
   }
 
   /**
@@ -773,11 +1091,14 @@ export class TrainCtrl {
     reason?: string;
   }): void {
     this.puzzleStatus = null;
+    this.woodpeckerReviewPosition = null;
     const when = selection.nextDueAt
       ? new Date(selection.nextDueAt).toLocaleString()
       : t('puzzle.none');
     if (selection.reason === 'queue-empty') {
       this.status = { key: 'status.queueEmpty', tone: 'info' };
+    } else if (selection.reason === 'woodpecker-cycle-complete') {
+      this.status = { key: 'woodpecker.cycle.complete', tone: 'completed' };
     } else {
       if (selection.reason === 'daily-limit-reached') {
         this.status = { key: 'status.dailyLimit', tone: 'info', params: { when } };
@@ -802,6 +1123,11 @@ export class TrainCtrl {
       this.game = new PuzzleGame(p);
       this.infoPuzzle = p;
       this.refreshPuzzleStatus(p.id);
+      if (attempt.progressKey.programId === WOODPECKER_REVIEW_PROGRAM_ID) {
+        const ids = this.woodpeckerCyclePuzzleIds();
+        const index = ids.indexOf(p.id);
+        this.woodpeckerReviewPosition = index >= 0 ? index + 1 : null;
+      }
       // NOTE: `currentPuzzle` is intentionally left untouched here, matching
       // the pre-Snabbdom flow: a directly-resumed completion enters review
       // only once a fresh `beginAttempt` has set the current puzzle.
@@ -819,6 +1145,11 @@ export class TrainCtrl {
         this.timer.markFailure();
       }
       this.adapter.resumeAttempt(attempt);
+      await this.reconcileResumedWoodpeckerResult(
+        attempt.progressKey.puzzleId,
+        attempt.outcome,
+        attempt.timing.activeSolvingSeconds,
+      );
       this.timer.start();
       this.promotionUi.hide();
       this.solutionHidden = true;
@@ -844,7 +1175,17 @@ export class TrainCtrl {
         };
         this.redraw();
       }
-      this.renderPosition();
+      // Resuming an untouched attempt should still show the opponent's setup
+      // move (user report 2026-10-16: a reload silently dropped it). Replay the
+      // presentational prelude when no solver move has been played yet;
+      // otherwise render the position as before.
+      // The stepper must also work on a resumed attempt (same report): build the
+      // review line here too. `refreshReview` falls back to `infoPuzzle` because
+      // resume deliberately leaves `currentPuzzle` unset.
+      this.refreshReview(p);
+      if (this.game.isCompleted || failed || correctUcis.length > 0 || !this.startSetupAnimation(p)) {
+        this.renderPosition();
+      }
       this.updateProgress();
       this.redraw();
       return true;
@@ -875,6 +1216,7 @@ export class TrainCtrl {
   async onSkip(): Promise<void> {
     if (this.disposed) return;
     this.stopPlayback();
+    this.clearSetupAnimation();
     if (!this.adapter.getActiveAttemptId()) return;
     this.clearPremoveState();
     this.timer.interrupt();
@@ -891,6 +1233,9 @@ export class TrainCtrl {
       return;
     }
     this.revealed = true;
+    this.clearSetupAnimation();
+    // Reveal playback owns the board; the live stepper must not re-enable it.
+    this.resetReview();
     this.clearHint();
     if (this.game && !this.game.isCompleted && this.adapter.getActiveAttemptId()) {
       this.clearPremoveState();
@@ -948,11 +1293,6 @@ export class TrainCtrl {
     this.progressText = t('progress.summary', {
       attempts: this.service.getAttemptCount(),
       total: q.total,
-    });
-    this.storageText = t('progress.storage', {
-      backend: t(
-        this.service.getBackendKind() === 'indexeddb' ? 'storage.indexeddb' : 'storage.memory',
-      ),
     });
     this.queueText = t('queue.summary', {
       total: q.total,
@@ -1022,6 +1362,15 @@ function formatSolveTimer(snapshot: ReturnType<AttemptTimer['snapshot']>): strin
   return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`;
 }
 
+function formatDuration(seconds: number): string {
+  const rounded = Math.max(0, Math.round(seconds));
+  const hours = Math.floor(rounded / 3600);
+  const minutes = Math.floor((rounded % 3600) / 60);
+  const remainder = rounded % 60;
+  return hours > 0 ? `${hours}h ${minutes}m ${remainder}s`
+    : minutes > 0 ? `${minutes}m ${remainder}s` : `${remainder}s`;
+}
+
 /**
  * Pure view: same information, ids, classes, and strings as the pre-Snabbdom
  * template (board excluded — see {@link createTrainShell}). Board-adjacent
@@ -1052,11 +1401,58 @@ function viewActions(ctrl: TrainCtrl): VNode {
 
 function viewDetails(ctrl: TrainCtrl): VNode[] {
   const puzzle = ctrl.infoPuzzle;
+  const run = ctrl.woodpeckerRun;
+  const woodpeckerSet = ctrl.woodpeckerSet();
+  const savedCycle = ctrl.woodpeckerCycle();
+  const cycle = savedCycle?.cycle;
+  const results = cycle?.results ?? [];
+  const clean = results.filter((result) => result.result === 'clean').length;
+  const errors = results.length - clean;
+  const position = cycle && puzzle ? cycle.puzzleIds.indexOf(puzzle.id) + 1 : 0;
   return [
-    h('section.info.train-section.training-status-section', [
-      h('h2', 'Training Status'),
-      ...puzzleStatusLines(ctrl.puzzleStatus),
-    ]),
+    run
+      ? h('section.info.train-section.woodpecker-context', [
+          h('h2', run.kind === 'cycle' ? 'Woodpecker cycle' : 'Woodpecker · Failed review'),
+          h('p.woodpecker-set-name', woodpeckerSet?.name ?? run.setId),
+          ...(run.kind === 'cycle' && cycle ? [
+            h('p#woodpecker-cycle-position', `Cycle ${cycle.cycleNumber} · Puzzle ${position > 0 ? position : '—'} of ${cycle.puzzleIds.length}`),
+            progressBar(results.length, cycle.puzzleIds.length, {
+              id: 'woodpecker-cycle-progress',
+              label: t('woodpecker.cycle.progress', { scored: results.length, total: cycle.puzzleIds.length }),
+            }),
+            h('p', `${clean} clean · ${errors} errors`),
+            h('p', `Active solving time: ${formatDuration(results.reduce((sum, result) => sum + result.activeSeconds, 0))}`),
+            h('div.button-row.woodpecker-review-nav', [
+              actionButton('◀ Previous puzzle', 'tertiary', {
+                id: 'woodpecker-prev-btn',
+                compact: true,
+                disabled: !ctrl.canStepWoodpeckerReview(-1),
+                onClick: () => void ctrl.stepWoodpeckerReview(-1),
+              }),
+              actionButton('Next puzzle ▶', 'tertiary', {
+                id: 'woodpecker-next-btn',
+                compact: true,
+                disabled: !ctrl.canStepWoodpeckerReview(1),
+                onClick: () => void ctrl.stepWoodpeckerReview(1),
+              }),
+              ...(ctrl.woodpeckerReviewPosition !== null ? [
+                actionButton('Go to current', 'secondary', {
+                  id: 'woodpecker-current-btn',
+                  compact: true,
+                  onClick: () => void ctrl.goToWoodpeckerCurrent(),
+                }),
+                h('p.progress-note', `Reviewing puzzle ${ctrl.woodpeckerReviewPosition} of ${cycle.puzzleIds.length} — unscored practice (Show solution for the answer).`),
+              ] : []),
+            ]),
+          ] : [
+            h('p', `${ctrl.woodpeckerFailedCount()} puzzles in this set’s Failed queue`),
+            h('p.progress-note', 'Reviews are spaced separately from the main cycle.'),
+          ]),
+        ])
+      : h('section.info.train-section.training-status-section', [
+          h('h2', 'Training Status'),
+          ...puzzleStatusLines(ctrl.puzzleStatus),
+        ]),
     h('section.info.train-section.puzzle-section', [
       h('h2', 'Puzzle'),
       h('p#puzzle-id', puzzle ? `${t('puzzle.id')}: ${puzzle.id}` : '-'),
@@ -1068,52 +1464,63 @@ function viewDetails(ctrl: TrainCtrl): VNode[] {
         'p#solver-color',
         puzzle ? `${t('puzzle.solver')}: ${t(`color.${puzzle.solverColor}`)}` : '-',
       ),
-      h('h2.train-subheading', { attrs: { 'data-i18n': 'collections.active.label' } }, t('collections.active.label')),
-      h('p.progress-note', t('collections.active.hint')),
-      h(
-        'select#collection-picker',
-        {
-          props: { value: ctrl.activeCollectionId },
-          on: {
-            change: (event: Event) =>
-              void ctrl.onCollectionChange((event.target as HTMLSelectElement).value),
+      ...(!run ? [
+        h('h2.train-subheading', { attrs: { 'data-i18n': 'collections.active.label' } }, t('collections.active.label')),
+        h('p.progress-note', t('collections.active.hint')),
+        h(
+          'select#collection-picker',
+          {
+            props: { value: ctrl.activeCollectionId },
+            on: {
+              change: (event: Event) =>
+                void ctrl.onCollectionChange((event.target as HTMLSelectElement).value),
+            },
           },
-        },
-        ctrl.collections.map((collection) =>
-          h('option', { attrs: { value: collection.id } }, collection.name),
+          ctrl.collections.map((collection) =>
+            h('option', { attrs: { value: collection.id } }, collection.name),
+          ),
         ),
-      ),
-      h('h2.train-subheading', { attrs: { 'data-i18n': 'queue.title' } }, t('queue.title')),
-      h('p#queue.progress-note', ctrl.queueText),
-      h('p#progress.progress-note', ctrl.progressText),
-      h('p#storage.progress-note', ctrl.storageText),
+        h('h2.train-subheading', { attrs: { 'data-i18n': 'queue.title' } }, t('queue.title')),
+        h('p#queue.progress-note', ctrl.queueText),
+        h('p#progress.progress-note', ctrl.progressText),
+      ] : []),
+      h('p#storage.progress-note.hidden'),
     ]),
   ];
 }
 
 function viewRight(ctrl: TrainCtrl): VNode {
   const review = ctrl.review;
-  const attempt = ctrl.infoPuzzle ? ctrl.attemptMoves(ctrl.infoPuzzle.id) : undefined;
+  const puzzle = ctrl.infoPuzzle;
+  const attempt = puzzle ? ctrl.attemptMoves(puzzle.id) : undefined;
   const reviewedUci = review?.current().uci;
-  const moves = (attempt?.events ?? []).flatMap((event) => {
-    if (event.type !== 'move' && event.type !== 'wrong-move') return [];
-    const uci = String(event.payload?.uci ?? event.payload?.move ?? '');
-    return uci ? [h('li', { key: event.eventId, class: { wrong: event.type === 'wrong-move' || (event.type === 'move' && event.payload?.correct === false), current: uci === reviewedUci } }, uci)] : [];
-  });
+  const rows = puzzle
+    ? buildMoveList(puzzle, orderedAttemptMoves(attempt?.events ?? []), {
+        complete: Boolean(ctrl.game?.isCompleted || ctrl.revealed),
+      })
+    : [];
+  const moveList = rows.length
+    ? h(
+        'ol.moves-list',
+        rows.map((row, index) =>
+          h('li.moves-row', { key: `row-${row.number}-${index}` }, [
+            h('span.moves-index', String(row.number)),
+            moveCell(row.white, reviewedUci),
+            moveCell(row.black, reviewedUci),
+          ]),
+        ),
+      )
+    : h('ol.moves-list', [h('li.move-list-empty', 'No moves yet')]);
   return h('div.controls.controls-right', [
-    h('section.info.move-list', [h('h2', 'Moves (UCI)'), h('ol', moves.length ? moves : [h('li.move-list-empty', 'No moves yet')])]),
+    h('section.info.move-list', [h('h2', t('moves.title')), moveList]),
     h('div.info.status-panel', [
       h('h2', { attrs: { 'data-i18n': 'status.title' } }, t('status.title')),
+      ...(ctrl.woodpeckerRun ? [h('p.woodpecker-mode', ctrl.woodpeckerRun.kind === 'cycle' ? t('woodpecker.mode.cycle') : t('woodpecker.mode.failed'))] : []),
       h('p#solve-timer', formatSolveTimer(ctrl.timer.snapshot())),
       h(statusClass(ctrl), t(ctrl.status.key, ctrl.status.params)),
       h('div.button-row.feedback-actions', [
         actionButton(t(ctrl.revealHidesSolution ? 'reveal.hide' : 'reveal.show'), 'secondary', { id: 'reveal-btn', disabled: ctrl.revealDisabled, onClick: () => void ctrl.onReveal() }),
         actionButton(t('hint.label'), 'secondary', { id: 'hint-btn', disabled: !ctrl.game || ctrl.game.isCompleted || ctrl.revealed, onClick: () => void ctrl.onHint() }),
-      ]),
-      h(`div.info${review ? '' : '.hidden'}`, { attrs: { id: 'review-section' } }, [
-        h('h2', { attrs: { 'data-i18n': 'review.title' } }, t('review.title')),
-        h('p.progress-note', t('review.hint')),
-        h('p#review-label', review ? t('review.position', { index: review.position, total: review.count - 1 }) : ''),
       ]),
     ]),
     h(`div.button-row.review-nav${review ? '' : '.hidden'}`, [
@@ -1121,6 +1528,35 @@ function viewRight(ctrl: TrainCtrl): VNode {
       h('button.button.button-secondary', { attrs: { type: 'button', id: 'review-forward', 'aria-label': t('review.forward'), ...(review?.canForward ? {} : { disabled: true }) }, on: { click: () => ctrl.stepReview('forward') } }, '▶'),
     ]),
   ]);
+}
+
+/**
+ * One move cell in the Lichess-style list: piece glyph + SAN. `current` follows
+ * the review cursor; `setup` marks the pre-solution context cell. The empty
+ * slot keeps the white/black columns aligned when a row has only one move.
+ */
+function moveCell(cell: MoveListCell | null, reviewedUci: string | null | undefined): VNode {
+  if (!cell) return h('span.moves-move.empty', { attrs: { 'aria-hidden': 'true' } });
+  return h(
+    'span.moves-move',
+    {
+      key: `${cell.number}-${cell.color}-${cell.uci}`,
+      class: {
+        white: cell.color === 'white',
+        black: cell.color === 'black',
+        setup: cell.setup,
+        current: cell.uci === reviewedUci,
+      },
+      attrs: {
+        title: cell.uci,
+        ...(cell.setup ? { 'aria-label': t('puzzle.previousMove') } : {}),
+      },
+    },
+    [
+      h('span.moves-piece', { attrs: { 'aria-hidden': 'true' } }, cell.glyph),
+      h('span.moves-san', cell.san),
+    ],
+  );
 }
 
 /** Combined DOM-free view retained for callers/tests; mount patches each panel independently. */
@@ -1242,6 +1678,7 @@ export class TrainView implements Screen {
         {
           set: (config) => ground.set(config),
           cancelPremove: () => ground.cancelPremove(),
+          move: (orig, dest) => ground.move(orig, dest),
           destroy: () => ground.destroy(),
         },
         {
@@ -1261,10 +1698,33 @@ export class TrainView implements Screen {
         this.actionVnode = patch(this.actionVnode, viewActions(this.ctrl));
       };
 
+      const hashQuery = window.location.hash.split('?')[1] ?? '';
+      const runParams = new URLSearchParams(hashQuery);
+      const setId = runParams.get('setId');
+      const cycleId = runParams.get('cycleId');
+      const failedMode = runParams.get('mode') === 'failed';
+      if (setId && (failedMode || cycleId)) {
+        const kind = failedMode ? 'failed' : 'cycle';
+        if (kind === 'failed' || this.service.getWoodpeckerCycle(cycleId!)) {
+          ctrl.configureWoodpecker({ kind, setId, ...(cycleId ? { cycleId } : {}) });
+          await this.adapter.startSession(
+            kind === 'cycle' ? WOODPECKER_CYCLE_PROGRAM_ID : WOODPECKER_FAILED_PROGRAM_ID,
+            woodpeckerScopeId(setId),
+          );
+        }
+      } else {
+        await this.adapter.startSession(DEFAULT_PROGRAM_ID, this.service.getActiveCollectionId());
+      }
+
       const resumed = await ctrl.resumeIfPossible();
       if (this.ctrl === null) return;
       if (!resumed) {
-        const selection = await this.adapter.selectNext();
+        const run = ctrl.woodpeckerRun;
+        const selection = run?.kind === 'cycle' && run.cycleId
+          ? ctrl.nextWoodpeckerCyclePuzzle(run.cycleId)
+          : run?.kind === 'failed'
+            ? this.service.selectWoodpeckerFailed(run.setId)
+            : await this.adapter.selectNext();
         if (this.ctrl === null) return;
         if (selection.puzzleId) {
           await this.beginAttemptSafe(await this.adapter.loadPuzzle(selection.puzzleId));

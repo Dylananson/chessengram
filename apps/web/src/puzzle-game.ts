@@ -17,8 +17,9 @@
 import { Chess } from 'chessops/chess';
 import { chessgroundDests } from 'chessops/compat';
 import { makeFen, parseFen } from 'chessops/fen';
+import { makeSan } from 'chessops/san';
 import { makeUci, parseSquare, parseUci, squareRank } from 'chessops/util';
-import type { Color, SquareName } from 'chessops/types';
+import type { Color, Move, Role, SquareName } from 'chessops/types';
 import type { AttemptEvent, NormalizedPuzzle } from '@chessreps/contracts';
 
 export type PromotionRole = 'q' | 'r' | 'b' | 'n';
@@ -269,7 +270,7 @@ export function buildPlaybackSteps(
  * touches schedule state. The UI enters it only from a completed puzzle.
  */
 
-export type ReviewMover = 'start' | 'solver' | 'opponent' | 'wrong';
+export type ReviewMover = 'start' | 'setup' | 'solver' | 'opponent' | 'wrong';
 
 export interface ReviewStep {
   /** 0-based position in the review line (step 0 is the starting position). */
@@ -318,18 +319,168 @@ export function orderedAttemptMoves(
 }
 
 /**
- * Project an attempt onto the solution line: step 0 is the solver position,
- * then one step per solver ply played plus one per auto-played opponent reply.
- * Wrong attempts become position-preserving `wrong` steps at the ply where
- * they happened (the board never changes on a wrong move). Stops at the first
- * illegal/inconsistent move, like `replaySolverMoves`. Always returns at
- * least the starting step.
+ * Lichess-style move list (PZL-002/PZL-003): DOM-free projection of the puzzle
+ * line as played, grouped into numbered rows with white then black. SAN is
+ * produced by replaying from the source position (via the setup move when it
+ * is present and consistent with `solverFen`), so the display is locale
+ * independent and validated rather than trusted. Each cell also carries the
+ * moving piece's glyph. Wrong attempts are reverted on the board and never
+ * advance the line, so they are omitted: the list is the played mainline (the
+ * puzzle PGN), not raw input history. Pure: never grades, never writes, and
+ * never reveals plies that have not been played unless `complete` is set (the
+ * completed or revealed state).
+ */
+
+/** Unicode chess glyphs by color and role (display only). */
+export const PIECE_GLYPHS: Record<Color, Record<Role, string>> = {
+  white: { pawn: '♙', knight: '♘', bishop: '♗', rook: '♖', queen: '♕', king: '♔' },
+  black: { pawn: '♟', knight: '♞', bishop: '♝', rook: '♜', queen: '♛', king: '♚' },
+};
+
+export interface MoveListCell {
+  readonly uci: string;
+  readonly san: string;
+  readonly color: Color;
+  /** Full-move number for this ply (shared by the row's white and black). */
+  readonly number: number;
+  /** Glyph of the piece that made the move (pawn for promotions, king for O-O). */
+  readonly glyph: string;
+  /** True for the pre-solution setup move (shown as previous-move context). */
+  readonly setup: boolean;
+}
+
+export interface MoveListRow {
+  readonly number: number;
+  readonly white: MoveListCell | null;
+  readonly black: MoveListCell | null;
+}
+
+export interface MoveListOptions {
+  /** Append the remaining solution plies (completed or revealed states). */
+  readonly complete?: boolean;
+}
+
+/** Replay from the source position through the setup move when consistent. */
+function moveListStart(
+  puzzle: NormalizedPuzzle,
+): { pos: Chess; setupMove: Move | undefined; number: number; turn: Color } | null {
+  let solver: Chess;
+  try {
+    solver = Chess.fromSetup(parseFen(puzzle.solverFen).unwrap()).unwrap();
+  } catch {
+    return null;
+  }
+  const fromSolver = { pos: solver, setupMove: undefined, number: solver.fullmoves, turn: solver.turn };
+  if (!puzzle.setupMove) return fromSolver;
+  const candidate = parseUci(puzzle.setupMove);
+  if (!candidate) return fromSolver;
+  try {
+    const source = Chess.fromSetup(parseFen(puzzle.sourceFen).unwrap()).unwrap();
+    if (!source.isLegal(candidate)) return fromSolver;
+    const number = source.fullmoves;
+    const turn = source.turn;
+    const after = source.clone();
+    after.play(candidate);
+    const reachesSolver =
+      makeFen(after.toSetup(), { epd: true }) === makeFen(solver.toSetup(), { epd: true });
+    if (!reachesSolver) return fromSolver;
+    return { pos: source, setupMove: candidate, number, turn };
+  } catch {
+    return fromSolver;
+  }
+}
+
+export function buildMoveList(
+  puzzle: NormalizedPuzzle,
+  attempts: readonly OrderedAttemptMove[],
+  opts: MoveListOptions = {},
+): MoveListRow[] {
+  const start = moveListStart(puzzle);
+  if (!start) return [];
+  const pos = start.pos;
+  let number = start.number;
+  let turn = start.turn;
+  const cells: MoveListCell[] = [];
+
+  const record = (move: Move, flags: { setup?: boolean } = {}): void => {
+    const piece = 'from' in move ? pos.board.get(move.from) : undefined;
+    cells.push({
+      uci: makeUci(move),
+      san: makeSan(pos, move),
+      color: turn,
+      number,
+      glyph: piece ? PIECE_GLYPHS[piece.color][piece.role] : PIECE_GLYPHS[turn].pawn,
+      setup: flags.setup === true,
+    });
+    pos.play(move);
+    if (turn === 'black') number += 1;
+    turn = turn === 'white' ? 'black' : 'white';
+  };
+
+  if (start.setupMove) record(start.setupMove, { setup: true });
+
+  // Only moves actually applied to the board appear — a wrong attempt is
+  // reverted and never advances the line, so the list is the played mainline
+  // (the puzzle PGN) rather than raw input history.
+  const solution = puzzle.solution;
+  let ply = 0;
+  for (const attempt of attempts) {
+    if (ply >= solution.length) break;
+    const move = parseUci(attempt.uci);
+    if (!attempt.correct || attempt.uci !== solution[ply] || !move || !pos.isLegal(move)) continue;
+    record(move);
+    ply += 1;
+    const reply = ply < solution.length ? parseUci(solution[ply]!) : undefined;
+    if (!reply || !pos.isLegal(reply)) break;
+    record(reply);
+    ply += 1;
+  }
+
+  if (opts.complete) {
+    while (ply < solution.length) {
+      const move = parseUci(solution[ply]!);
+      if (!move || !pos.isLegal(move)) break;
+      record(move);
+      ply += 1;
+    }
+  }
+
+  // Lichess-style grouping: a white move starts a new numbered row; black
+  // attaches to the current row.
+  const rows: MoveListRow[] = [];
+  for (const cell of cells) {
+    const last = rows[rows.length - 1];
+    const startNew = !last || cell.color === 'white' || last.black !== null || last.number !== cell.number;
+    if (startNew) {
+      rows.push(
+        cell.color === 'white'
+          ? { number: cell.number, white: cell, black: null }
+          : { number: cell.number, white: null, black: cell },
+      );
+    } else {
+      rows[rows.length - 1] = { ...last, black: cell };
+    }
+  }
+  return rows;
+}
+
+/**
+ * Project an attempt onto the solution line: step 0 is the position the puzzle
+ * began from, then the opponent's setup move (when present) as the first
+ * reviewable move, then one step per solver ply played plus one per auto-played
+ * opponent reply. Including the setup move lets the stepper rewind all the way
+ * to the move that played when the puzzle loaded (PZL-005). Wrong attempts
+ * become position-preserving `wrong` steps at the ply where they happened (the
+ * board never changes on a wrong move). Stops at the first illegal/inconsistent
+ * move, like `replaySolverMoves`. Always returns at least the starting step.
  */
 export function buildReviewLine(
   puzzle: NormalizedPuzzle,
   events: readonly AttemptEvent[],
 ): ReviewStep[] {
-  const pos = Chess.fromSetup(parseFen(puzzle.solverFen).unwrap()).unwrap();
+  const start = moveListStart(puzzle);
+  if (!start) return [];
+  const pos = start.pos;
   const steps: ReviewStep[] = [
     { index: 0, uci: null, fen: makeFen(pos.toSetup()), ply: 0, mover: 'start' },
   ];
@@ -337,6 +488,11 @@ export function buildReviewLine(
   const push = (uci: string | null, mover: ReviewMover): void => {
     steps.push({ index: steps.length, uci, fen: makeFen(pos.toSetup()), ply, mover });
   };
+
+  if (start.setupMove) {
+    pos.play(start.setupMove);
+    push(makeUci(start.setupMove), 'setup');
+  }
 
   for (const attempt of orderedAttemptMoves(events)) {
     if (!attempt.correct || attempt.uci !== puzzle.solution[ply]) {

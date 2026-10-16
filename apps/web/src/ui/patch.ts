@@ -16,6 +16,7 @@
 
 import { init } from 'snabbdom/build/init.js';
 import { attributesModule } from 'snabbdom/build/modules/attributes.js';
+import { classModule } from 'snabbdom/build/modules/class.js';
 import { eventListenersModule } from 'snabbdom/build/modules/eventlisteners.js';
 import { propsModule } from 'snabbdom/build/modules/props.js';
 
@@ -23,5 +24,9 @@ import { propsModule } from 'snabbdom/build/modules/props.js';
  * Shared screen patch function. Import it under the per-screen `patch` name
  * the S2 pattern uses at each mount site:
  * `import { screenPatch as patch } from './ui/patch.ts';`
+ *
+ * `classModule` is included so vnodes that carry `data.class` (the Train
+ * move-list cells) actually toggle DOM classes; vnodes without `class` data
+ * are unaffected.
  */
-export const screenPatch = init([attributesModule, eventListenersModule, propsModule]);
+export const screenPatch = init([attributesModule, classModule, eventListenersModule, propsModule]);

@@ -34,10 +34,15 @@ import {
 } from '../src/train-view.ts';
 import { PuzzleGame } from '../src/puzzle-game.ts';
 import { TrainingAdapter } from '../src/training-adapter.ts';
-import { LocalTrainingService } from '../src/scheduler-service.ts';
+import {
+  LocalTrainingService,
+  WOODPECKER_CYCLE_PROGRAM_ID,
+  WOODPECKER_REVIEW_PROGRAM_ID,
+  woodpeckerScopeId,
+} from '../src/scheduler-service.ts';
 import { LocalStore } from '../src/storage/local-store.ts';
 import { InMemoryStorageBackend } from '../src/storage/memory-backend.ts';
-import { makePuzzle, makeService, promotionPuzzle } from './fixtures.ts';
+import { makePuzzle, makeService, promotionPuzzle, setupMovePuzzle } from './fixtures.ts';
 
 // --- stub document (counts element creation, no DOM) ------------------------
 
@@ -122,21 +127,43 @@ function vnodeIds(vnode: VNode): string[] {
   return ids;
 }
 
+function vnodeText(vnode: VNode): string {
+  return [typeof vnode.text === 'string' ? vnode.text : '', ...(vnode.children ?? []).map((child) =>
+    typeof child === 'object' && child !== null && 'sel' in child ? vnodeText(child as VNode) : typeof child === 'string' ? child : '',
+  )].join(' ');
+}
+
+/** VNodes carrying a truthy `class` entry (snabbdom classes live on `data.class`). */
+function nodesWithClass(vnode: VNode, name: string): VNode[] {
+  const found: VNode[] = [];
+  walkVNode(vnode, (node) => {
+    const classes = (node.data as { class?: Record<string, boolean> } | undefined)?.class;
+    if (classes?.[name]) found.push(node);
+  });
+  return found;
+}
+
 // --- fakes -------------------------------------------------------------------
 
 function makeRecordingBoard(): {
   port: TrainBoardPort;
   sets: TrainBoardConfig[];
+  moves: Array<[string, string]>;
   destroys: { count: number };
 } {
   const sets: TrainBoardConfig[] = [];
+  const moves: Array<[string, string]> = [];
   const destroys = { count: 0 };
   return {
     sets,
+    moves,
     destroys,
     port: {
       set(config: TrainBoardConfig): void {
         sets.push(config);
+      },
+      move(orig, dest): void {
+        moves.push([orig, dest]);
       },
       destroy(): void {
         destroys.count += 1;
@@ -247,6 +274,188 @@ test('desktop view separates details, solve sections, and board actions in the r
   assert.equal(findById(completed, 'review-last'), null);
 });
 
+test('move list shows the puzzle setup move as previous context, before learner moves', async () => {
+  const { service, adapter } = await makeWorld([]);
+  await service.seedContent([setupMovePuzzle]);
+  const ctrl = new TrainCtrl(service, adapter);
+  await ctrl.beginAttempt(await adapter.loadPuzzle(setupMovePuzzle.id));
+
+  const moveList = (view(ctrl).children as VNode[])[1]!.children as VNode[];
+  const entries = moveList[0]!.children as VNode[];
+  const list = entries[1]!.children as VNode[];
+  assert.equal(list.length, 1, 'only context is shown before the learner moves');
+  assert.ok(list[0]!.sel?.includes('moves-row'));
+  assert.equal(vnodeText(list[0]!.children![0] as VNode), '33', 'setup ply keeps its move number');
+  const setupCells = nodesWithClass(list[0]!, 'setup');
+  assert.equal(setupCells.length, 1, 'setup move is marked as context');
+  assert.match(vnodeText(setupCells[0]!), /Rxf4/, 'setup move is shown in SAN');
+  assert.match(vnodeText(setupCells[0]!), /♜/, 'setup move carries the moving piece glyph');
+
+  ctrl.dispose();
+});
+
+test('move list is Lichess-style: numbered rows, white and black paired, SAN + piece glyph', async () => {
+  const ctrl = await makeCompletedReview();
+  const moveList = (view(ctrl).children as VNode[])[1]!.children as VNode[];
+  const list = (moveList[0]!.children as VNode[])[1]!.children as VNode[];
+
+  // The wrong d4 was reverted, so only the played e4/e5 line is shown.
+  assert.equal(list.length, 1, 'reverted attempts leave no row');
+  const row = list[0]!;
+  assert.equal(vnodeText(row.children![0] as VNode), '1', 'white and black share one move number');
+  const cells = row.children!.filter(
+    (child): child is VNode => typeof child === 'object' && child !== null && 'sel' in child && (child as VNode).sel!.includes('moves-move'),
+  );
+  assert.equal(cells.length, 2, 'white then black on the same row');
+  assert.ok(nodesWithClass(cells[0]!, 'white').length === 1);
+  assert.ok(nodesWithClass(cells[1]!, 'black').length === 1);
+  assert.match(vnodeText(cells[0]!), /♙.*e4/s, 'white move carries glyph and SAN');
+  assert.match(vnodeText(cells[1]!), /♟.*e5/s, 'black move carries glyph and SAN');
+  assert.equal(nodesWithClass(row, 'wrong').length, 0, 'no reverted moves are shown');
+
+  ctrl.dispose();
+});
+
+test('beginAttempt plays the opponent setup move as an animation before the solver moves', async () => {
+  const { service, adapter } = await makeWorld([]);
+  await service.seedContent([setupMovePuzzle]);
+  const board = makeRecordingBoard();
+  const ctrl = new TrainCtrl(service, adapter, board.port);
+  ctrl.setupMoveDelayMs = 5;
+  await ctrl.beginAttempt(await adapter.loadPuzzle(setupMovePuzzle.id));
+
+  // Prelude: the board snaps to the position before the setup move, with input
+  // disabled and animation off so the cross-puzzle jump does not animate.
+  const prelude = board.sets.at(-1)! as { fen?: string; animation?: { enabled?: boolean }; movable?: { color?: unknown } };
+  assert.equal(prelude.fen, setupMovePuzzle.sourceFen, 'prelude shows the pre-move position');
+  assert.equal(prelude.animation?.enabled, false, 'prelude does not animate the jump');
+  assert.equal(prelude.movable?.color, undefined, 'prelude is not interactive');
+  assert.equal(board.moves.length, 0, 'the setup move has not animated yet');
+
+  await new Promise((resolve) => setTimeout(resolve, 25));
+
+  assert.deepEqual(board.moves, [['f8', 'f4']], 'the setup move animates exactly once');
+  const settled = board.sets.at(-1)! as { fen?: string; movable?: { color?: unknown } };
+  assert.equal(settled.fen, setupMovePuzzle.solverFen, 'after the animation the solver position shows');
+  assert.equal(settled.movable?.color, 'white', 'the solver may now move');
+  assert.equal(ctrl.game?.fen, setupMovePuzzle.solverFen, 'grading state is unaffected by the prelude');
+
+  ctrl.dispose();
+});
+
+test('a pending setup animation is dropped on dispose without touching the board', async () => {
+  const { service, adapter } = await makeWorld([]);
+  await service.seedContent([setupMovePuzzle]);
+  const board = makeRecordingBoard();
+  const ctrl = new TrainCtrl(service, adapter, board.port);
+  ctrl.setupMoveDelayMs = 30;
+  await ctrl.beginAttempt(await adapter.loadPuzzle(setupMovePuzzle.id));
+  ctrl.dispose();
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  assert.equal(board.moves.length, 0, 'no animation after teardown');
+});
+
+test('completed review steps back to the setup move played when the puzzle loaded', async () => {
+  const { service, adapter } = await makeWorld([]);
+  await service.seedContent([setupMovePuzzle]);
+  const ctrl = new TrainCtrl(service, adapter, makeRecordingBoard().port);
+  ctrl.setupMoveDelayMs = 1;
+  await ctrl.beginAttempt(await adapter.loadPuzzle(setupMovePuzzle.id));
+  await new Promise((resolve) => setTimeout(resolve, 10));
+
+  await ctrl.resolveUserMove('g4', 'c8');
+  await new Promise((resolve) => setTimeout(resolve, 450));
+  await ctrl.resolveUserMove('c8', 'f8');
+  await new Promise((resolve) => setTimeout(resolve, 450));
+  assert.equal(ctrl.game?.isCompleted, true);
+  assert.ok(ctrl.review, 'review available after completion');
+
+  ctrl.stepReview('first');
+  assert.equal(ctrl.review!.current().mover, 'start');
+  assert.equal(ctrl.review!.current().fen, setupMovePuzzle.sourceFen);
+  ctrl.stepReview('forward');
+  assert.equal(ctrl.review!.current().uci, 'f8f4', 'the first move played is reachable');
+  assert.equal(ctrl.review!.current().fen, setupMovePuzzle.solverFen);
+
+  ctrl.dispose();
+});
+
+test('live stepper rewinds during solving and returns to interactive play', async () => {
+  const { service, adapter } = await makeWorld([]);
+  await service.seedContent([setupMovePuzzle]);
+  const board = makeRecordingBoard();
+  const ctrl = new TrainCtrl(service, adapter, board.port);
+  ctrl.setupMoveDelayMs = 1;
+  await ctrl.beginAttempt(await adapter.loadPuzzle(setupMovePuzzle.id));
+  await new Promise((resolve) => setTimeout(resolve, 10));
+
+  // Rewindable at load: the setup move is the last step, so nothing ahead.
+  assert.ok(ctrl.review, 'live review available as soon as the puzzle loads');
+  assert.equal(ctrl.review!.canForward, false, 'cursor starts on the live end');
+
+  ctrl.stepReview('back');
+  const rewound = board.sets.at(-1)! as { fen?: string; movable?: { color?: unknown } };
+  assert.equal(rewound.movable?.color, undefined, 'a rewound step is read-only');
+  assert.equal(rewound.fen, setupMovePuzzle.sourceFen, 'it shows the position before the setup move');
+
+  ctrl.stepReview('forward');
+  const live = board.sets.at(-1)! as { fen?: string; movable?: { color?: unknown } };
+  assert.equal(live.movable?.color, 'white', 'stepping forward returns to live, interactive play');
+  assert.equal(live.fen, setupMovePuzzle.solverFen);
+
+  ctrl.dispose();
+});
+
+test('live stepper follows the played line as the solver moves', async () => {
+  const { service, adapter } = await makeWorld([]);
+  await service.seedContent([makePuzzle({ id: 'live-a', solution: ['e2e4', 'e7e5', 'g1f3'] })]);
+  const board = makeRecordingBoard();
+  const ctrl = new TrainCtrl(service, adapter, board.port);
+  await ctrl.beginAttempt(await adapter.loadPuzzle('live-a'));
+  assert.equal(ctrl.review, null, 'nothing to rewind before the first move');
+
+  await ctrl.resolveUserMove('e2', 'e4');
+  await new Promise((resolve) => setTimeout(resolve, 320));
+  assert.equal(ctrl.game?.isCompleted, false);
+  assert.ok(ctrl.review, 'live review appears once moves are played');
+  assert.equal(ctrl.review!.canForward, false, 'cursor follows to the new live end');
+
+  ctrl.stepReview('back');
+  const rewound = board.sets.at(-1)! as { movable?: { color?: unknown } };
+  assert.equal(rewound.movable?.color, undefined, 'stepping back is read-only');
+  ctrl.stepReview('forward');
+  const live = board.sets.at(-1)! as { movable?: { color?: unknown } };
+  assert.equal(live.movable?.color, 'white', 'returning to the end re-enables play');
+
+  ctrl.dispose();
+});
+
+test('the move list highlights the move the stepper is on', async () => {
+  const { service, adapter } = await makeWorld([]);
+  await service.seedContent([setupMovePuzzle]);
+  const ctrl = new TrainCtrl(service, adapter, makeRecordingBoard().port);
+  ctrl.setupMoveDelayMs = 1;
+  await ctrl.beginAttempt(await adapter.loadPuzzle(setupMovePuzzle.id));
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  await ctrl.resolveUserMove('g4', 'c8');
+  await new Promise((resolve) => setTimeout(resolve, 450));
+  await ctrl.resolveUserMove('c8', 'f8');
+  await new Promise((resolve) => setTimeout(resolve, 450));
+
+  const highlighted = (): VNode[] => nodesWithClass(view(ctrl), 'current');
+
+  ctrl.stepReview('first');
+  assert.equal(highlighted().length, 0, 'the starting position highlights no move');
+  ctrl.stepReview('forward');
+  assert.match(vnodeText(highlighted()[0]!), /Rxf4/, 'setup move highlighted');
+  ctrl.stepReview('forward');
+  assert.match(vnodeText(highlighted()[0]!), /Qc8/, 'solver move highlighted');
+  ctrl.stepReview('back');
+  assert.match(vnodeText(highlighted()[0]!), /Rxf4/, 'stepping back moves the highlight');
+
+  ctrl.dispose();
+});
+
 // --- 2. view never renders the board host ------------------------------------
 
 const EXPECTED_IDS = [
@@ -254,8 +463,6 @@ const EXPECTED_IDS = [
   'puzzle-id',
   'solver-color',
   'reveal-btn',
-  'review-section',
-  'review-label',
   'review-back',
   'review-forward',
   'collection-picker',
@@ -397,7 +604,7 @@ test('wrong move fails, correction completes, review steps drive the board', asy
   ctrl.stepReview('forward');
   ctrl.stepReview('last');
   assert.ok(board.sets.length > setsBeforeReview, 'review steps render imperatively');
-  assert.ok(vnodeIds(view(ctrl)).includes('review-section'), 'review section rendered');
+  assert.ok(findById(view(ctrl), 'review-back'), 'review stepper available');
 });
 
 // --- 5. Skip and Reveal semantics ---------------------------------------------
@@ -458,6 +665,30 @@ test('resume rebuilds the attempt display without claiming the current puzzle', 
   // Fidelity with the pre-Snabbdom flow: resume never set `currentPuzzle`,
   // so review gating still keys off a fresh beginAttempt.
   assert.equal(resumed.currentPuzzle, null);
+});
+
+test('hint works on a resumed attempt where currentPuzzle is unset', async () => {
+  const service = await makeService();
+  await service.seedContent([makePuzzle({ id: 're-hint', solution: ['e2e4', 'e7e5'] })]);
+  const adapter = new TrainingAdapter(service);
+  await adapter.startSession('test-program', 'test-collection');
+  const first = new TrainCtrl(service, adapter, makeRecordingBoard().port);
+  await first.beginAttempt(await adapter.loadPuzzle('re-hint'));
+
+  const board = makeRecordingBoard();
+  const resumed = new TrainCtrl(service, adapter, board.port);
+  assert.equal(await resumed.resumeIfPossible(), true);
+  assert.equal(resumed.currentPuzzle, null, 'resume leaves currentPuzzle unset');
+
+  await resumed.onHint();
+  const hintConfig = board.sets.at(-1) as {
+    drawable?: { shapes?: Array<{ orig: string; brush: string }> };
+  };
+  assert.deepEqual(
+    hintConfig.drawable?.shapes,
+    [{ orig: 'e2', brush: 'green' }],
+    'hint falls back to infoPuzzle instead of silently no-oping',
+  );
 });
 
 // --- 8. collection picker scoping ----------------------------------------------
@@ -1088,4 +1319,198 @@ test('BRD-004: dispose during playback drops the timer — no stale callbacks', 
   assert.equal(ctrl.playingBack, false, 'teardown stops playback');
   await sleep(100);
   assert.equal(ctrl.playingBack, false, 'no stale callback revives playback after unmount');
+});
+
+// --- 13. Woodpecker cycle progress bar -----------------------------------------
+
+test('woodpecker cycle panel shows progress through the set as a bar', async () => {
+  const service = await makeService();
+  await service.seedContent([
+    makePuzzle({ id: 'wp-a' }),
+    makePuzzle({ id: 'wp-b' }),
+    makePuzzle({ id: 'wp-c' }),
+  ]);
+  const sourceCollectionId = service.getActiveCollectionId();
+  const set = await service.createWoodpeckerSet({
+    name: 'WP set',
+    sourceCollectionId,
+    puzzleIds: ['wp-a', 'wp-b', 'wp-c'],
+  });
+  const { cycleId } = await service.startWoodpeckerCycle(set.setId);
+  await service.recordWoodpeckerCycleResult(cycleId, 'wp-a', 'clean', 5);
+
+  const adapter = new TrainingAdapter(service);
+  await adapter.startSession(WOODPECKER_CYCLE_PROGRAM_ID, woodpeckerScopeId(set.setId));
+  const ctrl = new TrainCtrl(service, adapter, makeRecordingBoard().port);
+  ctrl.configureWoodpecker({ kind: 'cycle', setId: set.setId, cycleId });
+  await ctrl.beginAttempt(await adapter.loadPuzzle('wp-b'));
+
+  const context = view(ctrl);
+  assert.ok(vnodeText(context).includes('Puzzle 2 of 3'), 'position text retained');
+  const bar = findById(context, 'woodpecker-cycle-progress');
+  assert.ok(bar, 'cycle progress bar rendered in the woodpecker context');
+  assert.equal(bar.sel, 'progress.progress-bar');
+  assert.equal(bar.data?.props?.value, 1, 'one puzzle already scored');
+  assert.equal(bar.data?.props?.max, 3, 'bar spans the whole set');
+  assert.match(String(bar.data?.attrs?.['aria-label']), /1 of 3/);
+  ctrl.dispose();
+});
+
+// --- 14. Woodpecker: revisit earlier puzzles as unscored practice --------------
+
+test('Woodpecker Previous/Next revisits earlier puzzles as unscored practice', async () => {
+  const service = await makeService();
+  await service.seedContent([
+    makePuzzle({ id: 'wpr-a' }),
+    makePuzzle({ id: 'wpr-b' }),
+    makePuzzle({ id: 'wpr-c' }),
+  ]);
+  const sourceCollectionId = service.getActiveCollectionId();
+  const set = await service.createWoodpeckerSet({
+    name: 'WP review',
+    sourceCollectionId,
+    puzzleIds: ['wpr-a', 'wpr-b', 'wpr-c'],
+  });
+  const { cycleId } = await service.startWoodpeckerCycle(set.setId);
+  await service.recordWoodpeckerCycleResult(cycleId, 'wpr-a', 'clean', 5);
+  await service.recordWoodpeckerCycleResult(cycleId, 'wpr-b', 'clean', 5);
+
+  const adapter = new TrainingAdapter(service);
+  await adapter.startSession(WOODPECKER_CYCLE_PROGRAM_ID, woodpeckerScopeId(set.setId));
+  const ctrl = new TrainCtrl(service, adapter, makeRecordingBoard().port);
+  ctrl.configureWoodpecker({ kind: 'cycle', setId: set.setId, cycleId });
+
+  // The cycle continues on the first uncovered puzzle, with Previous available.
+  await ctrl.loadNext();
+  assert.equal(ctrl.currentPuzzle?.id, 'wpr-c');
+  assert.equal(ctrl.canStepWoodpeckerReview(-1), true);
+  assert.equal(ctrl.canStepWoodpeckerReview(1), false, 'nothing after the last puzzle');
+  assert.ok(findById(view(ctrl), 'woodpecker-prev-btn'), 'Previous control rendered');
+  assert.ok(findById(view(ctrl), 'woodpecker-next-btn'), 'Next control rendered');
+
+  // Step back to the earlier puzzle as unscored practice.
+  await ctrl.stepWoodpeckerReview(-1);
+  assert.equal(ctrl.currentPuzzle?.id, 'wpr-b');
+  assert.equal(ctrl.woodpeckerReviewPosition, 2);
+  assert.equal(ctrl.canStepWoodpeckerReview(-1), true, 'can still go further back');
+  assert.equal(ctrl.canStepWoodpeckerReview(1), true, 'can return toward progress');
+  assert.ok(findById(view(ctrl), 'woodpecker-current-btn'), 'Go-to-current escape hatch rendered');
+
+  const resultsBefore = service.getWoodpeckerCycle(cycleId)!.cycle.results.length;
+  await ctrl.resolveUserMove('e2', 'e4'); // the puzzle's single solution move
+  assert.equal(
+    service.getWoodpeckerCycle(cycleId)!.cycle.results.length,
+    resultsBefore,
+    'unscored review never alters cycle results',
+  );
+  assert.ok(
+    service.listAttempts({ programId: WOODPECKER_REVIEW_PROGRAM_ID }).length >= 1,
+    'the review solve lands in the isolated review scope',
+  );
+  assert.equal(ctrl.woodpeckerReviewPosition, 2, 'still in review after the solve');
+
+  // Next returns to the frontier (scored play) and can never skip past progress.
+  await ctrl.stepWoodpeckerReview(1);
+  assert.equal(ctrl.currentPuzzle?.id, 'wpr-c');
+  assert.equal(ctrl.woodpeckerReviewPosition, null, 'landing on the frontier resumes scored play');
+  assert.equal(ctrl.canStepWoodpeckerReview(1), false, 'Next cannot pass the progress frontier');
+
+  // Go to current jumps from review straight back to the frontier.
+  await ctrl.stepWoodpeckerReview(-1);
+  assert.equal(ctrl.woodpeckerReviewPosition, 2);
+  await ctrl.goToWoodpeckerCurrent();
+  assert.equal(ctrl.woodpeckerReviewPosition, null);
+  assert.equal(ctrl.currentPuzzle?.id, 'wpr-c');
+  ctrl.dispose();
+});
+
+// --- 15. Setup-move prelude on resume (user report 2026-10-16) ----------------
+// A reload resumes the open attempt; before this fix the board jumped straight
+// to the solver position with no setup move, so the puzzle looked like it had
+// "lost" its first move.
+
+test('resuming an untouched attempt replays the setup move prelude', async () => {
+  const service = await makeService();
+  await service.seedContent([setupMovePuzzle]);
+  const adapter = new TrainingAdapter(service);
+  await adapter.startSession('test-program', 'test-collection');
+
+  const first = new TrainCtrl(service, adapter, makeRecordingBoard().port);
+  first.setupMoveDelayMs = 1;
+  await first.beginAttempt(await adapter.loadPuzzle(setupMovePuzzle.id));
+  await new Promise((resolve) => setTimeout(resolve, 20));
+
+  const board = makeRecordingBoard();
+  const resumed = new TrainCtrl(service, adapter, board.port);
+  resumed.setupMoveDelayMs = 5;
+  assert.equal(await resumed.resumeIfPossible(), true);
+
+  const prelude = board.sets.at(-1) as { fen?: string; movable?: { color?: unknown } };
+  assert.equal(prelude.fen, setupMovePuzzle.sourceFen, 'resume first shows the pre-setup position');
+  assert.equal(prelude.movable?.color, undefined, 'prelude is not interactive');
+  assert.equal(board.moves.length, 0, 'the setup move has not animated yet');
+
+  await new Promise((resolve) => setTimeout(resolve, 30));
+  assert.deepEqual(board.moves, [['f8', 'f4']], 'the setup move animates on resume too');
+  assert.equal((board.sets.at(-1) as { fen?: string }).fen, setupMovePuzzle.solverFen);
+  assert.equal(resumed.currentPuzzle, null, 'resume still does not claim the current puzzle');
+
+  resumed.dispose();
+});
+
+test('resuming after a solver move does not replay the setup prelude', async () => {
+  const service = await makeService();
+  await service.seedContent([setupMovePuzzle]);
+  const adapter = new TrainingAdapter(service);
+  await adapter.startSession('test-program', 'test-collection');
+
+  const first = new TrainCtrl(service, adapter, makeRecordingBoard().port);
+  first.setupMoveDelayMs = 1;
+  await first.beginAttempt(await adapter.loadPuzzle(setupMovePuzzle.id));
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  await first.resolveUserMove('g4', 'c8');
+  await new Promise((resolve) => setTimeout(resolve, 20));
+
+  const board = makeRecordingBoard();
+  const resumed = new TrainCtrl(service, adapter, board.port);
+  resumed.setupMoveDelayMs = 5;
+  assert.equal(await resumed.resumeIfPossible(), true);
+  await new Promise((resolve) => setTimeout(resolve, 30));
+
+  assert.equal(board.moves.length, 0, 'a partially solved puzzle is not replayed');
+  assert.equal(resumed.game?.fen.includes(' '), true, 'the board renders the resumed position');
+
+  resumed.dispose();
+});
+
+test('a resumed attempt gets a working stepper that can reach the setup move', async () => {
+  const service = await makeService();
+  await service.seedContent([setupMovePuzzle]);
+  const adapter = new TrainingAdapter(service);
+  await adapter.startSession('test-program', 'test-collection');
+
+  const first = new TrainCtrl(service, adapter, makeRecordingBoard().port);
+  first.setupMoveDelayMs = 1;
+  await first.beginAttempt(await adapter.loadPuzzle(setupMovePuzzle.id));
+  await new Promise((resolve) => setTimeout(resolve, 20));
+
+  const board = makeRecordingBoard();
+  const resumed = new TrainCtrl(service, adapter, board.port);
+  resumed.setupMoveDelayMs = 1;
+  assert.equal(await resumed.resumeIfPossible(), true);
+
+  // The stepper row is only rendered when a review line exists.
+  assert.ok(resumed.review, 'a resumed attempt has a review line');
+  assert.equal(resumed.review!.current().mover, 'setup', 'starts live on the setup move');
+  assert.equal(resumed.review!.canBack, true, '◀ is enabled so the setup move is reachable');
+
+  resumed.stepReview('back');
+  assert.equal(resumed.review!.current().mover, 'start');
+  assert.equal(resumed.review!.current().fen, setupMovePuzzle.sourceFen, 'steps back to the pre-setup position');
+  assert.equal(resumed.review!.canForward, true, '▶ returns to the setup move');
+
+  resumed.stepReview('forward');
+  assert.equal(resumed.review!.current().mover, 'setup');
+
+  resumed.dispose();
 });
