@@ -153,3 +153,69 @@ sampling and theme quotas if future use needs representativeness. A globally
 uniform reservoir sample requires scanning the full stream or a separately
 verified indexed source; arbitrary middle byte ranges in a zstd stream cannot
 be assumed independently decodable. No full scan is needed for this POC.
+
+## F05a — Bundled rating-band collections (2026-10-16)
+
+User request: "import all of Lichess puzzles … make puzzle sets for varying
+difficulty levels based on rating ranges, ideally 500-sized collections …
+cover a wider variety of the puzzle tags … at least 5 difficulty levels",
+clarified to a **subset** of collections. The T02 prefix approach cannot do this
+(prefix bias, only 493 eligible rows), so F05a scans the **complete** archive.
+
+Archive observed 2026-10-16 via HEAD: **307,234,795 bytes**, ETag
+`"6abf70a1-125007eb"`, Last-Modified `2026-10-02 08:51:45 GMT` — identical
+headers/etag to the T02 observation on 2026-10-08, so this is the same dated
+export. Local archive SHA256
+`76335bfa7d7c4a7f93c1366d81549e53951ebb79dd43d34904cab8f22d962f8d`
+(computed locally; not upstream-signed). The archive is **not vendored** (too
+large to commit), so `verify` needs the same bytes.
+
+`tools/puzzles/bands.py` streams the CSV twice (counts; then bounded keepers) and
+selects five 500-puzzle bands: 0–999, 1000–1499, 1500–1999, 2000–2499, 2500+.
+Quality filter matches T02 (RD ≤100, popularity ≥80, plays ≥100). Diversity rule:
+each row is bucketed by its **rarest** theme (name breaks ties), then selection
+round-robins themes rarest-first; within a theme, ascending
+`SHA256("chessreps-bands-v1:" + band + ":" + id)`. This stops near-universal tags
+such as `mate` from dominating a band merely because they co-occur with
+everything. Bucketing by *all* themes was measured first and left `mate` at
+58–62% of the lowest band; the rarest-theme rule drops every band's largest
+primary type to **1.6%** (`maxPrimary=0.016`) while keeping 70–73 distinct tags.
+
+Observed results (6,157,341 source rows; eligible rows by band 799,244 /
+1,416,968 / 1,187,395 / 606,670 / 90,622):
+
+| Band | Eligible | Selected | Tags (primary/available) | Max primary share | Rating min–max (mean) | Legal replay |
+|---|---:|---:|---:|---:|---|---|
+| 0–999 | 799,244 | 500 | 70/73 | 1.6% | 424–999 (857) | 500/500 |
+| 1000–1499 | 1,416,968 | 500 | 71/73 | 1.6% | 1000–1499 (1270) | 500/500 |
+| 1500–1999 | 1,187,395 | 500 | 71/73 | 1.6% | 1500–1998 (1722) | 500/500 |
+| 2000–2499 | 606,670 | 500 | 71/73 | 1.6% | 2000–2497 (2184) | 500/500 |
+| 2500+ | 90,622 | 500 | 69/71 | 1.6% | 2500–2964 (2634) | 500/500 |
+
+Zero illegal lines and zero duplicate solver positions were hit during
+selection (the validators exist and are exercised by tests). Pack SHA256:
+`f83302975558f072d14daa50c00a73f55aea056aca25c5f9f2b968b60323930c`;
+2,500 records, **1,779,705 bytes**. Bands are exactly 500 puzzles so a
+Woodpecker set can be created directly from one.
+
+Integration: additive and one-shot. At boot the app loads `bands.json`
+alongside `pack.jsonl` and calls `seedBundledCollections`, which merges the
+puzzles into the library **without touching any existing collection** and creates
+the five band collections under stable ids (`lichess-bands-v1-<band>`). A plain
+`meta` value (`META_BUNDLED_BANDS`) records the seeded pack id, so the step is a
+no-op on later boots and a deliberately deleted band collection is not
+recreated. Existing local data, the stored default collection id, the IndexedDB
+db name and every schema version are unchanged; export/import already carries
+the `meta` collection, so no export-version bump was needed. Because the seed is
+additive, the starter collection keeps its original 100 puzzles; the library
+grows to 2,600. Tests: `tools/puzzles/test_bands.py` (band boundaries, rarest-tag
+primary, round-robin order, duplicate-position and fail-loud paths) and
+`apps/web/tests/bundled-bands.node.test.ts` (additive membership, one-shot
+idempotency, reload persistence).
+
+Limitations: legality only (no engine optimality), tag labels are Lichess's (not
+recomputed), and the mid-band rating spread is not explicitly stratified — only
+the band bounds are enforced. Reviewer/coordinator follow-ups, not done here:
+optional finer bands (e.g. splitting 2500+), per-theme drill collections, and a
+UI affordance to jump straight from a band to a Woodpecker set (currently done
+from the Collections card).

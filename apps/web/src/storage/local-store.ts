@@ -51,6 +51,13 @@ export const META_PUZZLE_ORDER = 'puzzle-order';
 export const META_ACTIVE_SESSIONS = 'active-sessions';
 /** Persisted id of the active (training) collection; defaults when absent. */
 export const META_ACTIVE_COLLECTION = 'active-collection';
+/**
+ * Pack id of the bundled rating-band collections already seeded (F02). A plain
+ * meta value in the existing `meta` collection — no new store or schema. It
+ * makes band seeding idempotent per pack, so a deliberately deleted band
+ * collection is not silently recreated on the next boot.
+ */
+export const META_BUNDLED_BANDS = 'bundled-bands';
 
 /**
  * Default collection id. The bundled pack is seeded into this collection so

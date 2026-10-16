@@ -109,3 +109,32 @@ This validates chess legality and mate-tagged endings, not engine optimality or
 all acceptable alternatives. In particular, Lichess permits **any checkmating
 move** for mate-in-one puzzles; the stored principal line is not an exhaustive
 answer set. See the research notes for integration recommendations and costs.
+
+## Rating-band collections (`bands.py`)
+
+`bands.py` builds the app's five bundled difficulty collections. Unlike the
+bounded T02 sample, it streams the **complete** official archive (6,157,341
+rows; 307,234,795 compressed bytes at pack build time) and needs the same
+archive present for `verify` — it is too large to vendor, so the pack records
+its SHA256 instead of retaining it.
+
+```sh
+/tmp/opencode/chessreps-t02-venv/bin/python tools/puzzles/bands.py probe /tmp/opencode/lichess-puzzles/lichess_db_puzzle.csv.zst
+mkdir -p data/puzzles/lichess-bands-v1
+/tmp/opencode/chessreps-t02-venv/bin/python tools/puzzles/bands.py build /tmp/opencode/lichess-puzzles/lichess_db_puzzle.csv.zst data/puzzles/lichess-bands-v1
+/tmp/opencode/chessreps-t02-venv/bin/python tools/puzzles/bands.py verify /tmp/opencode/lichess-puzzles/lichess_db_puzzle.csv.zst data/puzzles/lichess-bands-v1
+```
+
+Bands are inclusive 500-point rating ranges (0–999, 1000–1499, 1500–1999,
+2000–2499, 2500+) with 500 puzzles each. Each row is bucketed by its **rarest**
+theme, then selection round-robins the themes (rarest first) so no single puzzle
+type dominates a band; every band ends up covering 70–73 distinct tags with no
+primary type above ~1.6%. Quality filters, keeper size, ordering and
+deduplication are versioned in `RULES`.
+
+Artifacts: `pack.jsonl` (2,500 puzzles, interleaved across bands),
+`bands.json` (stable collection ids/names and per-band membership),
+`manifest.json`, `validation.json` (per-band theme and rating statistics) and
+`source.json` (archive URL, size, SHA256, license). `test_bands.py` covers the
+band boundaries and the selection rules. Recorded pack SHA256:
+`f83302975558f072d14daa50c00a73f55aea056aca25c5f9f2b968b60323930c`.

@@ -1,0 +1,12 @@
+{
+  "archive_bytes": 307234795,
+  "archive_sha256": "76335bfa7d7c4a7f93c1366d81549e53951ebb79dd43d34904cab8f22d962f8d",
+  "archive_vendored": false,
+  "final_url": "https://database.lichess.org/lichess_db_puzzle.csv.zst",
+  "license": "CC0-1.0",
+  "license_source": "https://database.lichess.org/#puzzles",
+  "limitations": "the 307 MB compressed archive is not retained; verify needs the same archive (checked by archive_sha256). The URL is mutable, so a fresh download need not reproduce it.",
+  "retrieved_at_utc": "2026-10-16T04:13:54.696785+00:00",
+  "schema_version": 1,
+  "url": "https://database.lichess.org/lichess_db_puzzle.csv.zst"
+}

@@ -1,0 +1,74 @@
+{
+  "checksums_sha256": {
+    "pack.jsonl": "f83302975558f072d14daa50c00a73f55aea056aca25c5f9f2b968b60323930c"
+  },
+  "convention": "sourceFen/original.FEN is BEFORE setupMove; solverFen is AFTER setupMove; solution excludes setup and includes alternating solver/opponent plies",
+  "count": 2500,
+  "environment": {
+    "chess": "1.11.2",
+    "python": "3.14.8",
+    "zstandard": "0.25.0"
+  },
+  "license": "CC0-1.0",
+  "pack_id": "lichess-bands-v1",
+  "schema_version": 1,
+  "selection": {
+    "bands": [
+      {
+        "id": "0000-0999",
+        "label": "0–999",
+        "rating_max": 999,
+        "rating_min": 0
+      },
+      {
+        "id": "1000-1499",
+        "label": "1000–1499",
+        "rating_max": 1499,
+        "rating_min": 1000
+      },
+      {
+        "id": "1500-1999",
+        "label": "1500–1999",
+        "rating_max": 1999,
+        "rating_min": 1500
+      },
+      {
+        "id": "2000-2499",
+        "label": "2000–2499",
+        "rating_max": 2499,
+        "rating_min": 2000
+      },
+      {
+        "id": "2500-plus",
+        "label": "2500+",
+        "rating_max": null,
+        "rating_min": 2500
+      }
+    ],
+    "count_per_band": 500,
+    "deduplication": "first in selection order per band per normalized solver position (FEN first four fields, legal en passant); clocks ignored",
+    "keeper_per_theme": 60,
+    "ordering": "per band, round-robin over themes ordered by ascending eligible frequency then theme name; within a theme ascending SHA256(UTF-8(seed:band_id:PuzzleId))",
+    "quality": {
+      "plays_min": 100,
+      "popularity_min": 80,
+      "rating_deviation_max": 100
+    },
+    "scope": "complete official CSV; every eligible row is considered",
+    "seed": "chessreps-bands-v1"
+  },
+  "serialization": "UTF-8, LF; JSONL sorted keys compact separators; JSON sorted keys indent=2 trailing LF",
+  "source_snapshot": {
+    "archive_bytes": 307234795,
+    "archive_sha256": "76335bfa7d7c4a7f93c1366d81549e53951ebb79dd43d34904cab8f22d962f8d",
+    "archive_vendored": false,
+    "final_url": "https://database.lichess.org/lichess_db_puzzle.csv.zst",
+    "license": "CC0-1.0",
+    "license_source": "https://database.lichess.org/#puzzles",
+    "limitations": "the 307 MB compressed archive is not retained; verify needs the same archive (checked by archive_sha256). The URL is mutable, so a fresh download need not reproduce it.",
+    "retrieved_at_utc": "2026-10-16T04:13:54.696785+00:00",
+    "schema_version": 1,
+    "url": "https://database.lichess.org/lichess_db_puzzle.csv.zst"
+  },
+  "tool_sha256": "520d2575c0b9d19e0ece8c0ed5089df7a12a847daa4ca8ea4e390fba69138613"
+}
