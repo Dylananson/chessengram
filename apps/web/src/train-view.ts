@@ -70,6 +70,7 @@ import {
 import { AttemptTimer } from './timing.ts';
 import type { TrainingAdapter } from './training-adapter.ts';
 import { actionButton } from './ui/primitives.ts';
+import { projectPuzzleStatus, type PuzzleStatusSummary } from './puzzle-status.ts';
 // Screen patch function: the shared `./ui/patch.ts` setup (`attributes`
 // for ids/disabled, `eventListeners` for `on: { click/change }`, `props`
 // for the live picker value).
@@ -199,6 +200,7 @@ export class TrainCtrl {
   progressText = '';
   storageText = '';
   queueText = '';
+  puzzleStatus: PuzzleStatusSummary | null = null;
 
   board: TrainBoardPort;
   promotionUi: TrainPromotionUi;
@@ -659,6 +661,7 @@ export class TrainCtrl {
     this.game = new PuzzleGame(p);
     this.infoPuzzle = p;
     this.currentPuzzle = p;
+    this.refreshPuzzleStatus(p.id);
     this.resetReview();
     this.timer = new AttemptTimer();
     this.scoredCommitted = false;
@@ -720,6 +723,7 @@ export class TrainCtrl {
     nextDueAt?: number;
     reason?: string;
   }): void {
+    this.puzzleStatus = null;
     const when = selection.nextDueAt
       ? new Date(selection.nextDueAt).toLocaleString()
       : t('puzzle.none');
@@ -832,6 +836,7 @@ export class TrainCtrl {
       if (this.disposed) return false;
       this.game = new PuzzleGame(p);
       this.infoPuzzle = p;
+      this.refreshPuzzleStatus(p.id);
       // NOTE: `currentPuzzle` is intentionally left untouched here, matching
       // the pre-Snabbdom flow: a directly-resumed completion enters review
       // only once a fresh `beginAttempt` has set the current puzzle.
@@ -990,6 +995,18 @@ export class TrainCtrl {
       learned: q.learned,
     });
   }
+
+  /** Refresh read-only schedule/history signals for the displayed puzzle. */
+  private refreshPuzzleStatus(puzzleId: string): void {
+    const collectionId = this.service.getActiveCollectionId();
+    const schedule = this.service.getScheduleState(
+      progressKeyToString({ programId: DEFAULT_PROGRAM_ID, collectionId, puzzleId }),
+    );
+    const attempts = this.service
+      .listAttempts({ programId: DEFAULT_PROGRAM_ID, puzzleId })
+      .filter((attempt) => attempt.progressKey.collectionId === collectionId);
+    this.puzzleStatus = projectPuzzleStatus(schedule, attempts);
+  }
 }
 
 export const PROMOTION_GLYPHS: Record<'white' | 'black', Record<PromotionRole, string>> = {
@@ -1017,6 +1034,30 @@ function statusClass(ctrl: TrainCtrl): string {
   if (ctrl.status.tone !== 'info') sel += `.${ctrl.status.tone}`;
   if (ctrl.game?.failedState && !ctrl.game.isCompleted) sel += '.failed-but-solving';
   return sel;
+}
+
+function puzzleStatusLines(summary: PuzzleStatusSummary | null): VNode[] {
+  if (!summary) return [h('p#puzzle-status', t('puzzle.status.new'))];
+  const state = t(`puzzle.status.${summary.state}`);
+  const when = summary.dueAt === undefined
+    ? t('puzzle.status.dueNever')
+    : summary.dueAt <= Date.now()
+      ? t('puzzle.status.dueNow')
+      : new Date(summary.dueAt).toLocaleString();
+  const time = (value: number | undefined): string =>
+    value === undefined ? t('puzzle.status.unknown') : value.toFixed(1);
+  return [
+    h('p#puzzle-status', state),
+    h('p', t('puzzle.status.algorithm', { algorithm: summary.algorithm })),
+    ...(summary.rung === undefined ? [] : [h('p', t('puzzle.status.rung', { rung: summary.rung }))]),
+    h('p', t('puzzle.status.due', { when })),
+    h('p.progress-note', t('puzzle.status.history', {
+      successes: summary.successfulSolves,
+      average: time(summary.averageActiveSeconds),
+      best: time(summary.bestActiveSeconds),
+      lapses: summary.lapses,
+    })),
+  ];
 }
 
 /**
@@ -1047,6 +1088,10 @@ export function view(ctrl: TrainCtrl): VNode {
     h('div.info', [
       h('h2', { attrs: { 'data-i18n': 'status.title' } }, t('status.title')),
       h(statusClass(ctrl), t(ctrl.status.key, ctrl.status.params)),
+    ]),
+    h('div.info', [
+      h('h2', { attrs: { 'data-i18n': 'puzzle.status.title' } }, t('puzzle.status.title')),
+      ...puzzleStatusLines(ctrl.puzzleStatus),
     ]),
     h('div.info', [
       h('h2', { attrs: { 'data-i18n': 'solution.title' } }, t('solution.title')),
