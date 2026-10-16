@@ -9,11 +9,12 @@ import 'chessground/assets/chessground.brown.css';
 import 'chessground/assets/chessground.cburnett.css';
 import './theme.css';
 import './app.css';
+import './design-system.scss';
 
 import type { AppContext } from './app-context.ts';
 import { applySavedBoardTheme } from './board-theme.ts';
 import { applyTranslations, detectLocale, setLocale, t } from './i18n.ts';
-import { loadPuzzlesFromPack } from './pack-loader.ts';
+import { loadBundledBands, loadPuzzlesFromPack, BANDS_PACK_ID } from './pack-loader.ts';
 import { navigate, registerScreen, startRouter, type ScreenId } from './router.ts';
 import {
   DEFAULT_PROGRAM_ID,
@@ -24,12 +25,15 @@ import { stubFactories } from './screens.ts';
 import { HistoryView } from './history-view.ts';
 import { PuzzlesView } from './puzzles-view.ts';
 import { SettingsView } from './settings-view.ts';
+import { SpacedView } from './spaced-view.ts';
 import { IndexedDbStorageBackend } from './storage/indexeddb-backend.ts';
 import { LocalStore } from './storage/local-store.ts';
 import { InMemoryStorageBackend } from './storage/memory-backend.ts';
 import type { StorageBackend } from './storage/backend.ts';
 import { TrainingAdapter } from './training-adapter.ts';
 import { TrainView } from './train-view.ts';
+import { WoodpeckerView } from './woodpecker-view.ts';
+import { DashboardView } from './dashboard-view.ts';
 
 async function createService(): Promise<LocalTrainingService> {
   let backend: StorageBackend;
@@ -54,6 +58,8 @@ async function createService(): Promise<LocalTrainingService> {
 
 function buildNav(ctx: AppContext): void {
   const items: Array<[ScreenId, string]> = [
+    ['dashboard', 'nav.dashboard'],
+    ['woodpecker', 'nav.woodpecker'],
     ['train', 'nav.train'],
     ['puzzles', 'nav.puzzles'],
     ['collections', 'nav.collections'],
@@ -75,10 +81,14 @@ function buildNav(ctx: AppContext): void {
 
 function registerScreens(): void {
   const trainFactory: ScreenFactory = (ctx) => new TrainView(ctx);
+  registerScreen('dashboard', (ctx) => new DashboardView(ctx));
+  // `#/train` is the Spaced Repetition hub; the board is `#/train/session`.
+  registerScreen('spaced', (ctx) => new SpacedView(ctx));
   registerScreen('train', trainFactory);
   registerScreen('puzzles', (ctx) => new PuzzlesView(ctx));
   registerScreen('settings', (ctx) => new SettingsView(ctx));
   registerScreen('history', (ctx) => new HistoryView(ctx));
+  registerScreen('woodpecker', (ctx) => new WoodpeckerView(ctx));
   for (const { id, factory } of stubFactories()) {
     registerScreen(id, factory);
   }
@@ -94,6 +104,21 @@ async function init(): Promise<void> {
   if (!service.hasContent()) {
     const pack = await loadPuzzlesFromPack();
     await service.seedContent(pack.puzzles, { packId: pack.packId });
+  }
+
+  // F02: add the bundled rating-band collections once per pack. Additive only —
+  // the starter collection keeps its membership and existing progress stands.
+  if ((await service.bundledBandsPackId()) !== BANDS_PACK_ID) {
+    try {
+      const bands = await loadBundledBands();
+      await service.seedBundledCollections(
+        bands.packId,
+        bands.puzzles,
+        bands.bands.map((band) => ({ id: band.id, name: band.name, puzzleIds: band.puzzleIds })),
+      );
+    } catch {
+      // Bundled content is an enhancement; a fetch failure must not block boot.
+    }
   }
 
   const adapter = new TrainingAdapter(service);
