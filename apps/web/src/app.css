@@ -95,6 +95,7 @@ h1 {
 .move-list-empty { color: var(--muted); }
 .status-panel .status { font-size: 18px; min-height: 52px; }
 .status-panel #status.status { font-size: 13px; min-height: 0; padding: 6px 8px; }
+.feedback-actions { gap: 10px; }
 .feedback-actions .button { padding: 9px 10px; font-size: 14px; }
 .board-wrap {
   min-width: 0;
