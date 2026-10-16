@@ -104,8 +104,8 @@ test('the new-per-day cap stops introducing new puzzles once reached', async () 
     expectedScheduleRevision: started.scheduleRevision,
   });
 
-  const blocked = await service.selectNext({ sessionId: session.session.sessionId, programId: PROGRAM_ID });
-  assert.equal(blocked.puzzleId, null, 'no new puzzles while the daily cap is reached');
+  const continued = await service.selectNext({ sessionId: session.session.sessionId, programId: PROGRAM_ID });
+  assert.equal(continued.puzzleId, 'p1', 'continue with the scheduled future review without introducing new puzzles');
 
   await service.applyCuratedSettings({ ...CURATED_DEFAULTS, newIntroductionLimitPerDay: 10 });
   const allowed = await service.selectNext({ sessionId: session.session.sessionId, programId: PROGRAM_ID });
