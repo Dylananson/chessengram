@@ -223,6 +223,12 @@ export class TrainCtrl {
   private readonly service: LocalTrainingService;
   private readonly adapter: TrainingAdapter;
 
+  attemptMoves(puzzleId: string) {
+    const attempts = this.adapter.listAttemptsForPuzzle(puzzleId, 10);
+    const currentId = this.adapter.describeCurrentAttempt().attemptId;
+    return attempts.find((attempt) => attempt.attemptId.value === currentId) ?? attempts[0];
+  }
+
   constructor(
     service: LocalTrainingService,
     adapter: TrainingAdapter,
@@ -1099,14 +1105,13 @@ function formatSolveTimer(snapshot: ReturnType<AttemptTimer['snapshot']>): strin
  * picker options) reads live ctrl fields.
  */
 function viewLeft(ctrl: TrainCtrl): VNode {
-  const review = ctrl.review;
   return h('div.controls.controls-left', [
-    h('div.info.status-panel', [
-      h('h2', { attrs: { 'data-i18n': 'status.title' } }, t('status.title')),
-      h('p#solve-timer', formatSolveTimer(ctrl.timer.snapshot())),
-      h(statusClass(ctrl), t(ctrl.status.key, ctrl.status.params)),
-    ]),
-    h('div.button-row.train-actions', [
+    ...viewDetails(ctrl),
+  ]);
+}
+
+function viewActions(ctrl: TrainCtrl): VNode {
+  return h('div.button-row.train-actions', [
       ...(!ctrl.nextDisabled ? [h('button#next-btn.button.button-primary', {
         attrs: { type: 'button', 'aria-label': t('next.label') },
         on: { click: () => void ctrl.loadNext() },
@@ -1123,31 +1128,15 @@ function viewLeft(ctrl: TrainCtrl): VNode {
       h(`button#analyze-btn.button.button-secondary${ctrl.game?.isCompleted || ctrl.game?.failedState ? '' : '.hidden'}`, {
         attrs: { type: 'button', disabled: true, 'aria-label': t('train.analyze.label'), title: t('train.analyze.title') },
       }, '⌕'),
-      h(`div.button-row.review-nav${review ? '' : '.hidden'}`, [
-        h('button.button.button-secondary', {
-          attrs: { type: 'button', id: 'review-back', 'aria-label': t('review.back'), ...(review?.canBack ? {} : { disabled: true }) },
-          on: { click: () => ctrl.stepReview('back') },
-        }, '◀'),
-        h('button.button.button-secondary', {
-          attrs: { type: 'button', id: 'review-forward', 'aria-label': t('review.forward'), ...(review?.canForward ? {} : { disabled: true }) },
-          on: { click: () => ctrl.stepReview('forward') },
-        }, '▶'),
-      ]),
       h(`button#practice-btn.button.button-secondary${ctrl.practiceHidden ? '.hidden' : ''}`, {
         attrs: { type: 'button' }, on: { click: () => void ctrl.onPractice() },
       }, ctrl.practiceLabel),
-    ]),
-    h(`div.info${review ? '' : '.hidden'}`, { attrs: { id: 'review-section' } }, [
-      h('h2', { attrs: { 'data-i18n': 'review.title' } }, t('review.title')),
-      h('p.progress-note', t('review.hint')),
-      h('p#review-label', review ? t('review.position', { index: review.position, total: review.count - 1 }) : ''),
-    ]),
   ]);
 }
 
-function viewRight(ctrl: TrainCtrl): VNode {
+function viewDetails(ctrl: TrainCtrl): VNode[] {
   const puzzle = ctrl.infoPuzzle;
-  return h('div.controls.controls-right', [
+  return [
     h('div.info', [
       h('h2', { attrs: { 'data-i18n': 'puzzle.info' } }, t('puzzle.info')),
       h('p#puzzle-id', puzzle ? `${t('puzzle.id')}: ${puzzle.id}` : '-'),
@@ -1196,12 +1185,40 @@ function viewRight(ctrl: TrainCtrl): VNode {
       h('p#progress.progress-note', ctrl.progressText),
       h('p#storage.progress-note', ctrl.storageText),
     ]),
+  ];
+}
+
+function viewRight(ctrl: TrainCtrl): VNode {
+  const review = ctrl.review;
+  const attempt = ctrl.infoPuzzle ? ctrl.attemptMoves(ctrl.infoPuzzle.id) : undefined;
+  const reviewedUci = review?.current().uci;
+  const moves = (attempt?.events ?? []).flatMap((event) => {
+    if (event.type !== 'move' && event.type !== 'wrong-move') return [];
+    const uci = String(event.payload?.uci ?? event.payload?.move ?? '');
+    return uci ? [h('li', { key: event.eventId, class: { wrong: event.type === 'wrong-move' || (event.type === 'move' && event.payload?.correct === false), current: uci === reviewedUci } }, uci)] : [];
+  });
+  return h('div.controls.controls-right', [
+    h('section.info.move-list', [h('h2', 'Moves (UCI)'), h('ol', moves.length ? moves : [h('li.move-list-empty', 'No moves yet')])]),
+    h('div.info.status-panel', [
+      h('h2', { attrs: { 'data-i18n': 'status.title' } }, t('status.title')),
+      h('p#solve-timer', formatSolveTimer(ctrl.timer.snapshot())),
+      h(statusClass(ctrl), t(ctrl.status.key, ctrl.status.params)),
+      h(`div.info${review ? '' : '.hidden'}`, { attrs: { id: 'review-section' } }, [
+        h('h2', { attrs: { 'data-i18n': 'review.title' } }, t('review.title')),
+        h('p.progress-note', t('review.hint')),
+        h('p#review-label', review ? t('review.position', { index: review.position, total: review.count - 1 }) : ''),
+      ]),
+    ]),
+    h(`div.button-row.review-nav${review ? '' : '.hidden'}`, [
+      h('button.button.button-secondary', { attrs: { type: 'button', id: 'review-back', 'aria-label': t('review.back'), ...(review?.canBack ? {} : { disabled: true }) }, on: { click: () => ctrl.stepReview('back') } }, '◀'),
+      h('button.button.button-secondary', { attrs: { type: 'button', id: 'review-forward', 'aria-label': t('review.forward'), ...(review?.canForward ? {} : { disabled: true }) }, on: { click: () => ctrl.stepReview('forward') } }, '▶'),
+    ]),
   ]);
 }
 
 /** Combined DOM-free view retained for callers/tests; mount patches each panel independently. */
 export function view(ctrl: TrainCtrl): VNode {
-  return h('div.train-panels', [viewLeft(ctrl), viewRight(ctrl)]);
+  return h('div.train-panels', [viewLeft(ctrl), viewRight(ctrl), viewActions(ctrl)]);
 }
 
 export interface TrainShell {
@@ -1213,6 +1230,7 @@ export interface TrainShell {
   boardWrap: HTMLElement;
   leftPlaceholder: HTMLElement;
   rightPlaceholder: HTMLElement;
+  actionPlaceholder: HTMLElement;
 }
 
 /**
@@ -1234,6 +1252,9 @@ export function createTrainShell(doc: Document): TrainShell {
   boardHost.className = 'board';
   boardHost.setAttribute('aria-label', t('board.title'));
   boardWrap.appendChild(boardHost);
+  const actionPlaceholder = doc.createElement('div');
+  actionPlaceholder.className = 'board-actions-slot';
+  boardWrap.appendChild(actionPlaceholder);
   const leftPlaceholder = doc.createElement('div');
   leftPlaceholder.className = 'controls-slot controls-left-slot';
   const rightPlaceholder = doc.createElement('div');
@@ -1242,7 +1263,7 @@ export function createTrainShell(doc: Document): TrainShell {
   layout.appendChild(boardWrap);
   layout.appendChild(rightPlaceholder);
   root.appendChild(layout);
-  return { root, boardHost, boardWrap, leftPlaceholder, rightPlaceholder };
+  return { root, boardHost, boardWrap, leftPlaceholder, rightPlaceholder, actionPlaceholder };
 }
 
 export class TrainView implements Screen {
@@ -1255,6 +1276,7 @@ export class TrainView implements Screen {
   private ctrl: TrainCtrl | null = null;
   private leftVnode: VNode | null = null;
   private rightVnode: VNode | null = null;
+  private actionVnode: VNode | null = null;
   private unbindPromotion: (() => void) | null = null;
   private timerInterval: ReturnType<typeof setInterval> | null = null;
 
@@ -1323,11 +1345,13 @@ export class TrainView implements Screen {
       this.ctrl = ctrl;
       this.leftVnode = patch(shell.leftPlaceholder, viewLeft(ctrl));
       this.rightVnode = patch(shell.rightPlaceholder, viewRight(ctrl));
+      this.actionVnode = patch(shell.actionPlaceholder, viewActions(ctrl));
       this.timerInterval = setInterval(() => ctrl.redraw(), 1000);
       ctrl.redraw = () => {
-        if (this.ctrl === null || this.leftVnode === null || this.rightVnode === null) return;
+        if (this.ctrl === null || this.leftVnode === null || this.rightVnode === null || this.actionVnode === null) return;
         this.leftVnode = patch(this.leftVnode, viewLeft(this.ctrl));
         this.rightVnode = patch(this.rightVnode, viewRight(this.ctrl));
+        this.actionVnode = patch(this.actionVnode, viewActions(this.ctrl));
       };
 
       const resumed = await ctrl.resumeIfPossible();

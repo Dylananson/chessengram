@@ -126,7 +126,7 @@ try {
     return { boardLeft: b.left, boardRight: b.right, boardTop: b.top, leftRight: l.right, leftTop: l.top, rightLeft: r.left, rightTop: r.top, boardWidth: b.width };
   });
   check(
-    'desktop Train has left controls, centered board, and right details',
+    'desktop Train has left details, centered board with actions, and right solve panel',
     Boolean(desktopTrainLayout && desktopTrainLayout.leftRight < desktopTrainLayout.boardLeft && desktopTrainLayout.boardLeft < desktopTrainLayout.rightLeft && Math.abs(desktopTrainLayout.boardTop - desktopTrainLayout.leftTop) < 8 && Math.abs(desktopTrainLayout.boardTop - desktopTrainLayout.rightTop) < 8 && desktopTrainLayout.boardWidth >= 300),
     JSON.stringify(desktopTrainLayout),
   );
@@ -144,8 +144,8 @@ try {
     return { boardTop: b.top, boardBottom: b.bottom, leftTop: l.top, leftBottom: l.bottom, rightTop: r.top, boardWidth: b.width, leftWidth: l.width, rightWidth: r.width };
   });
   check(
-    'mobile Train stacks board, controls, then details',
-    Boolean(mobileTrainLayout && mobileTrainLayout.boardBottom <= mobileTrainLayout.leftTop && mobileTrainLayout.leftBottom <= mobileTrainLayout.rightTop && Math.abs(mobileTrainLayout.boardWidth - mobileTrainLayout.leftWidth) < 2 && Math.abs(mobileTrainLayout.boardWidth - mobileTrainLayout.rightWidth) < 2),
+    'mobile Train stacks board/actions, solve panel, then details',
+    Boolean(mobileTrainLayout && mobileTrainLayout.boardBottom <= mobileTrainLayout.rightTop && mobileTrainLayout.rightTop < mobileTrainLayout.leftTop && Math.abs(mobileTrainLayout.boardWidth - mobileTrainLayout.leftWidth) < 2 && Math.abs(mobileTrainLayout.boardWidth - mobileTrainLayout.rightWidth) < 2),
     JSON.stringify(mobileTrainLayout),
   );
   await page.setViewport({ width: 1280, height: 900 });

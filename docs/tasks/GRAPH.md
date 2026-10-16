@@ -24,6 +24,9 @@ flowchart TD
   LANE["train-view lane: MOB-001 done → BRD-001 → BRD-003 → BRD-004 → STS-001 → REV-002 → TRN-001 → BRD-002 (one at a time)"] --> T16
   THM["THM-001 board theme picker"] --> T16
   PZL["PZL-001 Lichess-inspired puzzle layout"] --> T16
+  PZL --> PZL2A["PZL-002a source PGN feasibility/provenance"]
+  PZL2A --> PZL2B["PZL-002b optional content + pack support"]
+  PZL2B --> PZL2C["PZL-002c offline move prelude UI"]
   REV["REV-001 resumed-review (needs user call)"] --> T16
   HW["T11/T15 hardware (needs device)"] --> T16
 ```
@@ -51,6 +54,9 @@ flowchart TD
 | BRD-002 | Bigger desktop board; no toggle/card/title; 900px centered container; actions beneath board; timer always visible | MOB-001 | layout CSS, `train-view.ts` (board region) | Done (refined current loop) |
 | THM-001 | Board theme picker (survey Lichess/chessground theming first; square colors only, pieces untouched; localStorage persistence) | BRD-002 (done) | `settings-view.ts` (picker region), board-theme CSS, related tests | Done (current loop) |
 | PZL-001 | Lichess-inspired puzzle layout: controls/feedback, board, details in three desktop columns; board-first stack mobile | UI-001, BRD-002 (done) | `train-view.ts` shell/view layout, `app.css`, train view tests, smoke | Done (refined current loop) |
+| PZL-002a | Source-game PGN feasibility, source/CC0 provenance, and pack selection policy | PZL-001 | `docs/research/source-game-pgn.md` (new), read-only tooling audit | Ready |
+| PZL-002b | Optional PGN content model + reproducible pack retrieval/validation + export/import/migration | PZL-002a; approve schema/version policy before implementation | `tools/puzzles/**`, contracts/content validation/storage/data-port as approved; single owner | Blocked on PZL-002a review + schema plan |
+| PZL-002c | Display bundled game prelude in moves panel; gracefully omit when absent/offline | PZL-002b | `apps/web/src/train-view.ts`, `apps/web/src/puzzle-game.ts` only if needed, related tests/smoke | Blocked on PZL-002b |
 | REV-001 | Resumed completions show no review section (keep vs fix) | **user call** | `train-view.ts` (review gating) | **Blocked: needs user call** |
 | HW | T11/T15 hardware matrix execution | Matrix written (done) | real device | **Blocked: needs device** |
 | RF-001 | React + component library (PROPOSED, see BACKLOG) | architecture decision (accepted ADR) | — | **Parked: loop must skip (UI-001 Snabbdom foundation done instead, 2026-10-16)** |

@@ -189,7 +189,8 @@ test('createTrainShell creates the board host exactly once, apart from the patch
   assert.ok(shell.boardHost.className.includes('board'));
   assert.equal(shell.boardHost.attrs['aria-label'], 'Board');
   assert.equal(shell.boardWrap.className, 'board-wrap');
-  assert.deepEqual(shell.boardWrap.children, [shell.boardHost], 'no card wrapper or Board heading');
+  assert.equal(shell.boardWrap.children[0], shell.boardHost, 'board remains first in its static wrapper');
+  assert.equal(shell.boardWrap.children[1].className, 'board-actions-slot', 'actions slot follows the board');
   assert.equal(created.some((el) => el.tag === 'h2' && el.textContent === 'Board'), false);
 });
 
@@ -214,7 +215,7 @@ test('train shell has no size toggle and keeps the board host outside the patch 
   ctrl.dispose();
 });
 
-test('status leads the side panel; actions precede details with review navigation in the action row', async () => {
+test('desktop view separates details, solve sections, and board actions in the requested order', async () => {
   const { service, adapter } = await makeWorld(['layout-a']);
   const ctrl = new TrainCtrl(service, adapter);
   await ctrl.beginAttempt(await adapter.loadPuzzle('layout-a'));
@@ -223,18 +224,23 @@ test('status leads the side panel; actions precede details with review navigatio
   assert.ok(initialChildren[0]!.sel?.includes('controls-left'));
   assert.ok(initialChildren[1]!.sel?.includes('controls-right'));
   const leftChildren = initialChildren[0]!.children as VNode[];
-  assert.ok(leftChildren[0]!.sel?.includes('status-panel'));
-  assert.ok(leftChildren[1]!.sel?.includes('train-actions'));
-  assert.ok(vnodeIds(initial).indexOf('puzzle-id') > vnodeIds(initial).indexOf('reveal-btn'));
+  assert.ok(leftChildren[0]!.sel?.includes('info'));
+  const rightChildren = initialChildren[1]!.children as VNode[];
+  assert.ok(rightChildren[0]!.sel?.includes('move-list'));
+  assert.ok(rightChildren[1]!.sel?.includes('status-panel'));
+  assert.equal(rightChildren.length, 3, 'right side has only moves, feedback, and review arrows');
+  assert.ok(rightChildren[2]!.sel?.includes('review-nav'));
+  assert.ok(initialChildren[2]!.sel?.includes('train-actions'));
+  assert.ok(vnodeIds(initial).indexOf('review-back') > vnodeIds(initial).indexOf('status'));
+  assert.ok(vnodeIds(initial).indexOf('puzzle-id') < vnodeIds(initial).indexOf('status'));
   assert.equal(findById(initial, 'skip-btn'), null, 'Skip is not a visible train action');
   assert.ok(findById(initial, 'reveal-btn'));
 
   const completed = view(await makeCompletedReview());
-  const actionRow = ((completed.children as VNode[])[0]!.children as VNode[])[1]!;
-  assert.ok(findById(actionRow, 'review-back'));
-  assert.ok(findById(actionRow, 'review-forward'));
-  assert.equal(findById(actionRow, 'review-first'), null);
-  assert.equal(findById(actionRow, 'review-last'), null);
+  assert.ok(findById(completed, 'review-back'));
+  assert.ok(findById(completed, 'review-forward'));
+  assert.equal(findById(completed, 'review-first'), null);
+  assert.equal(findById(completed, 'review-last'), null);
 });
 
 // --- 2. view never renders the board host ------------------------------------
