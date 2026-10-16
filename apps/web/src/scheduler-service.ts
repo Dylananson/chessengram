@@ -18,7 +18,6 @@
 import {
   Scheduler,
   resolveSettings,
-  selectEarliestFutureDue,
   selectNextDue,
   type Candidate,
   type Clock,
@@ -967,15 +966,18 @@ export class LocalTrainingService implements TrainingService {
 
     const chosen = selectNextDue(candidates, { now, reservedKeys: reserved, newOrder });
     if (!chosen) {
-      // UX-001: non-empty library with nothing eligible. Surface the
-      // earliest future due time (for the opt-in "practice ahead" action in
-      // the UI) and report the daily new-puzzle cap distinctly. Practice
-      // itself stays opt-in: selection never auto-starts future-due work.
-      const fallback = selectEarliestFutureDue(candidates, { now, reservedKeys: reserved });
+      // Non-empty library with nothing eligible: preserve the next-due
+      // status without making future-due work selectable.
+      let nextDueAt: number | undefined;
+      for (const candidate of candidates) {
+        const dueAt = candidate.state.dueAt;
+        if (dueAt === undefined || dueAt <= now || reserved.has(candidate.progressKey)) continue;
+        if (nextDueAt === undefined || dueAt < nextDueAt) nextDueAt = dueAt;
+      }
       return {
         puzzleId: null,
         reason: newCappedOut ? 'daily-limit-reached' : 'no-due-work',
-        nextDueAt: fallback?.state.dueAt,
+        nextDueAt,
       };
     }
 

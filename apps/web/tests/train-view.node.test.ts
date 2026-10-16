@@ -258,7 +258,6 @@ const EXPECTED_IDS = [
   'review-label',
   'review-back',
   'review-forward',
-  'practice-btn',
   'collection-picker',
   'queue',
   'progress',

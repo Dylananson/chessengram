@@ -1,6 +1,5 @@
 import { test } from 'node:test';
 import { strict as assert } from 'node:assert';
-import { selectEarliestFutureDue, type Candidate } from '@chessreps/scheduler';
 import {
   DEFAULT_COLLECTION_ID,
   LocalTrainingService,
@@ -108,7 +107,7 @@ test('(c) empty library still returns queue-empty', async () => {
   assert.equal(next.reason, 'queue-empty');
 });
 
-test('(d) practice fallback resolves schedule state in the active collection scope', async () => {
+test('(d) future-due work is never selected early; normal selection resumes when due', async () => {
   const { clock, set } = makeClock(T0);
   const service = await makeClockedService(clock);
   await service.seedContent([makePuzzle({ id: 'shared' }), makePuzzle({ id: 'solo' })]);
@@ -133,8 +132,7 @@ test('(d) practice fallback resolves schedule state in the active collection sco
   assert.ok(defaultDue !== undefined && defaultDue > T0, 'default scope is future-due');
 
   // Under the custom active collection the shared puzzle is still new in
-  // THIS scope: the scoped 3-part read (what Train's practice fallback uses)
-  // finds no state, while the legacy 2-part read leaks the other scope.
+  // this scope; ordinary selection may introduce it.
   await service.setActiveCollectionId(custom.id);
   const scoped = service.getScheduleState(
     progressKeyToString({ programId: PROGRAM_ID, collectionId: custom.id, puzzleId: 'shared' }),
@@ -143,24 +141,10 @@ test('(d) practice fallback resolves schedule state in the active collection sco
   const legacy = service.getScheduleState(`${PROGRAM_ID}:shared`);
   assert.equal(legacy?.dueAt, defaultDue);
 
-  // Practice-ahead over the active scope's candidates finds nothing
-  // future-due there (mirrors `findPracticeTarget`'s scoped candidate build).
-  const scopedCandidates = (ids: string[], collectionId: string): Candidate[] => {
-    const candidates: Candidate[] = [];
-    for (const id of ids) {
-      const key = progressKeyToString({ programId: PROGRAM_ID, collectionId, puzzleId: id });
-      const state = service.getScheduleState(key);
-      if (!state) continue;
-      candidates.push({ progressKey: key, state, orderKey: id });
-    }
-    return candidates;
-  };
   const members = service.getCollection(custom.id)?.puzzleIds ?? [];
   assert.deepEqual(members, ['shared']);
-  assert.equal(selectEarliestFutureDue(scopedCandidates(members, custom.id), { now: T0 }), null);
-
-  // Advance the custom scope at a later time, then practice-ahead in the
-  // active scope must resolve the ACTIVE scope's due time, not the other's.
+  // Advance the custom scope and complete its new puzzle, then verify it
+  // cannot be selected early and becomes eligible at its due time.
   set(T0 + 60 * 60 * 1000);
   const customAdapter = new TrainingAdapter(service);
   await customAdapter.startSession(PROGRAM_ID, custom.id);
@@ -173,11 +157,13 @@ test('(d) practice fallback resolves schedule state in the active collection sco
   )?.dueAt;
   assert.ok(customDue !== undefined && customDue > defaultDue, 'scopes advance independently');
 
-  const now = T0 + 60 * 60 * 1000;
-  const ahead = selectEarliestFutureDue(scopedCandidates(members, custom.id), { now });
-  assert.ok(ahead, 'active scope has a practice-ahead target');
-  assert.equal(ahead.orderKey, 'shared');
-  assert.equal(ahead.state.dueAt, customDue);
+  const tooEarly = await customAdapter.selectNext();
+  assert.equal(tooEarly.puzzleId, null);
+  assert.equal(tooEarly.reason, 'no-due-work');
+  assert.equal(tooEarly.nextDueAt, customDue);
+  set(customDue!);
+  const duePick = await customAdapter.selectNext();
+  assert.equal(duePick.puzzleId, 'shared');
 
   // The default scope still resolves its own due time when active again.
   await service.setActiveCollectionId(DEFAULT_COLLECTION_ID);

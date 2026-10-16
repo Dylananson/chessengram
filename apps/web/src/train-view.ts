@@ -50,7 +50,6 @@ import type { SquareName } from 'chessops/types';
 import { h } from 'snabbdom/build/h.js';
 import type { VNode } from 'snabbdom/build/vnode.js';
 import type { NormalizedPuzzle } from '@chessreps/contracts';
-import { selectEarliestFutureDue, type Candidate } from '@chessreps/scheduler';
 import type { AppContext } from './app-context.ts';
 import { t } from './i18n.ts';
 import {
@@ -207,8 +206,6 @@ export class TrainCtrl {
   nextDisabled = true;
   skipDisabled = false;
   revealDisabled = false;
-  practiceHidden = true;
-  practiceLabel: string = t('practiceAhead.label');
   collections: TrainCollectionOption[] = [];
   activeCollectionId = '';
   progressText = '';
@@ -735,7 +732,6 @@ export class TrainCtrl {
     this.nextDisabled = true;
     this.skipDisabled = false;
     this.revealDisabled = false;
-    this.practiceHidden = true;
     this.solutionHidden = true;
     this.revealHidesSolution = false;
     this.status = {
@@ -753,7 +749,6 @@ export class TrainCtrl {
     this.stopPlayback();
     if (this.game?.isCompleted === false && this.adapter.getActiveAttemptId()) return;
     this.nextDisabled = true;
-    this.practiceHidden = true;
     this.redraw();
     const selection = await this.adapter.selectNext();
     if (this.disposed) return;
@@ -770,11 +765,7 @@ export class TrainCtrl {
    * - `daily-limit-reached` (new-per-day cap) is shown distinctly from plain
    *   `no-due-work` (everything due in the future), both with the earliest
    *   due time when known.
-   * - When a practice target exists, an explicit opt-in button starts it:
-   *   the earliest future-due puzzle ("practice ahead"), or — only when the
-   *   cap is the blocker and nothing is due in the future — a new puzzle
-   *   anyway. Practice attempts are scored normally; nothing is auto-started
-   *   and no schedule state is fabricated.
+   * Next remains available so it can re-run normal eligibility selection.
    */
   showNoDue(selection: {
     puzzleId: string | null;
@@ -787,99 +778,15 @@ export class TrainCtrl {
       : t('puzzle.none');
     if (selection.reason === 'queue-empty') {
       this.status = { key: 'status.queueEmpty', tone: 'info' };
-      this.practiceHidden = true;
     } else {
       if (selection.reason === 'daily-limit-reached') {
         this.status = { key: 'status.dailyLimit', tone: 'info', params: { when } };
       } else {
         this.status = { key: 'status.noDue', tone: 'info', params: { when } };
       }
-      const target = this.findPracticeTarget(selection.reason);
-      if (target) {
-        this.practiceLabel = t(
-          target.kind === 'ahead' ? 'practiceAhead.label' : 'practiceNew.label',
-        );
-        this.practiceHidden = false;
-      } else {
-        this.practiceHidden = true;
-      }
     }
     this.nextDisabled = false;
     this.redraw();
-  }
-
-  /** Resolve the opt-in practice target, if any. Pure read of service state. */
-  findPracticeTarget(reason?: string): { puzzleId: string; kind: 'ahead' | 'new' } | null {
-    const active = this.adapter.describeCurrentAttempt().progressKey;
-    const programId = active?.programId ?? DEFAULT_PROGRAM_ID;
-    // B4: schedule scope is (program, collection, puzzle). Practice reads the
-    // active collection's scope via 3-part keys only — never the legacy
-    // `program:puzzle` lookup, which resolves another collection's state when
-    // the active scope has none.
-    const collectionId = this.service.getActiveCollectionId();
-    const reserved = new Set<string>();
-    if (active) reserved.add(progressKeyToString(active));
-    const members = this.service.getCollection(collectionId)?.puzzleIds;
-    const library = new Set(this.service.listPuzzleIds());
-    const ids = (members ?? [...library]).filter((id) => library.has(id));
-    const candidates: Candidate[] = [];
-    for (const id of ids) {
-      const key = progressKeyToString({ programId, collectionId, puzzleId: id });
-      const state = this.service.getScheduleState(key);
-      if (!state) continue;
-      candidates.push({ progressKey: key, state, orderKey: id });
-    }
-    const ahead = selectEarliestFutureDue(candidates, { now: Date.now(), reservedKeys: reserved });
-    if (ahead) return { puzzleId: ahead.orderKey, kind: 'ahead' };
-    // Cap is the only blocker and nothing is due in the future: offer one
-    // new puzzle anyway (explicit opt-in; the cap still gates auto-selection).
-    if (reason === 'daily-limit-reached') {
-      for (const id of ids) {
-        const key = progressKeyToString({ programId, collectionId, puzzleId: id });
-        if (reserved.has(key)) continue;
-        const state = this.service.getScheduleState(key);
-        if (!state || state.state === 'new') return { puzzleId: id, kind: 'new' };
-      }
-    }
-    return null;
-  }
-
-  /** Start the opt-in practice target resolved by `findPracticeTarget`. */
-  async onPractice(): Promise<void> {
-    if (this.disposed) return;
-    if (this.adapter.getActiveAttemptId()) return;
-    const selection = await this.adapter.selectNext();
-    if (this.disposed) return;
-    if (selection.puzzleId) {
-      await this.beginAttempt(await this.adapter.loadPuzzle(selection.puzzleId));
-      return;
-    }
-    const target = this.findPracticeTarget(selection.reason);
-    if (!target) {
-      this.showNoDue(selection);
-      return;
-    }
-    const attemptKey = this.adapter.describeCurrentAttempt().progressKey;
-    const whenValue = this.service.getScheduleState(
-      progressKeyToString({
-        programId: attemptKey?.programId ?? DEFAULT_PROGRAM_ID,
-        collectionId: this.service.getActiveCollectionId(),
-        puzzleId: target.puzzleId,
-      }),
-    )?.dueAt;
-    await this.beginAttempt(await this.adapter.loadPuzzle(target.puzzleId));
-    if (this.disposed) return;
-    if (target.kind === 'ahead') {
-      this.status = {
-        key: 'status.practiceAhead',
-        tone: 'info',
-        params: {
-          id: target.puzzleId,
-          when: whenValue ? new Date(whenValue).toLocaleString() : t('puzzle.none'),
-        },
-      };
-      this.redraw();
-    }
   }
 
   /** Rebuild the current attempt after a reload, if one is still open. */
@@ -1149,9 +1056,6 @@ function viewActions(ctrl: TrainCtrl): VNode {
       h(`button#analyze-btn.button.button-secondary${ctrl.game?.isCompleted || ctrl.game?.failedState ? '' : '.hidden'}`, {
         attrs: { type: 'button', disabled: true, 'aria-label': t('train.analyze.label'), title: t('train.analyze.title') },
       }, '⌕'),
-      h(`button#practice-btn.button.button-secondary${ctrl.practiceHidden ? '.hidden' : ''}`, {
-        attrs: { type: 'button' }, on: { click: () => void ctrl.onPractice() },
-      }, ctrl.practiceLabel),
   ]);
 }
 
