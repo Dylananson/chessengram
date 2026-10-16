@@ -10,3 +10,4 @@ export * from "./commit.ts";
 export * from "./transition.ts";
 export * from "./selection.ts";
 export * from "./scheduler.ts";
+export * from "./woodpecker.ts";

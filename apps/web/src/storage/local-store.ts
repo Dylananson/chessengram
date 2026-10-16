@@ -6,7 +6,7 @@
  * history so history can outlive scheduler changes, per T03/D09.
  */
 
-import type { Clock, SchedulerState } from '@chessreps/scheduler';
+import type { Clock, SchedulerState, WoodpeckerCycle, WoodpeckerSetRecord } from '@chessreps/scheduler';
 import { systemClock } from '@chessreps/scheduler';
 import type {
   AttemptRecord,
@@ -30,6 +30,8 @@ export const COLLECTION_META = 'meta';
  */
 export const COLLECTION_COLLECTIONS = 'collections';
 export const COLLECTION_SETTINGS = 'settings';
+/** Durable Woodpecker set snapshots and cycle results (F01). */
+export const COLLECTION_WOODPECKER = 'woodpecker';
 /** Pre-import recovery snapshots. Deliberately excluded from exports/imports. */
 export const COLLECTION_BACKUPS = 'backups';
 
@@ -40,6 +42,7 @@ export const STORE_COLLECTIONS = [
   COLLECTION_ATTEMPTS,
   COLLECTION_SESSIONS,
   COLLECTION_SETTINGS,
+  COLLECTION_WOODPECKER,
   COLLECTION_COLLECTIONS,
   COLLECTION_META,
 ] as const;
@@ -70,9 +73,9 @@ export const DEFAULT_COLLECTION_ID = 'lichess-900-1099-v1';
 /** Current schema version for the local store's own envelopes. */
 export const LOCAL_STORE_SCHEMA_VERSION = '1.0.0';
 
-/** Export file format marker and version (PB5). Bumped to 1.1.0 for B4. */
+/** Export file format marker and version (1.2.0 adds Woodpecker records). */
 export const EXPORT_FORMAT = 'chessreps-export';
-export const EXPORT_FORMAT_VERSION = '1.1.0';
+export const EXPORT_FORMAT_VERSION = '1.2.0';
 
 /**
  * Expected persisted schema versions. These mirror the contract literal types
@@ -86,6 +89,7 @@ export const EXPECTED_SESSION_SCHEMA_VERSION = '1.0.0';
 export const EXPECTED_SETTINGS_SCHEMA_VERSION = '1.0.0';
 /** New in export 1.1.0 (B4). No earlier shape exists, so this starts at 1.0.0. */
 export const EXPECTED_COLLECTION_SCHEMA_VERSION = '1.0.0';
+export const EXPECTED_WOODPECKER_SCHEMA_VERSION = '1.0.0';
 
 export interface Envelope<T> {
   /** Version of the persisted record shape. */
@@ -289,6 +293,51 @@ export class LocalStore {
 
   async deleteCollection(collectionId: string): Promise<void> {
     await this.backend.delete(COLLECTION_COLLECTIONS, collectionId);
+  }
+
+  // --- Woodpecker sets and cycles (F01) -----------------------------------
+
+  async saveWoodpeckerSet(set: WoodpeckerSetRecord): Promise<void> {
+    await this.backend.set(
+      COLLECTION_WOODPECKER,
+      `set:${set.setId}`,
+      this.wrap(EXPECTED_WOODPECKER_SCHEMA_VERSION, { kind: 'set', ...set }),
+    );
+  }
+
+  async loadWoodpeckerSets(): Promise<WoodpeckerSetRecord[]> {
+    const records = await this.backend.getAll(COLLECTION_WOODPECKER);
+    return records.flatMap((record) => {
+      const value = this.unwrap<{ kind: string } & WoodpeckerSetRecord>(record.value, EXPECTED_WOODPECKER_SCHEMA_VERSION);
+      return value?.kind === 'set' ? [{ ...value, puzzleIds: [...value.puzzleIds] }] : [];
+    });
+  }
+
+  async saveWoodpeckerCycle(cycleId: string, cycle: WoodpeckerCycle): Promise<void> {
+    await this.backend.set(
+      COLLECTION_WOODPECKER,
+      `cycle:${cycleId}`,
+      this.wrap(EXPECTED_WOODPECKER_SCHEMA_VERSION, { kind: 'cycle', cycleId, ...cycle }),
+    );
+  }
+
+  async loadWoodpeckerCycles(): Promise<Array<{ cycleId: string; cycle: WoodpeckerCycle }>> {
+    const records = await this.backend.getAll(COLLECTION_WOODPECKER);
+    return records.flatMap((record) => {
+      const value = this.unwrap<{
+        kind: string;
+        cycleId: string;
+        setId: string;
+        cycleNumber: number;
+        puzzleIds: string[];
+        startedAt: number;
+        completedAt?: number;
+        results: WoodpeckerCycle['results'];
+      }>(record.value, EXPECTED_WOODPECKER_SCHEMA_VERSION);
+      if (!value || value.kind !== 'cycle') return [];
+      const { kind: _kind, cycleId, ...cycle } = value;
+      return [{ cycleId, cycle: { ...cycle, puzzleIds: [...cycle.puzzleIds], results: [...cycle.results] } }];
+    });
   }
 
   // --- settings (curated scheduler preferences) --------------------------

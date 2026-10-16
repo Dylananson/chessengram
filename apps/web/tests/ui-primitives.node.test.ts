@@ -7,6 +7,7 @@ import {
   emptyState,
   formRow,
   panel,
+  progressBar,
   statusLine,
 } from '../src/ui/primitives.ts';
 import { screenPatch } from '../src/ui/patch.ts';
@@ -169,4 +170,39 @@ test('helpers are pure: same inputs produce equal vnodes', () => {
   assert.deepEqual(actionButton('Go', 'secondary'), actionButton('Go', 'secondary'));
   assert.deepEqual(statusLine('x', 'wrong'), statusLine('x', 'wrong'));
   assert.deepEqual(emptyState('m', 'h'), emptyState('m', 'h'));
+});
+
+test('progressBar renders a native progress element carrying value and max', () => {
+  const vnode = progressBar(3, 20);
+  assert.equal(vnode.sel, 'progress.progress-bar');
+  assert.equal(vnode.data?.props?.value, 3);
+  assert.equal(vnode.data?.props?.max, 20);
+  assert.equal(vnode.data?.attrs?.max, 20);
+});
+
+test('progressBar clamps to bounds and passes through id/label', () => {
+  const over = progressBar(50, 10, { id: 'cycle-progress', label: 'Cycle progress' });
+  assert.equal(over.data?.props?.value, 10, 'value never exceeds max');
+  const under = progressBar(-4, 10);
+  assert.equal(under.data?.props?.value, 0, 'negative value clamps to zero');
+  assert.equal(under.data?.props?.max, 10);
+  assert.equal(over.data?.attrs?.id, 'cycle-progress');
+  assert.equal(over.data?.attrs?.['aria-label'], 'Cycle progress');
+});
+
+test('progressBar renders an empty bar for a non-positive or non-finite total', () => {
+  const zero = progressBar(5, 0);
+  assert.equal(zero.data?.props?.value, 0);
+  assert.equal(zero.data?.props?.max, 1, 'never an indeterminate max=0 spinner');
+  const nan = progressBar(2, Number.NaN);
+  assert.equal(nan.data?.props?.value, 0);
+  assert.equal(nan.data?.props?.max, 1);
+  assert.equal(progressBar(Number.NaN, 10).data?.props?.value, 0, 'NaN value clamps to zero');
+});
+
+test('progressBar omits id and aria-label when not provided', () => {
+  const vnode = progressBar(1, 2);
+  assert.deepEqual(Object.keys(vnode.data?.attrs ?? {}), ['max']);
+  assert.equal(vnode.data?.attrs?.id, undefined);
+  assert.equal(vnode.data?.attrs?.['aria-label'], undefined);
 });

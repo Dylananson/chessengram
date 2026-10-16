@@ -21,6 +21,7 @@
 
 import {
   COLLECTION_COLLECTIONS,
+  COLLECTION_WOODPECKER,
   DEFAULT_COLLECTION_ID,
   EXPECTED_COLLECTION_SCHEMA_VERSION,
   EXPORT_FORMAT,
@@ -33,7 +34,7 @@ import {
   type StoreExportSummary,
 } from './local-store.ts';
 
-export const SUPPORTED_EXPORT_VERSIONS = ['1.0.0', '1.1.0'] as const;
+export const SUPPORTED_EXPORT_VERSIONS = ['1.0.0', '1.1.0', '1.2.0'] as const;
 
 export interface Migration {
   from: string;
@@ -44,6 +45,7 @@ export interface Migration {
 /** Sequential migrations, applied until `EXPORT_FORMAT_VERSION` is reached. */
 export const MIGRATIONS: readonly Migration[] = [
   { from: '1.0.0', to: '1.1.0', migrate: migrate100to110 },
+  { from: '1.1.0', to: '1.2.0', migrate: migrate110to120 },
 ];
 
 /**
@@ -101,6 +103,15 @@ function migrate100to110(data: StoreExport): StoreExport {
   collections.meta = rawMeta;
 
   return { ...data, formatVersion: '1.1.0', collections };
+}
+
+/** F01: add an empty logical record collection; existing envelopes are untouched. */
+function migrate110to120(data: StoreExport): StoreExport {
+  const collections = { ...data.collections };
+  if (!isRecord(collections[COLLECTION_WOODPECKER])) {
+    collections[COLLECTION_WOODPECKER] = {};
+  }
+  return { ...data, formatVersion: '1.2.0', collections };
 }
 
 export type ParseExportResult =

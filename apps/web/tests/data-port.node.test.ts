@@ -68,5 +68,6 @@ test('summarizeExport counts each collection and the total', async () => {
   const summary = summarizeExport(await service.exportStore());
   assert.equal(summary.counts.content, 2);
   assert.equal(summary.total >= 2, true);
-  assert.equal(summary.formatVersion, '1.1.0');
+  assert.equal(summary.formatVersion, '1.2.0');
+  assert.equal(summary.counts.woodpecker, 0);
 });

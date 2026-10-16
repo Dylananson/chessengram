@@ -152,3 +152,30 @@ export function emptyState(message: string, hint?: string): VNode {
   }
   return h('div.empty-state', children);
 }
+
+export interface ProgressBarOptions {
+  /** Element id, set via `attrs` (smoke + CSS hook ids live here). */
+  id?: string;
+  /** Accessible label, rendered as `aria-label`. */
+  label?: string;
+}
+
+/**
+ * Horizontal progress bar for set/cycle progress (`value` of `total`).
+ *
+ * Uses the native `<progress>` element: `value`/`max` flow through the shared
+ * `props` module (the shared patch deliberately omits the `style` module), so
+ * redraws update the bar without inline styles, and the browser supplies the
+ * accessible `progressbar` semantics for free. Inputs are clamped; a
+ * non-positive `total` renders an empty bar rather than an indeterminate one.
+ */
+export function progressBar(value: number, total: number, options: ProgressBarOptions = {}): VNode {
+  const validTotal = Number.isFinite(total) && total > 0;
+  const max = validTotal ? total : 1;
+  const raw = Number.isFinite(value) ? value : 0;
+  const current = validTotal ? Math.min(Math.max(raw, 0), max) : 0;
+  const attrs: Record<string, string | number> = { max };
+  if (options.id !== undefined) attrs.id = options.id;
+  if (options.label !== undefined) attrs['aria-label'] = options.label;
+  return h('progress.progress-bar', { attrs, props: { value: current, max } });
+}

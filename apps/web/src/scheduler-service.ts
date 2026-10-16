@@ -19,11 +19,16 @@ import {
   Scheduler,
   resolveSettings,
   selectNextDue,
+  startWoodpeckerCycle as createWoodpeckerCycle,
+  recordWoodpeckerResult as appendWoodpeckerResult,
+  summarizeWoodpeckerCycle,
   type Candidate,
   type Clock,
   type CommitResult,
   type SchedulerSettings,
   type SchedulerState,
+  type WoodpeckerCycle,
+  type WoodpeckerSetRecord,
   systemClock,
 } from '@chessreps/scheduler';
 import type {
@@ -77,6 +82,18 @@ import {
 } from './settings-preferences.ts';
 
 export const DEFAULT_PROGRAM_ID = 'local-spaced-reps-v1';
+export const WOODPECKER_CYCLE_PROGRAM_ID = 'woodpecker-cycle-v1';
+export const WOODPECKER_FAILED_PROGRAM_ID = 'woodpecker-failed-review-v1';
+/**
+ * User request 2026-10-16: revisiting an earlier cycle puzzle runs as unscored
+ * practice. Attempts land in this isolated program scope so they never touch the
+ * cycle/failed schedule or the cycle result list (and stay out of the Woodpecker
+ * attempt stats, which only count the cycle + failed programs).
+ */
+export const WOODPECKER_REVIEW_PROGRAM_ID = 'woodpecker-review-v1';
+export function woodpeckerScopeId(setId: string): string {
+  return `woodpecker-set-${setId}`;
+}
 
 /**
  * Schedule scope is (programId, collectionId, puzzleId) — per-collection
@@ -174,6 +191,8 @@ export class LocalTrainingService implements TrainingService {
   private readonly puzzles = new Map<string, NormalizedPuzzle>();
   private readonly activeSessionByProgram = new Map<string, string>();
   private readonly collections = new Map<string, CollectionRecord>();
+  private readonly woodpeckerSets = new Map<string, WoodpeckerSetRecord>();
+  private readonly woodpeckerCycles = new Map<string, { cycleId: string; cycle: WoodpeckerCycle }>();
   private activeCollectionId: string = DEFAULT_COLLECTION_ID;
   private puzzleOrder: string[] = [];
   private initialized = false;
@@ -214,6 +233,13 @@ export class LocalTrainingService implements TrainingService {
       });
     }
     await this.ensureDefaultCollection();
+
+    this.woodpeckerSets.clear();
+    for (const set of await this.store.loadWoodpeckerSets()) this.woodpeckerSets.set(set.setId, set);
+    this.woodpeckerCycles.clear();
+    for (const saved of await this.store.loadWoodpeckerCycles()) {
+      this.woodpeckerCycles.set(saved.cycleId, saved);
+    }
 
     const storedActive = await this.store.loadMeta<string>(META_ACTIVE_COLLECTION);
     this.activeCollectionId =
@@ -581,6 +607,204 @@ export class LocalTrainingService implements TrainingService {
     }
   }
 
+  // --- Woodpecker F01 ------------------------------------------------------
+
+  listWoodpeckerSets(): WoodpeckerSetRecord[] {
+    return [...this.woodpeckerSets.values()].map((set) => ({ ...set, puzzleIds: [...set.puzzleIds] }));
+  }
+
+  getWoodpeckerSet(setId: string): WoodpeckerSetRecord | undefined {
+    const set = this.woodpeckerSets.get(setId);
+    return set ? { ...set, puzzleIds: [...set.puzzleIds] } : undefined;
+  }
+
+  /** Internal Woodpecker sets whose fixed snapshot came from this collection. */
+  listWoodpeckerSetsForCollection(collectionId: string): WoodpeckerSetRecord[] {
+    return this.listWoodpeckerSets().filter((set) => set.sourceCollectionId === collectionId);
+  }
+
+  /**
+   * The collection's canonical internal Woodpecker set, if one exists. The UI
+   * works in collections; sets stay an internal snapshot. When several sets
+   * point at the collection, prefer one that already has cycles (so progress is
+   * never orphaned), then the newest snapshot.
+   */
+  getWoodpeckerSetForCollection(collectionId: string): WoodpeckerSetRecord | undefined {
+    const sets = this.listWoodpeckerSetsForCollection(collectionId);
+    if (sets.length === 0) return undefined;
+    const withCycles = sets.filter((set) => this.listWoodpeckerCycles(set.setId).length > 0);
+    const pool = withCycles.length > 0 ? withCycles : sets;
+    return pool.reduce((best, set) => (set.createdAt >= best.createdAt ? set : best));
+  }
+
+  /**
+   * User request 2026-10-16: Woodpecker starts from a collection, so reuse the
+   * collection's canonical set or snapshot its current members into a new one on
+   * first use. Empty/>500 collections reject via {@link createWoodpeckerSet};
+   * callers gate the action on those limits.
+   */
+  async getOrCreateWoodpeckerSetForCollection(collectionId: string): Promise<WoodpeckerSetRecord> {
+    const existing = this.getWoodpeckerSetForCollection(collectionId);
+    if (existing) return existing;
+    const collection = this.collections.get(collectionId);
+    if (!collection) throw new Error('Collection not found.');
+    return this.createWoodpeckerSet({
+      name: collection.name,
+      sourceCollectionId: collectionId,
+      puzzleIds: [...collection.puzzleIds],
+    });
+  }
+
+  async createWoodpeckerSet(input: {
+    name: string;
+    sourceCollectionId: string;
+    puzzleIds: readonly string[];
+  }): Promise<WoodpeckerSetRecord> {
+    const name = input.name.trim();
+    const source = this.collections.get(input.sourceCollectionId);
+    if (!name) throw new Error('Set name must not be empty.');
+    if (!source) throw new Error('Source collection not found.');
+    if (input.puzzleIds.length === 0) throw new Error('Choose at least one puzzle.');
+    if (new Set(input.puzzleIds).size !== input.puzzleIds.length) throw new Error('Puzzle selection contains duplicates.');
+    if (input.puzzleIds.length > 500) throw new Error('A Woodpecker set can contain at most 500 puzzles.');
+    if (input.puzzleIds.some((id) => !source.puzzleIds.includes(id) || !this.puzzles.has(id))) {
+      throw new Error('Every selected puzzle must belong to the source collection.');
+    }
+    const set: WoodpeckerSetRecord = {
+      setId: `woodpecker-${this.idFactory()}`,
+      name,
+      sourceCollectionId: source.id,
+      puzzleIds: [...input.puzzleIds],
+      createdAt: this.clock.now(),
+    };
+    await this.store.saveWoodpeckerSet(set);
+    this.woodpeckerSets.set(set.setId, set);
+    return { ...set, puzzleIds: [...set.puzzleIds] };
+  }
+
+  listWoodpeckerCycles(setId: string): Array<{ cycleId: string; cycle: WoodpeckerCycle }> {
+    return [...this.woodpeckerCycles.values()]
+      .filter((saved) => saved.cycle.setId === setId)
+      .sort((a, b) => a.cycle.cycleNumber - b.cycle.cycleNumber)
+      .map((saved) => ({ cycleId: saved.cycleId, cycle: { ...saved.cycle, puzzleIds: [...saved.cycle.puzzleIds], results: [...saved.cycle.results] } }));
+  }
+
+  getActiveWoodpeckerCycle(setId: string): { cycleId: string; cycle: WoodpeckerCycle } | undefined {
+    return this.listWoodpeckerCycles(setId).find(({ cycle }) => !summarizeWoodpeckerCycle(cycle).complete);
+  }
+
+  getWoodpeckerCycle(cycleId: string): { cycleId: string; cycle: WoodpeckerCycle } | undefined {
+    const saved = this.woodpeckerCycles.get(cycleId);
+    return saved ? { cycleId, cycle: { ...saved.cycle, puzzleIds: [...saved.cycle.puzzleIds], results: [...saved.cycle.results] } } : undefined;
+  }
+
+  async startWoodpeckerCycle(setId: string): Promise<{ cycleId: string; cycle: WoodpeckerCycle }> {
+    const set = this.woodpeckerSets.get(setId);
+    if (!set) throw new Error('Woodpecker set not found.');
+    const active = this.getActiveWoodpeckerCycle(setId);
+    if (active) return active;
+    const cycleNumber = this.listWoodpeckerCycles(setId).length + 1;
+    const cycleId = `woodpecker-cycle-${this.idFactory()}`;
+    const cycle = createWoodpeckerCycle(set, cycleNumber, this.clock.now());
+    await this.store.saveWoodpeckerCycle(cycleId, cycle);
+    const saved = { cycleId, cycle };
+    this.woodpeckerCycles.set(cycleId, saved);
+    return { cycleId, cycle: { ...cycle, puzzleIds: [...cycle.puzzleIds], results: [] } };
+  }
+
+  async recordWoodpeckerCycleResult(
+    cycleId: string,
+    puzzleId: string,
+    result: 'clean' | 'failed',
+    activeSeconds: number,
+    recordedAt = this.clock.now(),
+  ): Promise<WoodpeckerCycle> {
+    const saved = this.woodpeckerCycles.get(cycleId);
+    if (!saved) throw new Error('Woodpecker cycle not found.');
+    const cycle = appendWoodpeckerResult(saved.cycle, puzzleId, result, activeSeconds, recordedAt);
+    await this.store.saveWoodpeckerCycle(cycleId, cycle);
+    this.woodpeckerCycles.set(cycleId, { cycleId, cycle });
+    return { ...cycle, puzzleIds: [...cycle.puzzleIds], results: [...cycle.results] };
+  }
+
+  getWoodpeckerAttemptStats(setId: string): {
+    scoredAttempts: number;
+    cleanSolves: number;
+    failedAttempts: number;
+    activeSeconds: number;
+  } {
+    const scopeId = woodpeckerScopeId(setId);
+    const programs = new Set([WOODPECKER_CYCLE_PROGRAM_ID, WOODPECKER_FAILED_PROGRAM_ID]);
+    const attempts = [...this.attempts.values()].filter(
+      (attempt) => programs.has(attempt.progressKey.programId)
+        && attempt.progressKey.collectionId === scopeId
+        && attempt.outcome !== undefined,
+    );
+    return {
+      scoredAttempts: attempts.length,
+      cleanSolves: attempts.filter((attempt) => attempt.outcome === 'success').length,
+      failedAttempts: attempts.filter((attempt) => attempt.outcome === 'failure').length,
+      activeSeconds: attempts.reduce((sum, attempt) => sum + attempt.timing.activeSolvingSeconds, 0),
+    };
+  }
+
+  /**
+   * When this collection's Woodpecker work was last touched (epoch ms), across
+   * the cycle, failed-review and unscored-review programs. The Dashboard uses it
+   * to put the most recently trained collection first. Falls back to the most
+   * recent cycle start so a cycle that was started but not yet solved still
+   * ranks by when it was opened. `undefined` when there is no Woodpecker work.
+   */
+  getWoodpeckerLastActivityAt(setId: string): number | undefined {
+    const scopeId = woodpeckerScopeId(setId);
+    const programs = new Set([
+      WOODPECKER_CYCLE_PROGRAM_ID,
+      WOODPECKER_FAILED_PROGRAM_ID,
+      WOODPECKER_REVIEW_PROGRAM_ID,
+    ]);
+    let latest: number | undefined;
+    const consider = (at: number | undefined): void => {
+      if (at === undefined) return;
+      if (latest === undefined || at > latest) latest = at;
+    };
+    for (const attempt of this.attempts.values()) {
+      if (!programs.has(attempt.progressKey.programId)) continue;
+      if (attempt.progressKey.collectionId !== scopeId) continue;
+      consider(attempt.completedAt ?? attempt.startedAt);
+    }
+    for (const { cycle } of this.listWoodpeckerCycles(setId)) {
+      consider(cycle.completedAt ?? cycle.startedAt);
+    }
+    return latest;
+  }
+
+  getWoodpeckerFailedPuzzleIds(setId: string): string[] {
+    const failed = new Set<string>();
+    for (const { cycle } of this.listWoodpeckerCycles(setId)) {
+      for (const puzzleId of summarizeWoodpeckerCycle(cycle).failedPuzzleIds) failed.add(puzzleId);
+    }
+    return [...failed];
+  }
+
+  /** Select from failures only, using an isolated scheduler scope/program. */
+  selectWoodpeckerFailed(setId: string): SelectNextResponse {
+    const ids = this.getWoodpeckerFailedPuzzleIds(setId);
+    if (ids.length === 0) return { puzzleId: null, reason: 'queue-empty' };
+    const collectionId = woodpeckerScopeId(setId);
+    const candidates: Candidate[] = ids.map((puzzleId) => {
+      const key = `${WOODPECKER_FAILED_PROGRAM_ID}:${collectionId}:${puzzleId}`;
+      const state = this.schedules.get(key)?.schedule ?? this.scheduler.createState().schedule;
+      return { progressKey: key, state, orderKey: puzzleId };
+    });
+    const newOrder = candidates.filter((candidate) => candidate.state.state === 'new').map((candidate) => candidate.progressKey);
+    const selected = selectNextDue(candidates, { now: this.clock.now(), newOrder });
+    if (selected) return { puzzleId: parseScheduleKey(selected)?.puzzleId ?? selected };
+    const next = candidates
+      .filter((candidate) => candidate.state.dueAt !== undefined)
+      .sort((a, b) => a.state.dueAt! - b.state.dueAt!)[0];
+    return { puzzleId: null, reason: 'no-due-work', nextDueAt: next?.state.dueAt };
+  }
+
   async addPuzzleToCollection(collectionId: string, puzzleId: string): Promise<void> {
     const record = this.collections.get(collectionId);
     if (!record) throw new Error(`Collection not found: ${collectionId}`);
@@ -711,6 +935,13 @@ export class LocalTrainingService implements TrainingService {
     const session = this.sessions.get(sessionId);
     const id = session?.activeAttemptId?.value;
     return id ? this.attempts.get(id) : undefined;
+  }
+
+  /** Current persisted session for a program, for dashboard/resume affordances. */
+  getActiveSession(programId: string): SessionState | undefined {
+    const sessionId = this.activeSessionByProgram.get(programId);
+    const session = sessionId ? this.sessions.get(sessionId) : undefined;
+    return session ? { ...session, activeAttemptId: session.activeAttemptId ? { ...session.activeAttemptId } : undefined } : undefined;
   }
 
   // --- TrainingService ----------------------------------------------------
