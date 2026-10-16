@@ -85,6 +85,21 @@ try {
 
   check('no page errors on boot', pageErrors.length === 0, pageErrors.join(' | '));
 
+  const headerStyle = await page.$eval('.app-header', (el) => {
+    const style = getComputedStyle(el);
+    const rect = el.getBoundingClientRect();
+    return {
+      position: style.position, top: style.top, left: rect.left, right: rect.right,
+      height: rect.height, zIndex: style.zIndex, background: style.backgroundColor,
+      navWrap: getComputedStyle(el.querySelector('.nav')).flexWrap,
+    };
+  });
+  check(
+    'app header is fixed, full-width, compact, opaque, and below overlays',
+    headerStyle.position === 'fixed' && headerStyle.top === '0px' && headerStyle.left === 0 && headerStyle.right === await page.evaluate(() => innerWidth) && headerStyle.height <= 80 && Number(headerStyle.zIndex) > 0 && Number(headerStyle.zIndex) < 900 && headerStyle.background !== 'rgba(0, 0, 0, 0)' && headerStyle.navWrap === 'nowrap',
+    JSON.stringify(headerStyle),
+  );
+
   const navIds = await page.$$eval('#nav .nav-item', (els) =>
     els.map((el) => el.getAttribute('data-nav')),
   );
