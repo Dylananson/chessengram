@@ -186,6 +186,19 @@ export class TrainCtrl {
   private playbackSteps: PlaybackStep[] = [];
   private playbackIndex = 0;
   private playbackTimer: ReturnType<typeof setTimeout> | null = null;
+  private reviewKeyTarget: Pick<Window, 'addEventListener' | 'removeEventListener'> | null = null;
+  private readonly onReviewKeydown = (event: KeyboardEvent): void => {
+    if (!this.review || !this.game?.isCompleted || this.disposed) return;
+    const direction = ({
+      ArrowLeft: 'back',
+      ArrowRight: 'forward',
+      ArrowUp: 'last',
+      ArrowDown: 'first',
+    } as const)[event.key];
+    if (!direction) return;
+    event.preventDefault();
+    this.stepReview(direction);
+  };
 
   status: TrainStatus = { key: 'status.loading', tone: 'info' };
   solutionHidden = true;
@@ -232,6 +245,7 @@ export class TrainCtrl {
   /** Mark torn down: late async continuations become no-ops. */
   dispose(): void {
     this.disposed = true;
+    this.stopReviewKeys();
     this.stopPlayback();
     this.board = NoopBoard;
     this.promotionUi = NoopPromotionUi;
@@ -504,7 +518,19 @@ export class TrainCtrl {
 
   /** Drop review state (new attempt starting); the view hides the section. */
   resetReview(): void {
+    this.stopReviewKeys();
     this.review = null;
+  }
+
+  private startReviewKeys(): void {
+    if (this.reviewKeyTarget || typeof window === 'undefined') return;
+    this.reviewKeyTarget = window;
+    window.addEventListener('keydown', this.onReviewKeydown);
+  }
+
+  private stopReviewKeys(): void {
+    this.reviewKeyTarget?.removeEventListener('keydown', this.onReviewKeydown);
+    this.reviewKeyTarget = null;
   }
 
   /**
@@ -524,6 +550,7 @@ export class TrainCtrl {
       return;
     }
     this.review = new ReviewNavigator(line);
+    this.startReviewKeys();
     this.renderReviewStep();
   }
 

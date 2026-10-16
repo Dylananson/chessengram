@@ -467,6 +467,51 @@ test('MOB-001: mobile CSS orders the review section above the detail panels', as
   );
 });
 
+test('REV-002: arrow keys step only during review and listener is removed on reset/dispose', async () => {
+  const c = await makeCompletedReview();
+  const listeners = new Set<(event: KeyboardEvent) => void>();
+  const fakeWindow = {
+    addEventListener: (_type: string, listener: EventListenerOrEventListenerObject) => {
+      listeners.add(listener as (event: KeyboardEvent) => void);
+    },
+    removeEventListener: (_type: string, listener: EventListenerOrEventListenerObject) => {
+      listeners.delete(listener as (event: KeyboardEvent) => void);
+    },
+  };
+  const priorWindow = Object.getOwnPropertyDescriptor(globalThis, 'window');
+  Object.defineProperty(globalThis, 'window', { configurable: true, value: fakeWindow });
+  try {
+    // Re-enter to attach against the test window; completion was created before it.
+    c.resetReview();
+    c.enterReview();
+    assert.equal(listeners.size, 1);
+    const dispatch = (key: string): boolean => {
+      let prevented = false;
+      const event = { key, preventDefault: () => { prevented = true; } } as KeyboardEvent;
+      for (const listener of listeners) listener(event);
+      return prevented;
+    };
+    const start = c.review!.position;
+    assert.equal(dispatch('x'), false, 'unrelated key is not prevented');
+    assert.equal(c.review!.position, start);
+    assert.equal(dispatch('ArrowLeft'), true);
+    assert.equal(c.review!.position, start - 1);
+    assert.equal(dispatch('ArrowRight'), true);
+    assert.equal(c.review!.position, start);
+    assert.equal(dispatch('ArrowDown'), true);
+    assert.equal(c.review!.position, 0);
+    assert.equal(dispatch('ArrowUp'), true);
+    assert.equal(c.review!.position, c.review!.count - 1);
+
+    c.resetReview();
+    assert.equal(listeners.size, 0);
+    c.dispose();
+  } finally {
+    if (priorWindow) Object.defineProperty(globalThis, 'window', priorWindow);
+    else delete (globalThis as { window?: unknown }).window;
+  }
+});
+
 // --- 10. BRD-001: premoves + selection persistence ------------------------------
 
 async function makePremoveWorld(solution: string[], extra?: { solverFen?: string }): Promise<{

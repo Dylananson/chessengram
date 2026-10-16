@@ -45,7 +45,7 @@ flowchart TD
 | BRD-003 | Restart-after-complete as new scored attempt | BRD-001 | `train-view.ts` (completion region), related tests | Done (`fb0995d`) |
 | BRD-004 | Reveal plays out solution on board | BRD-003 | `train-view.ts` (reveal region), `puzzle-game.ts` (playback helper) | Done (`8168c73`) |
 | STS-001 | Per-puzzle training status on Train page | BRD-004 | `train-view.ts` (status region), related tests | Done (current loop) |
-| REV-002 | Arrow-key review stepping (Left/Right/Up/Down, review-only) | — | `train-view.ts` (review region), related tests | Ready — train-view lane |
+| REV-002 | Arrow-key review stepping (Left/Right/Up/Down, review-only) | STS-001 | `train-view.ts` (review region), related tests | Done (current loop) |
 | TRN-001 | Train controls polish: `>` Next (hidden when disabled), `↻` restart symbol, analyze placeholder, details-after-completion, live timer | — | `train-view.ts` (controls region), layout CSS, related tests | Ready — train-view lane |
 | BRD-002 | Bigger desktop board + expand toggle | MOB-001 (shared layout CSS — serialize) | layout CSS, `train-view.ts` (board region) | Ready after MOB-001 — train-view lane, last |
 | THM-001 | Board theme picker (survey Lichess/chessground theming first; square colors only, pieces untouched; localStorage persistence) | BRD-002 (shared board CSS — serialize) | `settings-view.ts` (picker region), board-theme CSS, related tests | Ready after BRD-002 |
@@ -65,4 +65,5 @@ Round log:
 - UX batch R2 — Done 2026-10-16 (`f2e2d2e`): BRD-001 + STY-001 + REL-002 parallel. 204 tests (7+35+162), build + smoke 38/38 clean. Premove queue + selection re-assert; three CSS fixes; hourly + visible update checks.
 - UX lane R3 — Done 2026-10-16 (`fb0995d`): BRD-003 restart creates a distinct scored attempt; prior history immutable. 207 tests, build + smoke clean.
 - UX lane R4 — Done 2026-10-16 (`8168c73`): BRD-004 paced reveal playback; on-line remainder/off-line full reset, cancellation and stale-timer tests. 217 tests, build + smoke clean.
-- UX lane R5 — STS-001 implementation verified 2026-10-16: pure per-puzzle schedule/history projection, 7+35+178 tests, build + smoke 38/38 clean. Commit pending coordinator.
+- UX lane R5 — STS-001 done (`d228b8c`): pure per-puzzle schedule/history projection, 7+35+178 tests, build + smoke 38/38 clean.
+- UX lane R6 — REV-002 done 2026-10-16: review-only arrow keys reuse button stepping; listener lifecycle covered. 7+35+179 tests, build + smoke 38/38 clean. Next train-lane tasks: TRN-001, then BRD-002.
