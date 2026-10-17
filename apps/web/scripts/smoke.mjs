@@ -532,6 +532,38 @@ try {
   await hash(page, 'settings');
   check('settings shows the data safety panel', await page.$('#settings-export').then(Boolean));
 
+  // --- APP-001: installable + offline-ready PWA --------------------------------
+  const manifest = await page.evaluate(async () => {
+    const response = await fetch('/manifest.webmanifest');
+    return response.json();
+  });
+  const iconInfo = (manifest.icons ?? []).map((icon) => `${icon.sizes}:${icon.purpose ?? 'any'}`);
+  check(
+    'manifest is installable (name, standalone, root start_url/scope, 192+512 + maskable icons)',
+    manifest.id === '/'
+      && Boolean(manifest.name) && Boolean(manifest.short_name)
+      && manifest.display === 'standalone'
+      && manifest.start_url === '/' && manifest.scope === '/'
+      && iconInfo.includes('192x192:any')
+      && iconInfo.includes('512x512:any')
+      && iconInfo.some((entry) => entry.includes('maskable')),
+    JSON.stringify({ name: manifest.name, display: manifest.display, icons: iconInfo }),
+  );
+  await page.waitForFunction(
+    () => (document.querySelector('#pwa-offline-state')?.textContent ?? '').includes('Offline ready'),
+    { timeout: 20000 },
+  ).catch(() => {});
+  const pwaPanelState = await page.evaluate(() => ({
+    installed: document.querySelector('[data-pwa-installed]')?.getAttribute('data-pwa-installed') ?? null,
+    offline: document.querySelector('#pwa-offline-state')?.textContent ?? '',
+    storage: document.querySelector('#pwa-storage')?.textContent ?? '',
+  }));
+  check(
+    'Settings reports the app and its puzzles are saved for offline use',
+    /Offline ready/.test(pwaPanelState.offline) && /Storage used: \d/.test(pwaPanelState.storage),
+    JSON.stringify(pwaPanelState),
+  );
+
   // --- Settings: scheduler preferences persist ---------------------------------
   await page.$eval('#set-new-per-day', (el) => {
     el.value = '5';
@@ -618,24 +650,35 @@ try {
   await page.reload({ waitUntil: 'networkidle0', timeout: 20000 });
   await page.waitForSelector('#board', { timeout: 10000 });
   const controlled = await page.evaluate(() => Boolean(navigator.serviceWorker.controller));
-  const cacheKeys = await page.evaluate(async () => {
-    const c = await caches.open('chessreps-shell-v1');
-    return (await c.keys()).map((k) => k.url.replace(location.origin, ''));
-  });
-  check('page controlled by service worker', controlled);
-  check(
-    'service worker cache holds the shell and hashed bundle',
-    cacheKeys.includes('/index.html') && cacheKeys.some((k) => k.startsWith('/assets/')),
-    `${cacheKeys.length} keys`,
-  );
   // REL-001: versioned-cache discipline — activate must leave exactly one
   // chessreps-shell-* cache so a version bump can never strand a stale shell.
   const shellCaches = await page.evaluate(async () =>
     (await caches.keys()).filter((k) => k.startsWith('chessreps-shell-')));
   check(
     'single versioned shell cache (no stale shell)',
-    shellCaches.length === 1 && shellCaches[0] === 'chessreps-shell-v1',
-    shellCaches.join(', '),
+    shellCaches.length === 1 && /^chessreps-shell-v\d+$/.test(shellCaches[0] ?? ''),
+    shellCaches.join(', ') || 'none',
+  );
+  const shellCacheName = shellCaches[0];
+  const cacheKeys = await page.evaluate(async (name) => {
+    const c = await caches.open(name);
+    return (await c.keys()).map((k) => k.url.replace(location.origin, ''));
+  }, shellCacheName);
+  check('page controlled by service worker', controlled);
+  check(
+    'service worker cache holds the shell and hashed bundle',
+    cacheKeys.includes('/index.html') && cacheKeys.some((k) => k.startsWith('/assets/')),
+    `${cacheKeys.length} keys`,
+  );
+  // APP-001: a real offline install needs the bundled puzzle content cached too.
+  check(
+    'service worker precaches the bundled puzzles for offline play',
+    cacheKeys.includes('/data/puzzles/lichess-900-1099-v1/pack.jsonl')
+      && cacheKeys.includes('/data/puzzles/lichess-bands-v1/pack.jsonl')
+      && cacheKeys.includes('/data/puzzles/lichess-bands-v1/bands.json')
+      && cacheKeys.includes('/icons/maskable-512.png')
+      && cacheKeys.includes('/manifest.webmanifest'),
+    JSON.stringify(cacheKeys.filter((k) => k.startsWith('/data/'))),
   );
   await page.setOfflineMode(true);
   try {
@@ -659,7 +702,12 @@ try {
     const originalSw = readFileSync(swPath, 'utf8');
     const originalIndex = readFileSync(indexPath, 'utf8');
     try {
-      writeFileSync(swPath, `${originalSw.replace('chessreps-shell-v1', 'chessreps-shell-v2')}\n// REL-001 smoke marker\n`);
+      // Bump whatever version is currently served, so this test does not need
+      // updating every time the cache version changes.
+      const match = /chessreps-shell-v(\d+)/.exec(originalSw);
+      if (!match) throw new Error('CACHE_VERSION not found in dist/sw.js');
+      const nextVersion = `chessreps-shell-v${Number(match[1]) + 1}`;
+      writeFileSync(swPath, `${originalSw.replace(match[0], nextVersion)}\n// REL-001 smoke marker\n`);
       writeFileSync(indexPath, originalIndex.replace('</body>', '<!-- rel-001-new-bundle -->\n</body>'));
       const handover = await page.evaluate(async () => {
         const registration = await navigator.serviceWorker.getRegistration();
@@ -678,8 +726,8 @@ try {
         (await caches.keys()).filter((k) => k.startsWith('chessreps-shell-')));
       check(
         'the version bump replaced the old shell cache (no stale shell)',
-        afterKeys.length === 1 && afterKeys[0] === 'chessreps-shell-v2',
-        afterKeys.join(', ') || 'none',
+        afterKeys.length === 1 && afterKeys[0] === nextVersion,
+        `${afterKeys.join(', ') || 'none'} (expected ${nextVersion})`,
       );
       const servedNewBundle = await page.evaluate(() => document.documentElement.outerHTML.includes('rel-001-new-bundle'));
       check('the updated shell serves the new bundle', servedNewBundle);

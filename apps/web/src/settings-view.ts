@@ -39,6 +39,7 @@ import { parseExport, summarizeExport } from './storage/data-port.ts';
 import type { StoreExport, StoreExportSummary } from './storage/local-store.ts';
 import type { TrainingAdapter } from './training-adapter.ts';
 import { BOARD_THEMES, getSavedBoardTheme, saveBoardTheme } from './board-theme.ts';
+import { formatBytes, pwaSnapshot, promptInstall, type PwaSnapshot } from './pwa.ts';
 import { actionButton, checkboxRow, emptyState, formRow, panel, statusLine } from './ui/primitives.ts';
 // Shared screen patch (see `./ui/patch.ts`).
 import { screenPatch as patch } from './ui/patch.ts';
@@ -79,6 +80,8 @@ export class SettingsCtrl {
   backups: string[] = [];
   pending: PendingImport | null = null;
   curated: CuratedSettings = CURATED_DEFAULTS;
+  /** APP-001: install/offline snapshot; null until the async load finishes. */
+  pwa: PwaSnapshot | null = null;
   redraw: () => void = () => {};
 
   private readonly service: LocalTrainingService;
@@ -105,6 +108,22 @@ export class SettingsCtrl {
   async refresh(): Promise<void> {
     await this.load();
     this.redraw();
+  }
+
+  /**
+   * APP-001: read the install/offline snapshot (Cache + Storage APIs). Loaded
+   * after the first paint because it is async and non-essential; a failure or
+   * an unsupported browser just leaves the panel in its "checking" state.
+   */
+  async loadPwa(): Promise<void> {
+    this.pwa = await pwaSnapshot();
+    this.redraw();
+  }
+
+  /** Show the captured install prompt (Android/desktop), then re-read state. */
+  async install(): Promise<void> {
+    await promptInstall();
+    await this.loadPwa();
   }
 
   /** Validate + clamp the raw prefs (via `parseCurated`), persist, confirm. */
@@ -341,6 +360,68 @@ function backupsBody(ctrl: SettingsCtrl): VNode | VNode[] {
 }
 
 /**
+ * APP-001: install + offline status. Read-only except the install action.
+ * Makes the "download it once, play offline" promise visible: whether the app
+ * is installed, whether every asset needed to train offline is cached, and how
+ * much storage is in use.
+ */
+function pwaPanel(ctrl: SettingsCtrl): VNode {
+  const pwa = ctrl.pwa;
+  const body: VNode[] = [];
+  const actions: VNode[] = [];
+
+  if (pwa === null) {
+    body.push(h('p.progress-note', 'Checking install and offline status…'));
+  } else {
+    body.push(
+      h(
+        'p#pwa-installed-state',
+        { attrs: { 'data-pwa-installed': String(pwa.installed) } },
+        pwa.installed
+          ? 'Installed as an app on this device.'
+          : pwa.ios
+            ? 'On iPhone/iPad: Share → Add to Home Screen to install.'
+            : 'Open the browser menu and choose “Install app” (or “Add to Home screen”).',
+      ),
+    );
+    body.push(
+      h(
+        'p#pwa-offline-state',
+        pwa.offlineReady
+          ? 'Offline ready — the app and all bundled puzzles are saved on this device.'
+          : `Not ready offline yet (${pwa.missing.length} file${pwa.missing.length === 1 ? '' : 's'} missing). Open the app once while online to finish downloading.`,
+      ),
+    );
+    const usage = formatBytes(pwa.usageBytes);
+    const quota = formatBytes(pwa.quotaBytes);
+    body.push(
+      h(
+        'p#pwa-storage',
+        pwa.usageBytes === undefined
+          ? 'Storage used: —'
+          : `Storage used: ${usage}${pwa.quotaBytes === undefined ? '' : ` of ${quota} available`}${pwa.persisted ? ' · marked persistent' : ''}`,
+      ),
+    );
+    body.push(
+      h(
+        'p.progress-note',
+        'Training data lives in this browser only (IndexedDB); installing or updating the app never clears it. Export a backup from Data safety before clearing site data.',
+      ),
+    );
+    if (pwa.canInstall) {
+      actions.push(
+        actionButton('Install app', 'primary', {
+          compact: true,
+          id: 'pwa-install',
+          onClick: () => void ctrl.install(),
+        }),
+      );
+    }
+  }
+  return panel('App & offline', body, actions);
+}
+
+/**
  * Pure view: same information and same strings as the pre-Snabbdom template
  * (prefs form, export summary, import preview/confirm, backup list, message),
  * composed from the S1 `panel`/`formRow`/`statusLine`/`emptyState`
@@ -351,6 +432,7 @@ export function view(ctrl: SettingsCtrl): VNode {
   return h('div.settings-screen', [
     h('h2', t('screen.settings.title')),
     boardThemePanel(),
+    pwaPanel(ctrl),
     prefsPanel(ctrl),
     panel(t('settings.data.title'), [
       h('p', t('settings.data.body')),
@@ -415,6 +497,9 @@ export class SettingsView implements Screen {
     // Unmounted while loading: teardown already ran; never patch.
     if (this.ctrl === null) return;
     this.vnode = patch(placeholder, view(ctrl));
+    // APP-001: install/offline state is async and non-essential — load it after
+    // the first paint and let the guarded redraw update just this panel.
+    void ctrl.loadPwa();
     // The patch replaces the placeholder; track the live root so unmount
     // removes exactly what snabbdom inserted.
     this.root = this.vnode.elm as HTMLElement;

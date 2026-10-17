@@ -14,6 +14,7 @@ import './design-system.scss';
 import type { AppContext } from './app-context.ts';
 import { applySavedBoardTheme } from './board-theme.ts';
 import { applyTranslations, detectLocale, setLocale, t } from './i18n.ts';
+import { initPwa } from './pwa.ts';
 import { loadBundledBands, loadPuzzlesFromPack, BANDS_PACK_ID } from './pack-loader.ts';
 import { navigate, registerScreen, startRouter, type ScreenId } from './router.ts';
 import {
@@ -212,4 +213,5 @@ function registerServiceWorker(): void {
 }
 
 registerServiceWorker();
+initPwa();
 void init();
