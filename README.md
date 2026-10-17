@@ -38,6 +38,7 @@ npm run dev          # dev server for apps/web
 - [Decision record conventions and ADR index](docs/decisions/README.md)
 - [Architecture decision: extract/reuse, no Lila fork](docs/decisions/ADR-005-architecture-extraction-not-fork.md)
 - [Lichess puzzle dependency audit](docs/research/lichess-puzzle-dependencies.md)
+- [Install on your phone and play offline](docs/install-on-phone.md)
 - [Scheduling behavior specification](docs/research/scheduling-behavior.md)
 - [Content research and validation report](docs/research/puzzle-content-sources.md)
 
