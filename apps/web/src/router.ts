@@ -17,7 +17,8 @@ export type ScreenId =
   | 'collections'
   | 'settings'
   | 'history'
-  | 'woodpecker';
+  | 'woodpecker'
+  | 'stats';
 
 export interface Screen {
   readonly id: ScreenId;

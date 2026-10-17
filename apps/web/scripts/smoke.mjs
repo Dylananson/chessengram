@@ -111,8 +111,8 @@ try {
     els.map((el) => el.getAttribute('data-nav')),
   );
   check(
-    'nav has all seven screens',
-    JSON.stringify(navIds) === JSON.stringify(['dashboard', 'woodpecker', 'train', 'puzzles', 'collections', 'settings', 'history']),
+    'nav has all eight screens',
+    JSON.stringify(navIds) === JSON.stringify(['dashboard', 'woodpecker', 'train', 'puzzles', 'collections', 'settings', 'history', 'stats']),
     `got [${navIds}]`,
   );
   check('normal training tab is labeled Spaced Repetition', await page.$eval('[data-nav="train"]', (el) => el.textContent) === 'Spaced Repetition');
@@ -384,6 +384,39 @@ try {
   check('Dashboard shows spaced repetition and Woodpecker progress', await page.$('[data-dashboard-mode="spaced-repetition"]') !== null && await page.$('[data-dashboard-woodpecker]') !== null);
   check('Dashboard identifies in-progress Woodpecker work', await page.$eval('[data-dashboard-woodpecker]', (el) => /Currently solving/.test(el.textContent)));
   check('Dashboard shows Woodpecker cycle progress as a bar', await page.$eval('[data-dashboard-woodpecker] progress.progress-bar', (el) => el.max === 100 && el.value === 0));
+
+  // --- STAT-001: statistics screen ---------------------------------------------
+  await page.click('[data-nav="stats"]');
+  await page.waitForSelector('.stats-page', { timeout: 5000 });
+  const statsView = await page.evaluate(() => ({
+    cards: document.querySelectorAll('.stats-card').length,
+    modeRows: document.querySelectorAll('[data-stats-mode]').length,
+    collectionRows: document.querySelectorAll('[data-stats-collection]').length,
+    totalRow: Boolean(document.querySelector('[data-stats-total-row]')),
+    scoredHook: document.querySelector('[data-stats-scored]') !== null,
+    practiceHook: document.querySelector('[data-stats-practice]') !== null,
+  }));
+  check(
+    'Stats screen shows summary cards, per-mode and per-collection breakdowns',
+    statsView.cards >= 6 && statsView.modeRows >= 4 && statsView.collectionRows >= 1 && statsView.totalRow && statsView.scoredHook && statsView.practiceHook,
+    JSON.stringify(statsView),
+  );
+  await page.click('#stats-range-7d');
+  await sleep(200);
+  const ranged = await page.evaluate(() => ({
+    selected: document.querySelector('#stats-range-7d')?.className ?? '',
+    other: document.querySelector('#stats-range-all')?.className ?? '',
+    collectionRows: document.querySelectorAll('[data-stats-collection]').length,
+    definitions: document.querySelector('.stats-definitions')?.textContent ?? '',
+  }));
+  check(
+    'Stats range filter switches and keeps the breakdown + counting rules visible',
+    !/button-secondary/.test(ranged.selected)
+      && /button-secondary/.test(ranged.other)
+      && ranged.collectionRows >= 1
+      && /Active solving time only/.test(ranged.definitions),
+    JSON.stringify({ selected: ranged.selected, other: ranged.other, rows: ranged.collectionRows }),
+  );
 
   // --- Puzzles screen: creator -------------------------------------------------
   await hash(page, 'puzzles');

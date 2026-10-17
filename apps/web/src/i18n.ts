@@ -24,6 +24,7 @@ const en: LocaleMessages = {
   'nav.settings': 'Settings',
   'nav.history': 'History',
   'nav.woodpecker': 'Woodpecker',
+  'nav.stats': 'Stats',
   'woodpecker.cycle.complete': 'Cycle complete. Return to Woodpecker to review results or start the next cycle.',
   'woodpecker.cycle.progress': 'Cycle progress: {scored} of {total} puzzles scored',
   'woodpecker.mode.cycle': 'Woodpecker cycle',

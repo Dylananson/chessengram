@@ -34,6 +34,7 @@ import { TrainingAdapter } from './training-adapter.ts';
 import { TrainView } from './train-view.ts';
 import { WoodpeckerView } from './woodpecker-view.ts';
 import { DashboardView } from './dashboard-view.ts';
+import { StatsView } from './stats-view.ts';
 
 async function createService(): Promise<LocalTrainingService> {
   let backend: StorageBackend;
@@ -65,6 +66,7 @@ function buildNav(ctx: AppContext): void {
     ['collections', 'nav.collections'],
     ['settings', 'nav.settings'],
     ['history', 'nav.history'],
+    ['stats', 'nav.stats'],
   ];
   const nav = document.getElementById('nav')!;
   nav.innerHTML = '';
@@ -89,6 +91,7 @@ function registerScreens(): void {
   registerScreen('settings', (ctx) => new SettingsView(ctx));
   registerScreen('history', (ctx) => new HistoryView(ctx));
   registerScreen('woodpecker', (ctx) => new WoodpeckerView(ctx));
+  registerScreen('stats', (ctx) => new StatsView(ctx));
   for (const { id, factory } of stubFactories()) {
     registerScreen(id, factory);
   }
