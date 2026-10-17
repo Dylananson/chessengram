@@ -79,11 +79,19 @@ definitions:
 - Reconciliation line: the sum of the per-collection numbers must equal the
   overall number (a test, not a hope).
 
-## Surface options (needs a user decision)
+## Surface options (decided 2026-10-17)
 
-- (a) A new **Stats** nav item; (b) extend the existing **Dashboard**; (c) a
-  section on the Spaced Repetition hub. Recommend (a) if the breakdowns grow,
-  otherwise (b) — the Dashboard is already the "how am I doing" page.
+Decision: **its own Stats tab** (`#/stats`), not a Dashboard section, so the
+breakdowns can grow. Headline = **active solving time only**; correction time
+and Woodpecker wall-clock duration are shown separately. Unscored practice has
+its **own row** and never enters scored totals. The screen has a **7 / 30 / all**
+range filter (default all-time).
+
+Implementation note: unscored attempts (reveal, skip, unscored review) used to
+persist zero timing, so practice time would have been permanently empty. The
+abandon path now records the elapsed active seconds on the attempt (`timing`
+already exists — no schema change), and `TrainingAdapter.abandonCurrentAttempt`
+passes the timer snapshot. Scoring and schedules are unaffected.
 
 ## Non-goals
 
