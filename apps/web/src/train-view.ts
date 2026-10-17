@@ -1050,7 +1050,7 @@ export class TrainCtrl {
     if (this.adapter.getActiveAttemptId()) {
       this.clearPremoveState();
       this.timer.interrupt();
-      await this.adapter.abandonCurrentAttempt({ skip: false });
+      await this.adapter.abandonCurrentAttempt({ skip: false, activeSeconds: this.timer.snapshot().activeSolvingSeconds });
       if (this.disposed) return;
     }
     // Landing on the frontier is the live cycle puzzle: continue it scored.
@@ -1071,7 +1071,7 @@ export class TrainCtrl {
     if (this.adapter.getActiveAttemptId()) {
       this.clearPremoveState();
       this.timer.interrupt();
-      await this.adapter.abandonCurrentAttempt({ skip: false });
+      await this.adapter.abandonCurrentAttempt({ skip: false, activeSeconds: this.timer.snapshot().activeSolvingSeconds });
       if (this.disposed) return;
     }
     await this.loadNext();
@@ -1191,7 +1191,7 @@ export class TrainCtrl {
       return true;
     } catch (err) {
       console.warn('Resume failed; starting a fresh selection', err);
-      await this.adapter.abandonCurrentAttempt({ skip: false });
+      await this.adapter.abandonCurrentAttempt({ skip: false, activeSeconds: this.timer.snapshot().activeSolvingSeconds });
       return false;
     }
   }
@@ -1220,7 +1220,7 @@ export class TrainCtrl {
     if (!this.adapter.getActiveAttemptId()) return;
     this.clearPremoveState();
     this.timer.interrupt();
-    await this.adapter.abandonCurrentAttempt({ skip: true });
+    await this.adapter.abandonCurrentAttempt({ skip: true, activeSeconds: this.timer.snapshot().activeSolvingSeconds });
     if (this.disposed) return;
     await this.loadNext();
   }
@@ -1242,7 +1242,7 @@ export class TrainCtrl {
       this.timer.interrupt();
       await this.adapter.recordAssistance('reveal');
       if (this.disposed) return;
-      await this.adapter.abandonCurrentAttempt({ skip: false });
+      await this.adapter.abandonCurrentAttempt({ skip: false, activeSeconds: this.timer.snapshot().activeSolvingSeconds });
       if (this.disposed) return;
       this.renderPosition({ interactive: false });
       this.nextDisabled = false;

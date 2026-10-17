@@ -224,12 +224,12 @@ export class TrainingAdapter {
    * appends an `abandon` event, and (optionally) skips this puzzle for the next
    * selection call so the user moves on rather than immediately re-seeing it.
    */
-  async abandonCurrentAttempt(opts: { skip?: boolean } = {}): Promise<void> {
+  async abandonCurrentAttempt(opts: { skip?: boolean; activeSeconds?: number } = {}): Promise<void> {
     if (this.currentProgressKey && opts.skip) {
       this.skipList.add(this.currentProgressKey.puzzleId);
     }
     if (this.currentSessionId && this.currentAttemptId) {
-      await this.service.abandonAttempt(this.currentSessionId);
+      await this.service.abandonAttempt(this.currentSessionId, opts.activeSeconds);
     }
     this.releaseAttempt();
   }

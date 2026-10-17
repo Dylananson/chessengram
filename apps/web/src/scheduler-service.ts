@@ -1275,12 +1275,19 @@ export class LocalTrainingService implements TrainingService {
    * schedule is untouched; an `abandon` event is appended to the attempt's
    * history so the skipped attempt is never lost. The attempt reservation is
    * released so selection can proceed.
+   *
+   * `activeSeconds` records the solving time spent before abandoning, so
+   * unscored practice (reveal, skip, unscored review) still shows up in the
+   * STAT-001 totals. It never affects scoring or schedules.
    */
-  async abandonAttempt(sessionId: string): Promise<void> {
+  async abandonAttempt(sessionId: string, activeSeconds?: number): Promise<void> {
     const session = this.sessions.get(sessionId);
     const id = session?.activeAttemptId?.value;
     const attempt = id ? this.attempts.get(id) : undefined;
     if (attempt && attempt.outcome === undefined) {
+      if (activeSeconds !== undefined && Number.isFinite(activeSeconds)) {
+        attempt.timing = { ...attempt.timing, activeSolvingSeconds: Math.max(0, activeSeconds) };
+      }
       attempt.events.push({
         eventId: this.idFactory(),
         type: 'abandon',
