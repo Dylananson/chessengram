@@ -1,7 +1,7 @@
 # AGENTS.md
 
 ## Project overview
-ChessReps is a personal offline-first chess trainer. It reuses Lichess libraries (chessground, chessops) and CC0 Lichess puzzle content, owns its training-service boundary, and uses the extracted/local-adapter path (ADR-005).
+ChessEngram is a personal offline-first chess trainer. It reuses Lichess libraries (chessground, chessops) and CC0 Lichess puzzle content, owns its training-service boundary, and uses the extracted/local-adapter path (ADR-005).
 
 ## Conventions
 - Source of truth: docs/PROJECT_PLAN.md

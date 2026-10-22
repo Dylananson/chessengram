@@ -1,4 +1,4 @@
-# ChessReps
+# ChessEngram
 
 Personal chess trainer: spaced-repetition puzzle practice on phone and desktop, designed to
 work offline, with interchangeable training methods. It reuses Lichess libraries
@@ -6,14 +6,14 @@ work offline, with interchangeable training methods. It reuses Lichess libraries
 layer so a remote/online adapter can be added later.
 
 The app is runnable today: `apps/web` is an offline-capable local player backed by the
-`@chessreps/scheduler` package.
+`@chessengram/scheduler` package.
 
 ## Repository layout
 
 - `apps/web/` — the runnable Vite + TypeScript player (local training loop; content packs).
-- `packages/contracts/` — `@chessreps/contracts`: the architecture-neutral `TrainingService`
+- `packages/contracts/` — `@chessengram/contracts`: the architecture-neutral `TrainingService`
   boundary, domain types and schemas.
-- `packages/scheduler/` — `@chessreps/scheduler`: deterministic, clock-injectable scheduler.
+- `packages/scheduler/` — `@chessengram/scheduler`: deterministic, clock-injectable scheduler.
 - `tools/puzzles/` — Python tooling that builds and validates Lichess puzzle packs.
 - `data/puzzles/` — retained, validated puzzle packs.
 - `tools/lichess-baseline/` — evidence and scripts from the unchanged-Lila baseline check.

@@ -1,6 +1,6 @@
-# Install ChessReps on your phone (offline play) — APP-001
+# Install ChessEngram on your phone (offline play) — APP-001
 
-ChessReps is a Progressive Web App: it installs to the home screen and then runs
+ChessEngram is a Progressive Web App: it installs to the home screen and then runs
 with **no network at all** — the app shell *and* all bundled puzzles are saved on
 the device on the first visit. Training data lives only in that browser.
 
@@ -40,11 +40,11 @@ npm run build
 
 # Trusted local certificate (install mkcert once: https://github.com/FiloSottile/mkcert)
 mkcert -install
-mkcert -cert-file /tmp/chessreps-cert.pem -key-file /tmp/chessreps-key.pem \
+mkcert -cert-file /tmp/chessengram-cert.pem -key-file /tmp/chessengram-key.pem \
   localhost 127.0.0.1 "$(hostname -I | awk '{print $1}')"
 
 # Serve dist over HTTPS (any static server that takes a cert works)
-npx http-server apps/web/dist -p 4173 --ssl --cert /tmp/chessreps-cert.pem --key /tmp/chessreps-key.pem
+npx http-server apps/web/dist -p 4173 --ssl --cert /tmp/chessengram-cert.pem --key /tmp/chessengram-key.pem
 ```
 
 On the phone, open `https://<your-machine-ip>:4173`. The certificate comes from
@@ -77,7 +77,7 @@ a single missing asset is retried by the service worker on the next load.
 ## Updates
 
 A new release installs itself on the next launch while online: the previous
-shell cache is deleted on activation (only one `chessreps-shell-*` cache ever
+shell cache is deleted on activation (only one `chessengram-shell-*` cache ever
 exists), and an "update available — reload" toast appears in long-lived tabs.
 Training data is untouched. See `docs/research/pwa-update-policy.md`.
 

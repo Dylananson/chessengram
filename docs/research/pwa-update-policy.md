@@ -5,10 +5,10 @@ IDs, or the IndexedDB DB name (`chessreps-player-spike`) are involved.
 
 ## Cache versioning rule
 
-- One versioned cache, `CACHE_VERSION = 'chessreps-shell-v1'` in `sw.js`.
+- One versioned cache, `CACHE_VERSION = 'chessengram-shell-v1'` in `sw.js`.
 - **Bump the version on every release that changes the shell or hashed bundles.**
 - `activate` deletes every cache whose key differs from the current version, so
-  at most one `chessreps-shell-*` cache survives. No versioned asset URLs are
+  at most one `chessengram-shell-*` cache survives. No versioned asset URLs are
   reused across releases (Vite hashes JS/CSS), so a bump cannot serve a mixed
   old-shell/new-bundle combination.
 - Fetch strategy is unchanged: navigations are network-first (fallback to cached
@@ -43,7 +43,7 @@ IDs, or the IndexedDB DB name (`chessreps-player-spike`) are involved.
   REL-001 — **cross-version activation**: it rewrites the served `sw.js` with a
   bumped `CACHE_VERSION` plus a changed shell marker, calls
   `registration.update()`, and asserts the new worker takes over the open page
-  (`controllerchange`), that only the new `chessreps-shell-v2` cache survives,
+  (`controllerchange`), that only the new `chessengram-shell-v2` cache survives,
   and that the reloaded page serves the new bundle. The rewritten files are
   restored afterwards; `dist/` is a build artifact.
 - Smoke cannot cover: PWA install prompts, OS-level offline reload, or
