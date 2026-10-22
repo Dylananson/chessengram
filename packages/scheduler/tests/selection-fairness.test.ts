@@ -1,6 +1,6 @@
 import { test, describe } from "node:test";
 import assert from "node:assert";
-import type { ScheduleStateDetails } from "@chessreps/contracts";
+import type { ScheduleStateDetails } from "@chessengram/contracts";
 import {
   selectEarliestFutureDue,
   selectNextDue,

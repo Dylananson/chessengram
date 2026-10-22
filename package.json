@@ -1,17 +1,27 @@
 {
-  "name": "chessreps",
+  "name": "chessengram",
   "version": "0.0.0",
   "private": true,
   "type": "module",
   "workspaces": [
     "packages/*",
-    "apps/*"
+    "apps/*",
+    "services/*"
   ],
   "scripts": {
-    "dev": "npm run dev --workspace @chessreps/web",
-    "build": "npm run build --workspace @chessreps/web",
+    "dev": "npm run dev --workspace @chessengram/web",
+    "build": "npm run build --workspace @chessengram/web",
     "test": "npm run test --workspaces --if-present",
     "typecheck": "npm run typecheck --workspaces --if-present",
-    "smoke": "npm run smoke --workspace @chessreps/web"
+    "smoke": "npm run smoke --workspace @chessengram/web",
+    "build:worker": "npm run build --workspace @chessengram/sync-worker",
+    "deploy": "bash infra/deploy.sh",
+    "deploy:plan": "bash infra/deploy.sh --plan-only",
+    "infra:fmt": "terraform -chdir=infra fmt -recursive",
+    "infra:validate": "terraform -chdir=infra validate",
+    "infra:plan": "terraform -chdir=infra plan",
+    "infra:apply": "terraform -chdir=infra apply",
+    "sync:env": "bash infra/write-env.sh local",
+    "sync:env:deploy": "bash infra/write-env.sh deploy"
   }
 }

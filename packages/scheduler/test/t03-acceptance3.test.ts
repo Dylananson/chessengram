@@ -1,6 +1,6 @@
 import { test, describe } from "node:test";
 import assert from "node:assert";
-import type { TimingSegments } from "@chessreps/contracts";
+import type { TimingSegments } from "@chessengram/contracts";
 import { scoreOnce } from "../src/transition.ts";
 import { createInitialSchedule } from "../src/core.ts";
 import { resolveSettings } from "../src/settings.ts";

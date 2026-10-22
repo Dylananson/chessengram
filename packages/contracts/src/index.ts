@@ -1,5 +1,5 @@
 /**
- * @chessreps/contracts - Core types and interfaces for training service boundary
+ * @chessengram/contracts - Core types and interfaces for training service boundary
  */
 
 export * from "./types.ts";

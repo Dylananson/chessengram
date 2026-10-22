@@ -1,7 +1,7 @@
 /**
  * Export/import port for the local store (PB5 data safety).
  *
- * The export is a self-describing JSON document (`chessreps-export`). Import is
+ * The export is a self-describing JSON document (`chessengram-export`). Import is
  * strictly one-way and lossless: the raw on-disk envelopes are restored as-is.
  *
  * ## Migration policy (Q12)
@@ -21,6 +21,7 @@
 
 import {
   COLLECTION_COLLECTIONS,
+  COLLECTION_SYNC,
   COLLECTION_WOODPECKER,
   DEFAULT_COLLECTION_ID,
   EXPECTED_COLLECTION_SCHEMA_VERSION,
@@ -34,7 +35,7 @@ import {
   type StoreExportSummary,
 } from './local-store.ts';
 
-export const SUPPORTED_EXPORT_VERSIONS = ['1.0.0', '1.1.0', '1.2.0'] as const;
+export const SUPPORTED_EXPORT_VERSIONS = ['1.0.0', '1.1.0', '1.2.0', '1.3.0'] as const;
 
 export interface Migration {
   from: string;
@@ -46,6 +47,7 @@ export interface Migration {
 export const MIGRATIONS: readonly Migration[] = [
   { from: '1.0.0', to: '1.1.0', migrate: migrate100to110 },
   { from: '1.1.0', to: '1.2.0', migrate: migrate110to120 },
+  { from: '1.2.0', to: '1.3.0', migrate: migrate120to130 },
 ];
 
 /**
@@ -114,6 +116,18 @@ function migrate110to120(data: StoreExport): StoreExport {
   return { ...data, formatVersion: '1.2.0', collections };
 }
 
+/**
+ * ONL-001: add the (empty) `sync` collection. Every other collection — including
+ * any records this build does not know about — is carried over byte-for-byte.
+ */
+function migrate120to130(data: StoreExport): StoreExport {
+  const collections = { ...data.collections };
+  if (!isRecord(collections[COLLECTION_SYNC])) {
+    collections[COLLECTION_SYNC] = {};
+  }
+  return { ...data, formatVersion: '1.3.0', collections };
+}
+
 export type ParseExportResult =
   | { ok: true; data: StoreExport }
   | { ok: false; errors: string[] };
@@ -160,7 +174,7 @@ export function parseExport(text: string): ParseExportResult {
     return { ok: false, errors: ['not valid JSON'] };
   }
   if (!looksLikeExport(raw)) {
-    return { ok: false, errors: ['not a ChessReps export file'] };
+    return { ok: false, errors: ['not a ChessEngram export file'] };
   }
   if (!(SUPPORTED_EXPORT_VERSIONS as readonly string[]).includes(raw.formatVersion)) {
     return {

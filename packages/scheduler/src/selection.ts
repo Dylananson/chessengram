@@ -22,7 +22,7 @@
  *    caller advancing state, never from randomness or call counting here.
  */
 
-import type { ScheduleState, ScheduleStateDetails } from "@chessreps/contracts";
+import type { ScheduleState, ScheduleStateDetails } from "@chessengram/contracts";
 
 export interface Candidate {
   progressKey: string;

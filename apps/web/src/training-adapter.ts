@@ -12,11 +12,12 @@
 
 import type {
   AttemptRecord,
+  CommitOutcomeRequest,
   FailureReason,
   NormalizedPuzzle,
   ProgressKey,
   TimingSegments,
-} from '@chessreps/contracts';
+} from '@chessengram/contracts';
 import {
   DEFAULT_COLLECTION_ID,
   DEFAULT_PROGRAM_ID,
@@ -26,6 +27,32 @@ import {
 } from './scheduler-service.ts';
 import { LocalStore } from './storage/local-store.ts';
 import { InMemoryStorageBackend } from './storage/memory-backend.ts';
+
+/**
+ * Commit an outcome, tolerating a schedule revision that moved under us.
+ *
+ * `startAttempt` captures the puzzle's schedule revision, and between starting
+ * and finishing it that revision can legitimately change: a **sync apply**
+ * replays schedules when it pulls changes, and a restart reads a fresh revision.
+ * The reducer then rejects the commit as **stale** — which the adapter used to
+ * swallow entirely, losing the attempt and leaving the puzzle due, so the queue
+ * served the very same puzzle again ("I had to repeat it").
+ *
+ * On a stale rejection the reducer reports the *live* revision, so retry once
+ * with it. A duplicate delivery is harmless: the idempotency key makes the
+ * reducer answer `duplicate`, which counts as recorded.
+ */
+export async function commitOutcomeTolerant(
+  service: Pick<LocalTrainingService, 'commitOutcome'>,
+  build: (expectedScheduleRevision: number) => CommitOutcomeRequest,
+  expectedScheduleRevision: number,
+): Promise<{ recorded: boolean; scheduleRevision: number }> {
+  let response = await service.commitOutcome(build(expectedScheduleRevision));
+  if (!response.committed && response.reason === 'stale-schedule-revision') {
+    response = await service.commitOutcome(build(response.scheduleRevision));
+  }
+  return { recorded: response.committed, scheduleRevision: response.scheduleRevision };
+}
 
 export interface StartAttemptResult {
   attemptId: string;
@@ -100,14 +127,28 @@ export class TrainingAdapter {
     await this.startSession(programId, collectionId);
   }
 
-  async selectNext(): Promise<{ puzzleId: string | null; nextDueAt?: number; reason?: string }> {
+  /**
+   * Pick the next puzzle.
+   *
+   * `excludePuzzleIds` is how the view keeps a puzzle it has *just finished*
+   * out of the selection: when nothing else is due, the scheduler deliberately
+   * falls back to the earliest **future**-scheduled puzzle (UX-005), and right
+   * after a success or failure that is the puzzle you just did — which reads as
+   * "I have to repeat it again".
+   */
+  async selectNext(
+    options: { excludePuzzleIds?: readonly string[] } = {},
+  ): Promise<{ puzzleId: string | null; nextDueAt?: number; reason?: string }> {
     if (!this.currentSessionId) await this.startSession();
-    return this.service.selectNext({
+    const excluded = new Set(this.skipList);
+    for (const puzzleId of options.excludePuzzleIds ?? []) excluded.add(puzzleId);
+    const result = await this.service.selectNext({
       sessionId: this.currentSessionId!,
       programId: this.currentProgramId,
       collectionId: this.currentCollectionId,
-      excludedKeys: this.skipList.size > 0 ? [...this.skipList] : undefined,
+      excludedKeys: excluded.size > 0 ? [...excluded] : undefined,
     });
+    return result;
   }
 
   async startAttempt(puzzle: NormalizedPuzzle, progressKey?: ProgressKey): Promise<StartAttemptResult> {
@@ -167,34 +208,46 @@ export class TrainingAdapter {
     });
   }
 
-  async commitSuccess(timing: TimingSegments): Promise<void> {
-    if (!this.currentAttemptId) return;
+  async commitSuccess(timing: TimingSegments): Promise<boolean> {
+    if (!this.currentAttemptId) return false;
     const attemptId = this.currentAttemptId;
-    await this.service.commitOutcome({
-      attemptId: { value: attemptId },
-      outcome: 'success',
-      timing,
-      idempotencyKey: `success-${attemptId}`,
-      expectedScheduleRevision: this.currentExpectedRevision,
-      finalEvents: [
-        { eventId: `${attemptId}-complete`, type: 'complete', occurredAt: Date.now() },
-      ],
-    });
+    const result = await commitOutcomeTolerant(
+      this.service,
+      (expectedScheduleRevision) => ({
+        attemptId: { value: attemptId },
+        outcome: 'success',
+        timing,
+        idempotencyKey: `success-${attemptId}`,
+        expectedScheduleRevision,
+        finalEvents: [
+          { eventId: `${attemptId}-complete`, type: 'complete', occurredAt: Date.now() },
+        ],
+      }),
+      this.currentExpectedRevision,
+    );
+    this.currentExpectedRevision = result.scheduleRevision;
     this.currentAttemptId = undefined;
+    return result.recorded;
   }
 
-  async commitFailure(timing: TimingSegments, reason: FailureReason = 'wrong-move'): Promise<void> {
-    if (!this.currentAttemptId) return;
+  async commitFailure(timing: TimingSegments, reason: FailureReason = 'wrong-move'): Promise<boolean> {
+    if (!this.currentAttemptId) return false;
     const attemptId = this.currentAttemptId;
-    await this.service.commitOutcome({
-      attemptId: { value: attemptId },
-      outcome: 'failure',
-      failureReason: reason,
-      timing,
-      idempotencyKey: `fail-${attemptId}`,
-      expectedScheduleRevision: this.currentExpectedRevision,
-    });
+    const result = await commitOutcomeTolerant(
+      this.service,
+      (expectedScheduleRevision) => ({
+        attemptId: { value: attemptId },
+        outcome: 'failure',
+        failureReason: reason,
+        timing,
+        idempotencyKey: `fail-${attemptId}`,
+        expectedScheduleRevision,
+      }),
+      this.currentExpectedRevision,
+    );
+    this.currentExpectedRevision = result.scheduleRevision;
     // Keep the attempt reserved so correction completion can be recorded.
+    return result.recorded;
   }
 
   async finishCorrection(timing: TimingSegments): Promise<void> {

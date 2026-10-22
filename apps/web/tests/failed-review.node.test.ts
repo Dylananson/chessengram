@@ -125,3 +125,29 @@ test('an empty failed queue reports queue-empty without crashing', async () => {
     restoreWindow();
   }
 });
+
+test('the puzzle just reviewed does not come back as the next failed review', async () => {
+  const { service, set } = await makeFailedCollection();
+  stubWindow();
+  try {
+    const adapter = new TrainingAdapter(service);
+    await adapter.startSession(WOODPECKER_FAILED_PROGRAM_ID, woodpeckerScopeId(set.setId));
+    const ctrl = new TrainCtrl(service, adapter);
+    ctrl.configureWoodpecker({ kind: 'failed', setId: set.setId });
+
+    await ctrl.loadNext();
+    assert.equal(ctrl.currentPuzzle?.id, 'p1');
+
+    await ctrl.resolveUserMove('e2', 'e4');
+    await new Promise((resolve) => setTimeout(resolve, 450));
+    assert.equal(ctrl.game?.isCompleted, true);
+
+    await ctrl.loadNext();
+    assert.equal(ctrl.adapter.getActiveAttemptId(), undefined, 'no new attempt was started');
+    assert.equal(ctrl.game?.isCompleted, true, 'the reviewed board stays (no replay)');
+    assert.equal(ctrl.status.key, 'woodpecker.failed.complete', 'the run reports completion');
+    ctrl.dispose();
+  } finally {
+    restoreWindow();
+  }
+});

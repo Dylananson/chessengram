@@ -510,8 +510,26 @@ test('TRN-001 hides difficulty while solving and renders accessible symbol contr
   const analyze = findById(view(ctrl), 'analyze-btn');
   assert.equal(buttonText(analyze!), '⌕');
   assert.ok(analyze?.sel.includes('.hidden'), 'analyze placeholder stays hidden while solving');
-  assert.equal(analyze?.data?.attrs?.disabled, true);
-  assert.equal(analyze?.data?.attrs?.title, 'Stockfish analysis is planned for AN-001b.');
+
+  // UX-009: once the puzzle is finished the same button stops being a symbol
+  // and becomes an explicit, emphasised CTA (still `#next-btn`, so the
+  // keyboard path and every existing hook are unchanged).
+  // `PuzzleGame.isCompleted` is a getter, so simulate the finished state by
+  // shadowing it on a delegate of the live game (everything else reads through).
+  if (ctrl.game) {
+    const game = ctrl.game;
+    ctrl.game = Object.create(game, {
+      isCompleted: { get: () => true, enumerable: true },
+    }) as typeof game;
+  }
+  const finishedCta = findById(view(ctrl), 'next-btn');
+  assert.ok(finishedCta !== null, 'a forward action is offered on completion');
+  assert.equal(buttonText(finishedCta!), 'Next puzzle', 'the completion CTA is labelled');
+  assert.ok(finishedCta!.sel.includes('next-cta'), 'and is marked for full-width emphasis');
+  assert.equal(finishedCta?.data?.attrs?.['aria-label'], 'Next puzzle');
+  // AN-001b: the button is a real action now that the engine is wired in.
+  assert.equal(analyze?.data?.attrs?.disabled, undefined, 'Analyze is enabled once the puzzle is over');
+  assert.match(String(analyze?.data?.attrs?.title), /built-in engine/);
 
   await ctrl.resolveUserMove('d2', 'd4');
   const failedAnalyze = findById(view(ctrl), 'analyze-btn');
@@ -744,6 +762,39 @@ async function makeCompletedReview(): Promise<TrainCtrl> {
   assert.ok(ctrl.review !== null, 'review line built for the completed puzzle');
   return ctrl;
 }
+
+test('Next after a solve never restarts the puzzle that was just finished', async () => {
+  // One-puzzle library: after the success nothing else is eligible, so the
+  // scheduler's "earliest future" fallback used to hand back the same puzzle.
+  const { service, adapter } = await makeWorld(['only-one']);
+  const ctrl = new TrainCtrl(service, adapter, makeRecordingBoard().port);
+  await ctrl.loadNext();
+  assert.equal(ctrl.game?.id, 'only-one');
+
+  await ctrl.resolveUserMove('e2', 'e4');
+  await new Promise((resolve) => setTimeout(resolve, 450));
+  assert.equal(ctrl.game?.isCompleted, true, 'the puzzle completed');
+
+  await ctrl.loadNext();
+  assert.equal(ctrl.adapter.getActiveAttemptId(), undefined, 'no new attempt on the same puzzle');
+  assert.equal(ctrl.game?.id, 'only-one', 'the finished board stays (no replay)');
+  assert.equal(ctrl.game?.isCompleted, true);
+});
+
+test('AN-002: analysis opens the puzzle position, not the post-solution board', async () => {
+  const c = await makeCompletedReview();
+  const puzzleFen = c.infoPuzzle?.solverFen;
+  assert.ok(puzzleFen, 'the completed puzzle is still known');
+
+  assert.equal(c.analysisFen(), puzzleFen, 'at the line end the puzzle position is analysed');
+
+  c.stepReview('back');
+  assert.equal(
+    c.analysisFen(),
+    c.review?.current().fen,
+    'stepping back analyses the position being reviewed',
+  );
+});
 
 test('MOB-001: Back/Forward are ◀ ▶ symbols with aria-labels, ids and end-states kept', async () => {
   const c = await makeCompletedReview();
@@ -985,11 +1036,93 @@ test('BRD-001: selection survives the opponent reply render', async () => {
 
 // --- 11. BRD-003: restart after completion -------------------------------------
 
+/**
+ * Deterministic, strictly increasing service clock for the restart tests.
+ *
+ * `listAttempts` is newest-first by `startedAt` and only that key: two
+ * attempts started in the same millisecond tie, and the stable sort keeps the
+ * older attempt first (Map insertion order). `beginAttempt` then runs the
+ * PZL-006 `refreshReview()` against the *finished* attempt and rebuilds its
+ * review line, so a restarted attempt looks like it still has history.
+ * Reading `startedAt` from `Date.now()` made that depend on wall-clock
+ * resolution: the whole in-memory restart sequence can fit in one millisecond.
+ * Ticking 1 ms per read keeps the two attempts strictly ordered without
+ * depending on clock resolution.
+ */
+/**
+ * AN-001b — the review-screen Analyze action, driven by an injected analysis
+ * service (the real engine is covered by the browser smoke test).
+ */
+test('AN-001b: Analyze renders the engine lines for the position under review', async () => {
+  const { service, adapter } = await makeWorld(['ana-a']);
+  const asked: string[] = [];
+  const stub = {
+    isBusy: () => false,
+    dispose: () => {},
+    async analyze(fen: string) {
+      asked.push(fen);
+      return {
+        fen,
+        lines: [
+          { scoreText: '+0.24', san: ['e4', 'e5'], depth: 12 },
+          { scoreText: '−1.25', san: ['d4', 'd5'], depth: 11 },
+        ],
+      };
+    },
+  };
+  const ctrl = new TrainCtrl(service, adapter, undefined, undefined, undefined, stub);
+  await ctrl.beginAttempt(await adapter.loadPuzzle('ana-a'));
+
+  assert.equal(findById(view(ctrl), 'analysis'), null, 'no panel before asking');
+
+  await ctrl.onAnalyze();
+
+  const tree = view(ctrl);
+  assert.equal(asked.length, 1, 'the engine was asked once');
+  assert.match(asked[0], /^[rnbqkpRNBQKP1-8/]+ [wb] /, 'a FEN was sent');
+  assert.ok(findById(tree, 'analysis-lines') !== null, 'lines render');
+  const text = vnodeText(tree);
+  assert.ok(text.includes('+0.24') && text.includes('−1.25'), 'both scores render');
+  assert.ok(text.includes('e4 e5'), 'the best line renders in SAN');
+  assert.match(String(findById(tree, 'analysis-best')?.text), /Engine plays e4/);
+});
+
+test('AN-001b: Analyze shows a thinking state, then an error state', async () => {
+  const { service, adapter } = await makeWorld(['ana-b']);
+  let release: (() => void) | undefined;
+  const stub = {
+    isBusy: () => false,
+    dispose: () => {},
+    analyze: (fen: string) =>
+      new Promise<never>((_, reject) => {
+        release = () => reject(new Error('nope'));
+      }),
+  };
+  const ctrl = new TrainCtrl(service, adapter, undefined, undefined, undefined, stub as never);
+  await ctrl.beginAttempt(await adapter.loadPuzzle('ana-b'));
+
+  const pending = ctrl.onAnalyze();
+  assert.ok(findById(view(ctrl), 'analysis-status') !== null, 'thinking state renders while the engine runs');
+
+  release?.();
+  await pending;
+  assert.match(String(findById(view(ctrl), 'analysis-error')?.text), /could not finish/);
+});
+
+function makeRestartClock(): { now(): number } {
+  let now = 1_700_000_000_000;
+  return { now: () => now++ };
+}
+
 async function makeRestartWorld(
   id: string,
   solution: string[],
 ): Promise<{ service: LocalTrainingService; adapter: TrainingAdapter }> {
-  const service = await makeService();
+  const service = new LocalTrainingService({
+    store: new LocalStore(new InMemoryStorageBackend()),
+    clock: makeRestartClock(),
+  });
+  await service.init();
   await service.seedContent([makePuzzle({ id, solution })]);
   const adapter = new TrainingAdapter(service);
   await adapter.startSession('test-program', 'test-collection');
@@ -1354,6 +1487,46 @@ test('woodpecker cycle panel shows progress through the set as a bar', async () 
   assert.equal(bar.data?.props?.max, 3, 'bar spans the whole set');
   assert.match(String(bar.data?.attrs?.['aria-label']), /1 of 3/);
   ctrl.dispose();
+});
+
+test('completing a resumed cycle attempt records the result so Next advances', async () => {
+  const service = await makeService();
+  await service.seedContent([makePuzzle({ id: 'wp-res-a' }), makePuzzle({ id: 'wp-res-b' })]);
+  const sourceCollectionId = service.getActiveCollectionId();
+  const set = await service.createWoodpeckerSet({
+    name: 'Resume WP',
+    sourceCollectionId,
+    puzzleIds: ['wp-res-a', 'wp-res-b'],
+  });
+  const { cycleId } = await service.startWoodpeckerCycle(set.setId);
+
+  const adapter = new TrainingAdapter(service);
+  await adapter.startSession(WOODPECKER_CYCLE_PROGRAM_ID, woodpeckerScopeId(set.setId));
+  const opened = new TrainCtrl(service, adapter, makeRecordingBoard().port);
+  await opened.beginAttempt(await adapter.loadPuzzle('wp-res-a'));
+
+  // The PWA was reloaded/backgrounded and reopened: a fresh controller resumes
+  // the open attempt. `resumeIfPossible` deliberately leaves `currentPuzzle` null.
+  const resumed = new TrainCtrl(service, adapter, makeRecordingBoard().port);
+  resumed.configureWoodpecker({ kind: 'cycle', setId: set.setId, cycleId });
+  assert.equal(await resumed.resumeIfPossible(), true);
+  assert.equal(resumed.currentPuzzle, null, 'resume keeps the documented contract');
+
+  await resumed.resolveUserMove('e2', 'e4');
+  await sleep(450);
+  assert.equal(resumed.game?.isCompleted, true, 'the resumed puzzle completed');
+
+  const results = service.getWoodpeckerCycle(cycleId)!.cycle.results;
+  assert.deepEqual(
+    results.map((result) => result.puzzleId).sort(),
+    ['wp-res-a'],
+    'the completion is recorded against the cycle despite the resume',
+  );
+
+  await resumed.loadNext();
+  assert.equal(resumed.currentPuzzle?.id, 'wp-res-b', 'Next advances instead of replaying the puzzle');
+  resumed.dispose();
+  opened.dispose();
 });
 
 // --- 14. Woodpecker: revisit earlier puzzles as unscored practice --------------

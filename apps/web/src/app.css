@@ -461,6 +461,12 @@ body.board-theme-classic cg-board { background-color: var(--square-light); }
 .train-actions .button {
   flex: 1 1 110px;
 }
+/* UX-009: the completion CTA is the one thing to press when a puzzle is over,
+   so it takes the whole row rather than sharing it with the icon buttons. */
+.train-actions .next-cta {
+  flex: 1 1 100%;
+  order: -1;
+}
 .button-row .button {
   flex: 1 1 0;
   width: auto;
@@ -783,5 +789,101 @@ body.board-theme-classic cg-board { background-color: var(--square-light); }
   .ok {
     background: #134e23;
     color: #b8e6c4;
+  }
+}
+
+/* --- UX-006 / UX-007: shell entry points (nav drawer + sign-in) ------------- */
+
+/* The sign-in slot is only filled when sync is configured; an empty slot must
+   not add a flex gap to the header. */
+.auth-slot {
+  /* The sign-in entry is the only thing that lives here, and it sits on the
+     right of the header (the burger takes the left). */
+  margin-left: auto;
+}
+.auth-slot:empty {
+  display: none;
+}
+.auth-button {
+  display: inline-flex;
+  align-items: center;
+  min-height: 34px;
+  padding: 6px 12px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--panel);
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 650;
+  cursor: pointer;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+.auth-button:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+/* Desktop keeps the strip exactly as before: the toggle is not rendered. */
+.nav-toggle {
+  display: none;
+}
+
+@media (max-width: 760px) {
+  /* Phone: the toggle replaces the sideways-scrolling strip. */
+  .nav-toggle {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 40px;
+    min-height: 40px;
+    padding: 6px;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: var(--panel);
+    color: var(--text);
+    font: inherit;
+    font-size: 13px;
+    font-weight: 650;
+    cursor: pointer;
+    touch-action: manipulation;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .nav-toggle[aria-expanded='true'] {
+    border-color: var(--accent);
+    color: var(--accent);
+  }
+  .nav-toggle-icon {
+    font-size: 15px;
+    line-height: 1;
+  }
+
+  .nav {
+    display: none;
+    position: absolute;
+    top: calc(100% + 6px);
+    right: max(8px, env(safe-area-inset-right));
+    left: max(8px, env(safe-area-inset-left));
+    flex-direction: column;
+    gap: 2px;
+    max-height: calc(100dvh - 80px);
+    overflow-x: visible;
+    overflow-y: auto;
+    padding: 6px;
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    background: var(--panel);
+    box-shadow: 0 16px 32px rgba(20, 39, 28, 0.18);
+  }
+  .nav.nav-open {
+    display: flex;
+  }
+  .nav-item {
+    width: 100%;
+    min-height: 44px;
+    border-color: transparent;
+    border-radius: 10px;
+    text-align: left;
   }
 }

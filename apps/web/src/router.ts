@@ -8,6 +8,7 @@
  */
 
 import type { AppContext } from './app-context.ts';
+import { t } from './i18n.ts';
 
 export type ScreenId =
   | 'dashboard'
@@ -18,7 +19,8 @@ export type ScreenId =
   | 'settings'
   | 'history'
   | 'woodpecker'
-  | 'stats';
+  | 'stats'
+  | 'analysis';
 
 export interface Screen {
   readonly id: ScreenId;
@@ -93,9 +95,20 @@ function updateNav(active: ScreenId): void {
     : active === 'spaced'
       ? 'train'
       : active;
+  let activeLabel = '';
   document.querySelectorAll<HTMLElement>('[data-nav]').forEach((el) => {
     const isActive = el.dataset.nav === activeNav;
     el.classList.toggle('nav-active', isActive);
     el.setAttribute('aria-current', isActive ? 'page' : 'false');
+    if (isActive) activeLabel = el.textContent?.trim() ?? '';
   });
+
+  // UX-006: the toggle is icon-only, so the active screen goes into its
+  // accessible name — a closed drawer still tells assistive tech where you are
+  // (the visible highlight lives on the items inside the drawer).
+  const toggle = document.getElementById('nav-toggle');
+  if (toggle && activeLabel !== '') {
+    const label = `${t('nav.menu')} — ${activeLabel}`;
+    if (toggle.getAttribute('aria-label') !== label) toggle.setAttribute('aria-label', label);
+  }
 }

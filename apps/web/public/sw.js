@@ -1,5 +1,5 @@
 /**
- * ChessReps service worker (PB6 / T11 offline startup, APP-001 offline install).
+ * ChessEngram service worker (PB6 / T11 offline startup, APP-001 offline install).
  *
  * Zero-dependency, hand-written. It keeps the app shell AND the bundled puzzle
  * content available offline after the first successful load, so the app can be
@@ -9,16 +9,20 @@
  *   - navigations: network-first, falling back to the cached index.html
  *   - other same-origin GETs (hashed JS/CSS, pack JSONL, icons): cache-first,
  *     filling the cache from the network
+ *   - `/sync-config.json`: network-first with a cache fallback (runtime config
+ *     is picked up as soon as the device is online)
+ *   - `/api/*`: **network-only** — never cached and never served from cache.
+ *     Sync requests are private, user-specific and must not become stale.
  *
  * Cache versioning rule (REL-001): bump CACHE_VERSION on every release that
  * changes the shell, the precache list or hashed bundles. The old versioned
- * cache is deleted on activate, so only one `chessreps-shell-*` cache ever
+ * cache is deleted on activate, so only one `chessengram-shell-*` cache ever
  * survives. Training data lives in IndexedDB (never in this cache), so
  * activation never destroys user data. smoke.mjs asserts the single-version
  * invariant and the old -> new handover.
  */
 
-const CACHE_VERSION = 'chessreps-shell-v2';
+const CACHE_VERSION = 'chessengram-shell-v10';
 
 /** Everything required to boot and train offline. */
 const CORE = [
@@ -98,6 +102,39 @@ self.addEventListener('fetch', (event) => {
 
   const url = new URL(request.url);
   if (url.origin !== self.location.origin) return;
+
+  // Sync API: network-only. Never cache a response and never serve a cached
+  // one (letting the browser handle the request means it always hits the
+  // network). This applies whether or not sync is currently enabled.
+  if (url.pathname.startsWith('/api/')) return;
+
+  // Runtime sync config: network-first so a fresh deploy is picked up, with the
+  // last successfully fetched copy as the offline fallback.
+  if (url.pathname === '/sync-config.json') {
+    event.respondWith(
+      fetch(request)
+        .then((response) => {
+          if (response.ok) {
+            const copy = response.clone();
+            caches.open(CACHE_VERSION).then((cache) => cache.put('/sync-config.json', copy));
+          }
+          return response;
+        })
+        .catch(() =>
+          caches
+            .match('/sync-config.json')
+            .then(
+              (cached) =>
+                cached ||
+                new Response('{}', {
+                  status: 503,
+                  headers: { 'content-type': 'application/json' },
+                }),
+            ),
+        ),
+    );
+    return;
+  }
 
   if (request.mode === 'navigate') {
     event.respondWith(

@@ -5,7 +5,44 @@ import { SettingsCtrl, SettingsView, view } from '../src/settings-view.ts';
 import { CURATED_DEFAULTS } from '../src/settings-preferences.ts';
 import { setLocale, t } from '../src/i18n.ts';
 import type { TrainingAdapter } from '../src/training-adapter.ts';
+import type { SyncPanelConfig } from '../src/sync/panel.ts';
+import type { SyncRuntime } from '../src/sync/bootstrap.ts';
 import { makeService } from './fixtures.ts';
+
+const SYNC_CONFIG: SyncPanelConfig = {
+  apiBase: 'https://api.example.test',
+  authAuthority: 'https://auth.example.test',
+  authClientId: 'client-123',
+  authRedirectUri: 'https://app.example.test/',
+};
+
+/** Runtime stub for the ONL-011 Settings wiring tests. */
+function syncRuntimeStub(
+  mode: 'local-only' | 'syncing' | 'paused',
+  calls: string[] = [],
+): SyncRuntime {
+  return {
+    config: SYNC_CONFIG,
+    isConfigured: () => true,
+    state: async () => ({ mode, pending: 0 }),
+    enable: async () => {
+      calls.push('enable');
+    },
+    syncNow: async () => {
+      calls.push('syncNow');
+      return { pushed: 0, accepted: 0 };
+    },
+    disable: async () => {
+      calls.push('disable');
+    },
+    signOut: async () => {
+      calls.push('signOut');
+    },
+    deleteServerCopy: async () => {
+      calls.push('deleteServerCopy');
+    },
+  };
+}
 
 function stubAdapter(calls: string[]): TrainingAdapter {
   return {
@@ -81,6 +118,21 @@ test('view renders the prefs form with curated values and smoke-hook ids', async
   assert.equal((stepBack.data?.props as Record<string, unknown>)?.value, String(CURATED_DEFAULTS.stepBackAmount));
   const timing = findById(tree, 'set-timing')!;
   assert.equal((timing.data?.props as Record<string, unknown>)?.checked, CURATED_DEFAULTS.timingEnabled);
+});
+
+test('view renders the Sync panel in local-only, not-configured mode by default', async () => {
+  setLocale('en');
+  const { ctrl } = await makeCtrl();
+  await ctrl.load();
+  const tree = view(ctrl);
+  const mode = findById(tree, 'sync-mode')!;
+  assert.equal(
+    (mode.data?.attrs as Record<string, unknown>)['data-sync-mode'],
+    'local-only',
+  );
+  const enable = findById(tree, 'sync-enable')!;
+  assert.equal((enable.data?.attrs as Record<string, unknown>).disabled, true);
+  assert.ok(collectText(tree).some((text) => /not configured/i.test(text)));
 });
 
 test('empty backups render the empty-state message', async () => {
@@ -199,6 +251,53 @@ test('refresh re-reads service state and ends in redraw', async () => {
   await ctrl.refresh();
   assert.equal(redraws, 1);
   assert.ok(ctrl.summary !== null);
+});
+
+test('no key-entry controls exist anywhere in the panel (nothing for the user to copy)', async () => {
+  setLocale('en');
+  const { ctrl } = await makeCtrl();
+  await ctrl.load();
+  const unconfigured = view(ctrl);
+  assert.equal(findById(unconfigured, 'sync-recovery-input'), null);
+  assert.equal(findById(unconfigured, 'sync-unlock'), null);
+  assert.equal(findById(unconfigured, 'sync-recovery-code'), null);
+
+  // Enabled but with no key cached on this device: a paused panel, and still
+  // nothing to type — the key comes from the server (design #6 revised).
+  const { ctrl: ctrl2 } = await makeCtrl();
+  await ctrl2.attachSync(syncRuntimeStub('paused'));
+  const paused = view(ctrl2);
+  assert.equal(
+    (findById(paused, 'sync-mode')!.data?.attrs as Record<string, unknown>)['data-sync-mode'],
+    'paused',
+  );
+  assert.equal(findById(paused, 'sync-recovery-input'), null);
+  assert.equal(findById(paused, 'sync-unlock'), null);
+});
+
+test('Enable starts the OAuth redirect instead of requesting a token in-page', async () => {
+  setLocale('en');
+  const { ctrl } = await makeCtrl();
+  const begun: SyncPanelConfig[] = [];
+  const redirects: string[] = [];
+  await ctrl.attachSync(syncRuntimeStub('local-only'), {
+    begin: async (config) => {
+      begun.push(config);
+      return { url: 'https://auth.example.test/oauth2/authorize?state=s' };
+    },
+    redirect: (url) => redirects.push(url),
+  });
+
+  const tree = view(ctrl);
+  const enable = findById(tree, 'sync-enable')!;
+  assert.equal((enable.data?.attrs as Record<string, unknown>).disabled, undefined);
+  const onClick = (enable.data?.on as { click?: () => void } | undefined)?.click;
+  onClick!();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  assert.deepEqual(redirects, ['https://auth.example.test/oauth2/authorize?state=s']);
+  assert.equal(begun.length, 1);
+  assert.equal(begun[0]?.authAuthority, SYNC_CONFIG.authAuthority);
 });
 
 test('unmount without mount is safe', async () => {

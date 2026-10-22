@@ -22,3 +22,7 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# AN-001b: the Stockfish pair is fetched from its pinned release by
+# scripts/fetch-engine.mjs (SHA256-verified), not committed.
+public/engine/

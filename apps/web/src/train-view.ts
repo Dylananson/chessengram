@@ -47,9 +47,17 @@ import { Chessground } from 'chessground';
 import type { Api } from 'chessground/api';
 import type { Key } from 'chessground/types';
 import type { SquareName } from 'chessops/types';
+import {
+  bestMoveOf,
+  formatLine,
+  getAnalysisService,
+  type AnalysisService,
+  type PositionAnalysis,
+} from './engine/analysis.ts';
+import { openAnalysis, rememberAnalysisFen } from './analysis-view.ts';
 import { h } from 'snabbdom/build/h.js';
 import type { VNode } from 'snabbdom/build/vnode.js';
-import type { NormalizedPuzzle } from '@chessreps/contracts';
+import type { NormalizedPuzzle } from '@chessengram/contracts';
 import type { AppContext } from './app-context.ts';
 import { t } from './i18n.ts';
 import {
@@ -252,6 +260,15 @@ export class TrainCtrl {
   woodpeckerReviewPosition: number | null = null;
   private woodpeckerResultRecorded = false;
 
+  /**
+   * AN-001b: on-demand engine analysis of the position being reviewed.
+   * `analysisBusy` drives the thinking state, `analysis` the rendered lines.
+   */
+  analysisBusy = false;
+  analysisError: string | null = null;
+  analysis: PositionAnalysis | null = null;
+  private readonly analysisSeam: AnalysisService | undefined;
+
   board: TrainBoardPort;
   promotionUi: TrainPromotionUi;
   redraw: () => void = () => {};
@@ -272,7 +289,9 @@ export class TrainCtrl {
     board: TrainBoardPort = NoopBoard,
     promotionUi: TrainPromotionUi = NoopPromotionUi,
     redraw: () => void = () => {},
+    analysis?: AnalysisService,
   ) {
+    this.analysisSeam = analysis;
     this.service = service;
     this.adapter = adapter;
     this.board = board;
@@ -292,6 +311,8 @@ export class TrainCtrl {
     this.stopPlayback();
     this.clearSetupAnimation();
     this.clearHint();
+    this.analysis = null;
+    this.analysisBusy = false;
     this.board = NoopBoard;
     this.promotionUi = NoopPromotionUi;
     this.redraw = () => {};
@@ -548,7 +569,11 @@ export class TrainCtrl {
 
   private async recordWoodpeckerCycleResult(result: 'clean' | 'failed', activeSeconds: number): Promise<void> {
     const run = this.woodpeckerRun;
-    const puzzleId = this.currentPuzzle?.id;
+    // A resumed attempt deliberately leaves `currentPuzzle` unset (the board is
+    // rebuilt from the persisted attempt). Falling back to `infoPuzzle` is what
+    // makes completion after a reload/PWA resume record the cycle result —
+    // without it the puzzle stayed "unscored", and Next served it again.
+    const puzzleId = (this.currentPuzzle ?? this.infoPuzzle)?.id;
     if (run?.kind !== 'cycle' || !run.cycleId || !puzzleId || this.woodpeckerResultRecorded) return;
     // Revisiting an earlier puzzle runs as unscored practice and must never
     // alter the cycle's result list (double-recording would skew progress).
@@ -580,6 +605,58 @@ export class TrainCtrl {
     this.woodpeckerResultRecorded = true;
   }
 
+  /**
+   * AN-001b: analyse the position currently under review.
+   *
+   * Analyses the position the *review cursor* is on (so stepping back through
+   * the attempt and tapping ⌕ asks about the position you are looking at), and
+   * the solver's own position when there is no review line yet. Results are
+   * cached per FEN by the analysis service, so re-tapping is instant.
+   */
+  /**
+   * The FEN the analysis screen should open on.
+   *
+   * At the end of the review line the board is the *post-solution* position —
+   * often checkmate — so analysing that answers nothing and looks like a
+   * different puzzle. Open the puzzle's own position instead. Stepping back is
+   * an explicit "analyse this earlier position", so the cursor wins there.
+   */
+  analysisFen(): string | undefined {
+    const review = this.review;
+    // Still correcting a failed puzzle: the board is live and the user wants
+    // the position in front of them, not the line's end.
+    if (this.game && !this.game.isCompleted && review) return review.current().fen;
+    // Completed: at the end the board is the post-solution position (often
+    // checkmate), so analyse the puzzle's own position. A stepped-back cursor
+    // is an explicit "analyse this earlier position" and wins.
+    if (review && review.position < review.count - 1) return review.current().fen;
+    return this.infoPuzzle?.solverFen ?? review?.current().fen;
+  }
+
+  async onAnalyze(): Promise<void> {
+    if (this.disposed || this.analysisBusy) return;
+    const fen = this.review?.current().fen ?? this.infoPuzzle?.solverFen;
+    if (!fen) return;
+
+    this.analysisBusy = true;
+    this.analysisError = null;
+    this.redraw();
+    try {
+      const service = this.analysisSeam ?? getAnalysisService();
+      const analysis = await service.analyze(fen);
+      if (this.disposed) return;
+      this.analysis = analysis;
+    } catch {
+      if (this.disposed) return;
+      this.analysisError = t('train.analyze.error');
+    } finally {
+      if (!this.disposed) {
+        this.analysisBusy = false;
+        this.redraw();
+      }
+    }
+  }
+
   async resolveUserMove(
     from: SquareName,
     to: SquareName,
@@ -601,14 +678,19 @@ export class TrainCtrl {
     if (result.kind === 'wrong') {
       await this.adapter.recordWrongMove(result.uci);
       if (this.disposed) return;
+      let failureRecorded = true;
       if (!this.scoredCommitted) {
         this.scoredCommitted = true;
         this.timer.markFailure();
-        await this.adapter.commitFailure(this.timer.snapshot());
+        failureRecorded = await this.adapter.commitFailure(this.timer.snapshot());
         await this.recordWoodpeckerCycleResult('failed', this.timer.snapshot().activeSolvingSeconds);
         if (this.disposed) return;
       }
-      this.status = { key: 'status.wrong', tone: 'wrong' };
+      // A rejected commit would leave the puzzle scored as never-attempted and
+      // bring it straight back; say so instead of silently repeating it.
+      this.status = failureRecorded
+        ? { key: 'status.wrong', tone: 'wrong' }
+        : { key: 'status.attemptNotSaved', tone: 'wrong' };
       this.refreshReview();
       this.renderPosition();
       this.redraw();
@@ -682,13 +764,16 @@ export class TrainCtrl {
       if (this.disposed) return;
       this.status = { key: 'status.correctionComplete', tone: 'completed' };
     } else {
+      let successRecorded = true;
       if (!this.scoredCommitted) {
         this.scoredCommitted = true;
-        await this.adapter.commitSuccess(this.timer.snapshot());
+        successRecorded = await this.adapter.commitSuccess(this.timer.snapshot());
         await this.recordWoodpeckerCycleResult('clean', this.timer.snapshot().activeSolvingSeconds);
         if (this.disposed) return;
       }
-      this.status = { key: 'status.completed', tone: 'completed' };
+      this.status = successRecorded
+        ? { key: 'status.completed', tone: 'completed' }
+        : { key: 'status.attemptNotSaved', tone: 'wrong' };
     }
     this.renderPosition({ interactive: false });
     this.nextDisabled = false;
@@ -910,6 +995,10 @@ export class TrainCtrl {
     this.game = new PuzzleGame(p);
     this.infoPuzzle = p;
     this.currentPuzzle = p;
+    // AN-002: the nav destination is useful only if it knows what to analyse.
+    // Remember the puzzle position as it is loaded; the completion paths keep
+    // it (analysisFen deliberately returns the solver position, not mate).
+    rememberAnalysisFen(p.solverFen);
     this.refreshPuzzleStatus(p.id);
     this.resetReview();
     this.timer = new AttemptTimer();
@@ -960,11 +1049,19 @@ export class TrainCtrl {
     this.nextDisabled = true;
     this.redraw();
     const run = this.woodpeckerRun;
+    // The puzzle just finished must not come back as the "practise ahead"
+    // fallback (it is the earliest future-due one by construction).
+    const justFinished =
+      this.game && (this.game.isCompleted || this.game.failedState) ? this.game.id : undefined;
     const selection = run?.kind === 'cycle' && run.cycleId
       ? this.nextWoodpeckerCyclePuzzle(run.cycleId)
       : run?.kind === 'failed'
-        ? this.service.selectWoodpeckerFailed(run.setId)
-        : await this.adapter.selectNext();
+        ? this.service.selectWoodpeckerFailed(run.setId, {
+            ...(justFinished !== undefined ? { excludePuzzleIds: [justFinished] } : {}),
+          })
+        : await this.adapter.selectNext({
+            ...(justFinished !== undefined ? { excludePuzzleIds: [justFinished] } : {}),
+          });
     if (this.disposed) return;
     if (!selection.puzzleId) {
       this.showNoDue(selection);
@@ -993,8 +1090,9 @@ export class TrainCtrl {
     const ids = this.woodpeckerCyclePuzzleIds();
     if (ids.length === 0) return null;
     if (this.woodpeckerReviewPosition !== null) return this.woodpeckerReviewPosition - 1;
-    if (this.currentPuzzle) {
-      const index = ids.indexOf(this.currentPuzzle.id);
+    const current = this.currentPuzzle ?? this.infoPuzzle;
+    if (current) {
+      const index = ids.indexOf(current.id);
       return index >= 0 ? index : null;
     }
     return null;
@@ -1099,6 +1197,8 @@ export class TrainCtrl {
       this.status = { key: 'status.queueEmpty', tone: 'info' };
     } else if (selection.reason === 'woodpecker-cycle-complete') {
       this.status = { key: 'woodpecker.cycle.complete', tone: 'completed' };
+    } else if (selection.reason === 'woodpecker-review-complete') {
+      this.status = { key: 'woodpecker.failed.complete', tone: 'completed' };
     } else {
       if (selection.reason === 'daily-limit-reached') {
         this.status = { key: 'status.dailyLimit', tone: 'info', params: { when } };
@@ -1384,18 +1484,35 @@ function viewLeft(ctrl: TrainCtrl): VNode {
 }
 
 function viewActions(ctrl: TrainCtrl): VNode {
+  // UX-009: once this puzzle is finished, "go on" stops being a symbol. The
+  // bare `>` reads as another control in a row of icons, so on completion the
+  // same `#next-btn` becomes an explicit, labelled primary action (and goes
+  // full-width on phones via `.next-cta` in app.css). Mid-session it stays the
+  // compact `>` so the row does not shout while solving.
+  const finished = Boolean(ctrl.game?.isCompleted || ctrl.game?.failedState);
   return h('div.button-row.train-actions', [
-      ...(!ctrl.nextDisabled ? [h('button#next-btn.button.button-primary', {
+      ...(!ctrl.nextDisabled ? [h(`button#next-btn.button.button-primary${finished ? '.next-cta' : ''}`, {
         attrs: { type: 'button', 'aria-label': t('next.label') },
         on: { click: () => void ctrl.loadNext() },
-      }, '>')] : []),
+      }, finished ? t('next.cta') : '>')] : []),
       h(`button#restart-btn.button.button-secondary${ctrl.game?.isCompleted ? '' : '.hidden'}`, {
         attrs: { type: 'button', 'aria-label': t('restart.label') },
         on: { click: () => void ctrl.onRestart() },
       }, '↻'),
-      h(`button#analyze-btn.button.button-secondary${ctrl.game?.isCompleted || ctrl.game?.failedState ? '' : '.hidden'}`, {
-        attrs: { type: 'button', disabled: true, 'aria-label': t('train.analyze.label'), title: t('train.analyze.title') },
-      }, '⌕'),
+      h(`button#analyze-btn.button.button-secondary${finished ? '.analyze-armed' : '.hidden'}`, {
+        attrs: {
+          type: 'button',
+          ...(ctrl.analysisBusy ? { disabled: true } : {}),
+          'aria-label': t('train.analyze.label'),
+          title: t('train.analyze.title'),
+        },
+        // AN-002: open the full analysis board on the position under review —
+        // continuous evaluation, arrows and free exploration — rather than the
+        // static list this button used to render.
+        on: { click: () => openAnalysis(ctrl.analysisFen()) },
+        // Once the puzzle is over this is a real action, so it carries a label:
+        // a lone grey icon reads as a disabled placeholder.
+      }, finished ? `⌕ ${t('train.analyze.short')}` : '⌕'),
   ]);
 }
 
@@ -1527,7 +1644,46 @@ function viewRight(ctrl: TrainCtrl): VNode {
       h('button.button.button-secondary', { attrs: { type: 'button', id: 'review-back', 'aria-label': t('review.back'), ...(review?.canBack ? {} : { disabled: true }) }, on: { click: () => ctrl.stepReview('back') } }, '◀'),
       h('button.button.button-secondary', { attrs: { type: 'button', id: 'review-forward', 'aria-label': t('review.forward'), ...(review?.canForward ? {} : { disabled: true }) }, on: { click: () => ctrl.stepReview('forward') } }, '▶'),
     ]),
+    ...viewAnalysis(ctrl),
   ]);
+}
+
+/**
+ * AN-001b: the engine panel. Rendered only once the puzzle is over (or once a
+ * result/error exists), so the solving screen stays uncluttered; while the wasm
+ * works it shows a thinking state rather than a frozen button.
+ */
+function viewAnalysis(ctrl: TrainCtrl): VNode[] {
+  const finished = Boolean(ctrl.game?.isCompleted || ctrl.game?.failedState);
+  if (!finished && ctrl.analysis === null && ctrl.analysisError === null && !ctrl.analysisBusy) return [];
+
+  const body: VNode[] = [];
+  if (ctrl.analysisBusy) {
+    body.push(h('p#analysis-status', t('train.analyze.thinking')));
+  } else if (ctrl.analysisError !== null) {
+    body.push(h('p#analysis-error.analysis-error', ctrl.analysisError));
+  } else if (ctrl.analysis !== null && ctrl.analysis.lines.length > 0) {
+    body.push(
+      h(
+        'ol#analysis-lines.analysis-lines',
+        ctrl.analysis.lines.map((line) =>
+          h('li.analysis-line', [
+            h('span.analysis-score', line.scoreText),
+            h('span.analysis-moves', formatLine(line.san)),
+            ...(line.depth !== undefined ? [h('span.analysis-depth', `d${line.depth}`)] : []),
+          ]),
+        ),
+      ),
+    );
+    const best = bestMoveOf(ctrl.analysis);
+    if (best !== undefined) {
+      body.push(h('p#analysis-best.progress-note', t('train.analyze.best', { move: best })));
+    }
+  } else {
+    body.push(h('p#analysis-status', t('train.analyze.hint')));
+  }
+
+  return [h('section.info.train-section.analysis', { attrs: { id: 'analysis' } }, [h('h2', t('train.analyze.heading')), ...body])];
 }
 
 /**

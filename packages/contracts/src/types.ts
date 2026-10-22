@@ -1,5 +1,5 @@
 /**
- * ChessReps training service contracts
+ * ChessEngram training service contracts
  * Architecture-neutral boundary between UI and training service.
  * Both online (server) and local (browser) adapters implement this interface.
  * These are provisional designs - not user-approved decisions.

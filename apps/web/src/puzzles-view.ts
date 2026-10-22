@@ -28,7 +28,7 @@
 
 import { h } from 'snabbdom/build/h.js';
 import type { VNode } from 'snabbdom/build/vnode.js';
-import type { NormalizedPuzzle } from '@chessreps/contracts';
+import type { NormalizedPuzzle } from '@chessengram/contracts';
 import type { AppContext } from './app-context.ts';
 import { t } from './i18n.ts';
 import type { Screen } from './router.ts';

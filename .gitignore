@@ -13,6 +13,13 @@ build/
 # Local environment / secrets
 .env
 .env.local
+**/.env.*.local
+**/.env.*.bak
+
+# Terraform local state and plans (also ignored in infra/ as a second guard).
+**/*.tfstate
+**/*.tfstate.*
+**/*.tfplan
 
 # OS / editor
 .DS_Store

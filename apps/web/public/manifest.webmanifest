@@ -1,7 +1,7 @@
 {
   "id": "/",
-  "name": "ChessReps",
-  "short_name": "ChessReps",
+  "name": "ChessEngram",
+  "short_name": "ChessEngram",
   "description": "Spaced-repetition chess puzzle training.",
   "start_url": "/",
   "scope": "/",

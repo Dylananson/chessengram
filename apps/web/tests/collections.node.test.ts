@@ -298,7 +298,7 @@ test('init live-migrates legacy program:puzzle schedules into the default scope'
   assert.deepEqual(attempt!.progressKey, { programId: PROGRAM_ID, puzzleId: 'a' });
 });
 
-test('export 1.0.0 migrates through 1.1.0 to 1.2.0: schedules rekeyed, set seeded, attempts untouched', async () => {
+test('export 1.0.0 migrates through 1.1.0 to 1.3.0: schedules rekeyed, set seeded, attempts untouched', async () => {
   const source = await makeService();
   await source.seedContent([a]);
   const session = await source.startSession({ programId: PROGRAM_ID });
@@ -330,7 +330,7 @@ test('export 1.0.0 migrates through 1.1.0 to 1.2.0: schedules rekeyed, set seede
   const parsed = parseExport(JSON.stringify(legacy));
   assert.equal(parsed.ok, true, !parsed.ok ? parsed.errors.join('; ') : '');
   if (!parsed.ok) return;
-  assert.equal(parsed.data.formatVersion, '1.2.0');
+  assert.equal(parsed.data.formatVersion, '1.3.0');
   assert.deepEqual(parsed.data.collections.woodpecker, {}, 'new Woodpecker collection starts empty');
 
   const keys = Object.keys(parsed.data.collections.schedules ?? {});
@@ -351,7 +351,7 @@ test('export/import round-trips collections and the active selection', async () 
   await source.setActiveCollectionId(second.id);
   const exported = await source.exportStore();
   assert.ok(exported.collections.collections);
-  assert.equal(exported.formatVersion, '1.2.0');
+  assert.equal(exported.formatVersion, '1.3.0');
 
   const target = await makeService();
   const roundTripped = parseExport(JSON.stringify(exported));

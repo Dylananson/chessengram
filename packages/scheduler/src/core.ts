@@ -14,7 +14,7 @@ import type {
   ScheduleState,
   ScheduleStateDetails,
   TimingSegments,
-} from "@chessreps/contracts";
+} from "@chessengram/contracts";
 import { settingsHash, type SchedulerSettings } from "./settings.ts";
 
 export const MS_PER_MINUTE = 60_000;

@@ -16,7 +16,7 @@ import { h } from 'snabbdom/build/h.js';
 import type { VNode } from 'snabbdom/build/vnode.js';
 import type { AppContext } from './app-context.ts';
 import type { Screen } from './router.ts';
-import { summarizeWoodpeckerCycle } from '@chessreps/scheduler';
+import { summarizeWoodpeckerCycle } from '@chessengram/scheduler';
 import type { LocalTrainingService } from './scheduler-service.ts';
 import { actionButton, emptyState, progressBar } from './ui/primitives.ts';
 import { t } from './i18n.ts';

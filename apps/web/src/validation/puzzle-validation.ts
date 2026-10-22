@@ -20,7 +20,7 @@ import { parseSan } from 'chessops/san';
 import type { Setup } from 'chessops/setup';
 import { makeUci, parseUci } from 'chessops/util';
 import type { Color } from 'chessops/types';
-import type { NormalizedPuzzle } from '@chessreps/contracts';
+import type { NormalizedPuzzle } from '@chessengram/contracts';
 
 const UCI_RE = /^[a-h][1-8][a-h][1-8][qrbn]?$/;
 const ID_RE = /^[A-Za-z0-9_-]+$/;

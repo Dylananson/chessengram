@@ -7,13 +7,13 @@
  * itself, so a partial locale is safe to ship.
  *
  * Locale selection order: explicit `setLocale` > `?lang=` URL parameter >
- * persisted `localStorage['chessreps.locale']` > browser language > English.
+ * persisted `localStorage['chessengram.locale']` > browser language > English.
  */
 
 export type LocaleMessages = Record<string, string>;
 
 const en: LocaleMessages = {
-  'app.title': 'ChessReps',
+  'app.title': 'ChessEngram',
   'nav.dashboard': 'Dashboard',
   'app.subtitle': 'Spaced-repetition puzzle training',
   'app.update.available': 'Update available',
@@ -25,7 +25,26 @@ const en: LocaleMessages = {
   'nav.history': 'History',
   'nav.woodpecker': 'Woodpecker',
   'nav.stats': 'Stats',
+  'nav.analysis': 'Analysis',
+  'analysis.title': 'Analysis',
+  'analysis.flip': 'Flip board',
+  'analysis.reset': 'Reset',
+  'analysis.engineOn': 'Turn engine on',
+  'analysis.engineOff': 'Turn engine off',
+  'analysis.engineDisabled': 'Engine is off. Turn it on to analyse this position.',
+  'analysis.thinking': 'Analysing…',
+  'analysis.unavailable': 'The engine could not finish this search. It is stored on this device after the first online visit, so reconnect once and try again.',
+  'analysis.empty': 'Make a move on the board to start a line.',
+  'analysis.deepen': 'Go deeper',
+  'analysis.prev': 'Previous move',
+  'analysis.next': 'Next move',
+  'analysis.hint': 'Scores are from White’s point of view: + means White is better, − means Black is better. Analysis runs continuously on this device while you are here, and the evaluation updates as the engine thinks.',
+  'analysis.barLabel': 'Evaluation bar, White’s point of view',
+  'nav.menu': 'Menu',
+  'auth.signIn': 'Sign in',
+  'auth.signInHint': 'Sign in to sync your progress across devices',
   'woodpecker.cycle.complete': 'Cycle complete. Return to Woodpecker to review results or start the next cycle.',
+  'woodpecker.failed.complete': 'Failed review complete. Return to Woodpecker to continue.',
   'woodpecker.cycle.progress': 'Cycle progress: {scored} of {total} puzzles scored',
   'woodpecker.mode.cycle': 'Woodpecker cycle',
   'woodpecker.mode.failed': 'Woodpecker failed review',
@@ -137,7 +156,7 @@ const en: LocaleMessages = {
   'settings.data.cancel': 'Cancel',
   'settings.data.imported': 'Imported {total} records. Previous data backed up as {label}.',
   'settings.data.importError': 'Import failed: {error}',
-  'settings.data.invalid': 'That file is not a valid ChessReps export.',
+  'settings.data.invalid': 'That file is not a valid ChessEngram export.',
   'settings.data.backups': 'Recovery snapshots',
   'settings.data.noBackups': 'No recovery snapshots yet.',
   'settings.data.restore': 'Restore',
@@ -169,6 +188,7 @@ const en: LocaleMessages = {
   'status.wrong': 'Wrong move — keep solving the same puzzle',
   'status.failedButSolving': 'Failed, but finish the line to correct it',
   'status.completed': 'Puzzle completed!',
+  'status.attemptNotSaved': 'That attempt could not be saved, so the puzzle will come back — try it again.',
   'status.correctionComplete': 'Solved after a mistake (correction complete)',
   'status.resumedCorrection': 'Resumed a failed attempt — finish the correction',
   'status.noDue': 'Nothing due right now. Next due: {when}',
@@ -193,8 +213,15 @@ const en: LocaleMessages = {
   'hint.label': 'Hint',
   'board.title': 'Board',
   'next.label': 'Next puzzle',
-  'train.analyze.label': 'Analyze (planned for AN-001b)',
-  'train.analyze.title': 'Stockfish analysis is planned for AN-001b.',
+  'next.cta': 'Next puzzle',
+  'train.analyze.short': 'Analyze',
+  'train.analyze.label': 'Analyze this position',
+  'train.analyze.title': 'Analyse the position you are looking at with the built-in engine (runs on this device, works offline).',
+  'train.analyze.heading': 'Engine analysis',
+  'train.analyze.hint': 'Tap ⌕ to analyse the position you are looking at. The engine runs on this device, so it works offline.',
+  'train.analyze.thinking': 'Engine is thinking…',
+  'train.analyze.error': 'The engine could not finish that analysis. Try again.',
+  'train.analyze.best': 'Engine plays {move}.',
   'next.none': 'No puzzle due',
   'restart.label': 'Try again',
   'promotion.title': 'Choose a promotion piece',
@@ -291,7 +318,7 @@ export function detectLocale(): string {
     const fromQuery = params.get('lang');
     if (fromQuery && hasLocale(fromQuery)) return fromQuery;
     try {
-      const stored = window.localStorage.getItem('chessreps.locale');
+      const stored = window.localStorage.getItem('chessengram.locale');
       if (stored && hasLocale(stored)) return stored;
     } catch {
       // localStorage may be unavailable (private mode); fall through.

@@ -19,7 +19,7 @@ export const REQUIRED_OFFLINE_ASSETS = [
   '/data/puzzles/lichess-bands-v1/bands.json',
 ] as const;
 
-export const SHELL_CACHE_PREFIX = 'chessreps-shell-';
+export const SHELL_CACHE_PREFIX = 'chessengram-shell-';
 
 export interface PwaSnapshot {
   /** Running as an installed app (home screen / standalone window). */

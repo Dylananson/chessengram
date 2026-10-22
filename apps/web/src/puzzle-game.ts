@@ -20,7 +20,7 @@ import { makeFen, parseFen } from 'chessops/fen';
 import { makeSan } from 'chessops/san';
 import { makeUci, parseSquare, parseUci, squareRank } from 'chessops/util';
 import type { Color, Move, Role, SquareName } from 'chessops/types';
-import type { AttemptEvent, NormalizedPuzzle } from '@chessreps/contracts';
+import type { AttemptEvent, NormalizedPuzzle } from '@chessengram/contracts';
 
 export type PromotionRole = 'q' | 'r' | 'b' | 'n';
 

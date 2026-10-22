@@ -1,7 +1,7 @@
 /** Combined progress and launch page for the available training modes. */
 import { h } from 'snabbdom/build/h.js';
 import type { VNode } from 'snabbdom/build/vnode.js';
-import { summarizeWoodpeckerCycle } from '@chessreps/scheduler';
+import { summarizeWoodpeckerCycle } from '@chessengram/scheduler';
 import type { AppContext } from './app-context.ts';
 import type { Screen } from './router.ts';
 import {

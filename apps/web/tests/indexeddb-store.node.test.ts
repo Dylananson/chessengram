@@ -6,7 +6,7 @@ import { LocalStore } from '../src/storage/local-store.ts';
 import { makePuzzle } from './fixtures.ts';
 
 test('IndexedDB backend persists content and meta across connections', async () => {
-  const name = `chessreps-test-${Date.now()}`;
+  const name = `chessengram-test-${Date.now()}`;
   const backend = new IndexedDbStorageBackend(name);
   const store = new LocalStore(backend);
   await store.savePuzzles([makePuzzle({ id: 'idx1' })]);

@@ -41,6 +41,16 @@ import type { TrainingAdapter } from './training-adapter.ts';
 import { BOARD_THEMES, getSavedBoardTheme, saveBoardTheme } from './board-theme.ts';
 import { formatBytes, pwaSnapshot, promptInstall, type PwaSnapshot } from './pwa.ts';
 import { actionButton, checkboxRow, emptyState, formRow, panel, statusLine } from './ui/primitives.ts';
+import {
+  buildSyncPanelModel,
+  parseSyncConfig,
+  viewSyncPanel,
+  type SyncPanelActions,
+  type SyncPanelConfig,
+  type SyncPanelMessage,
+} from './sync/panel.ts';
+import type { SyncRuntime, SyncRuntimeState } from './sync/bootstrap.ts';
+import type { SyncState } from './sync/types.ts';
 // Shared screen patch (see `./ui/patch.ts`).
 import { screenPatch as patch } from './ui/patch.ts';
 
@@ -69,6 +79,62 @@ interface PendingImport {
 }
 
 /**
+ * ONL-003: injectable Sync panel state. Defaults are deliberately inert
+ * (unconfigured + local-only); ONL-009 supplies the real config, state and
+ * actions once a transport exists. Nothing here performs I/O.
+ */
+export interface SettingsSyncDeps {
+  config?: SyncPanelConfig;
+  state?: SyncState;
+  pendingCount?: number;
+  paused?: boolean;
+  busy?: boolean;
+  message?: SyncPanelMessage;
+  actions?: Partial<SyncPanelActions>;
+}
+
+/** ONL-011 auth hooks injected by the mount site (Settings stays DOM/pure). */
+export interface SettingsSyncAuthHooks {
+  /** Build the authorize URL (PKCE state/verifier are persisted by `auth.ts`). */
+  begin?: (config: SyncPanelConfig) => Promise<{ url: string }>;
+  /** Navigate to the authorize URL; defaults to `location.assign`. */
+  redirect?: (url: string) => void;
+}
+
+interface ResolvedSyncDeps {
+  config: SyncPanelConfig;
+  state: SyncState;
+  pendingCount: number;
+  paused: boolean;
+  busy?: boolean;
+  message?: SyncPanelMessage;
+  actions: SyncPanelActions;
+}
+
+function inertSyncActions(): SyncPanelActions {
+  return {
+    enable: () => {},
+    syncNow: () => {},
+    signOut: () => {},
+    disable: () => {},
+    deleteServerCopy: () => {},
+  };
+}
+
+/** Generic, value-free failure copy: never surfaces tokens, keys or server text. */
+function syncFailureText(): string {
+  return 'Sync could not complete. Your changes stay queued on this device.';
+}
+
+/** Navigate to the hosted sign-in page. Injectable in tests (no browser needed). */
+function defaultSyncRedirect(url: string): void {
+  const location = (globalThis as { location?: { assign?(target: string): void; href?: string } })
+    .location;
+  if (location && typeof location.assign === 'function') location.assign(url);
+  else if (location) location.href = url;
+}
+
+/**
  * Per-screen controller: owns the mutable settings state plus the `redraw`
  * closure the mount site installs. Every writer ends in `refresh()`
  * (re-read the async service state, then redraw). View use of
@@ -82,7 +148,17 @@ export class SettingsCtrl {
   curated: CuratedSettings = CURATED_DEFAULTS;
   /** APP-001: install/offline snapshot; null until the async load finishes. */
   pwa: PwaSnapshot | null = null;
+  /** ONL-003: Sync panel dependencies (pure vnodes; no transport here). */
+  sync: ResolvedSyncDeps;
   redraw: () => void = () => {};
+
+  /** ONL-009b: live sync runtime, attached lazily by the mount site. */
+  private syncRuntime: SyncRuntime | undefined;
+  /** ONL-011: starts the Cognito redirect; navigation is injected for tests. */
+  private syncBeginAuth: ((config: SyncPanelConfig) => Promise<{ url: string }>) | undefined;
+  private syncRedirect: (url: string) => void = defaultSyncRedirect;
+  private syncBusy = false;
+  private syncMessage: SyncPanelMessage | undefined;
 
   private readonly service: LocalTrainingService;
   private readonly adapter: TrainingAdapter;
@@ -91,10 +167,24 @@ export class SettingsCtrl {
     service: LocalTrainingService,
     adapter: TrainingAdapter,
     redraw: () => void = () => {},
+    sync: SettingsSyncDeps = {},
   ) {
     this.service = service;
     this.adapter = adapter;
     this.redraw = redraw;
+    // The current build ships no VITE_SYNC_* values, so this resolves to the
+    // honest local-only + not-configured panel. ONL-009 injects the real deps.
+    this.sync = {
+      config: sync.config ?? parseSyncConfig(import.meta.env),
+      state: sync.state ?? { enabled: false },
+      pendingCount: sync.pendingCount ?? 0,
+      paused: sync.paused ?? false,
+      ...(sync.busy === true ? { busy: true } : {}),
+      ...(sync.message !== undefined ? { message: sync.message } : {}),
+      actions: { ...inertSyncActions(), ...sync.actions },
+    };
+    // Keep a boot-time auth notice visible across the first runtime refresh.
+    this.syncMessage = sync.message;
   }
 
   /** Re-read the async service state without writes. */
@@ -126,6 +216,125 @@ export class SettingsCtrl {
     await this.loadPwa();
   }
 
+  // --- ONL-009b: live sync runtime ----------------------------------------
+
+  /**
+   * Attach the app's sync runtime (if one is available) and wire the panel
+   * actions to it. When no runtime is supplied the inert defaults stay, so an
+   * unconfigured build renders exactly as before.
+   */
+  async attachSync(
+    runtime: SyncRuntime,
+    auth: SettingsSyncAuthHooks = {},
+  ): Promise<void> {
+    this.syncRuntime = runtime;
+    this.syncBeginAuth = auth.begin;
+    this.syncRedirect = auth.redirect ?? defaultSyncRedirect;
+    if (runtime.isConfigured()) {
+      this.sync = { ...this.sync, config: runtime.config, actions: this.syncActions() };
+    } else {
+      this.sync = { ...this.sync, config: runtime.config };
+    }
+    await this.refreshSync();
+  }
+
+  /** Re-read the runtime state and re-render. Never throws. */
+  private async refreshSync(): Promise<void> {
+    const runtime = this.syncRuntime;
+    if (!runtime) return;
+    let live: SyncRuntimeState;
+    try {
+      live = await runtime.state();
+    } catch {
+      return;
+    }
+    const enabled = live.mode !== 'local-only';
+    const state: SyncState = { enabled };
+    if (live.lastSyncedAt !== undefined) state.lastSyncedAt = live.lastSyncedAt;
+    this.sync = {
+      config: runtime.config,
+      state,
+      pendingCount: live.pending,
+      paused: live.mode === 'paused',
+      ...(this.syncBusy ? { busy: true } : {}),
+      ...(this.syncMessage !== undefined ? { message: this.syncMessage } : {}),
+      actions: this.sync.actions,
+    };
+    this.redraw();
+  }
+
+  private syncActions(): SyncPanelActions {
+    return {
+      enable: () => void this.enableSync(),
+      syncNow: () => void this.runSyncAction('Sync complete.', () => this.requireRuntime().syncNow()),
+      signOut: () =>
+        void this.runSyncAction('Signed out. Your training data stayed on this device.', () =>
+          this.requireRuntime().signOut(),
+        ),
+      disable: () =>
+        void this.runSyncAction('Sync disabled. Your training data stayed on this device.', () =>
+          this.requireRuntime().disable(),
+        ),
+      deleteServerCopy: () =>
+        void this.runSyncAction(
+          'Server copy deleted. Your training data stayed on this device.',
+          () => this.requireRuntime().deleteServerCopy(),
+        ),
+    };
+  }
+
+  private requireRuntime(): SyncRuntime {
+    if (!this.syncRuntime) throw new Error('sync runtime is unavailable');
+    return this.syncRuntime;
+  }
+
+  /**
+   * Enabling is a redirect, not an in-page token prompt: build the PKCE
+   * authorize URL and hand navigation to the browser. The callback is completed
+   * at boot (`app.ts`), which then calls `enable({ idToken })`.
+   */
+  private async enableSync(): Promise<void> {
+    const runtime = this.syncRuntime;
+    if (!runtime) return;
+    this.syncBusy = true;
+    this.syncMessage = undefined;
+    await this.refreshSync();
+    try {
+      if (!this.syncBeginAuth) {
+        this.syncMessage = { tone: 'error', text: 'Sign-in is not available in this build.' };
+        this.syncBusy = false;
+        await this.refreshSync();
+        return;
+      }
+      const { url } = await this.syncBeginAuth(runtime.config);
+      this.syncBusy = false;
+      this.syncRedirect(url);
+    } catch {
+      this.syncMessage = { tone: 'error', text: syncFailureText() };
+      this.syncBusy = false;
+      await this.refreshSync();
+    }
+  }
+
+  private async runSyncAction(
+    successText: string,
+    action: () => Promise<unknown>,
+  ): Promise<void> {
+    if (!this.syncRuntime) return;
+    this.syncBusy = true;
+    this.syncMessage = undefined;
+    await this.refreshSync();
+    try {
+      await action();
+      this.syncMessage = { tone: 'ok', text: successText };
+    } catch {
+      this.syncMessage = { tone: 'error', text: syncFailureText() };
+    } finally {
+      this.syncBusy = false;
+    }
+    await this.refreshSync();
+  }
+
   /** Validate + clamp the raw prefs (via `parseCurated`), persist, confirm. */
   async savePreferences(raw: unknown): Promise<void> {
     this.curated = await this.service.applyCuratedSettings(parseCurated(raw));
@@ -136,7 +345,7 @@ export class SettingsCtrl {
   /** Export the full store as a JSON download, then report the total. */
   async exportStore(): Promise<void> {
     const exported = await this.service.exportStore();
-    downloadJson(`chessreps-export-${timestamp()}.json`, JSON.stringify(exported));
+    downloadJson(`chessengram-export-${timestamp()}.json`, JSON.stringify(exported));
     this.message = {
       kind: 'ok',
       text: t('settings.data.exported', { total: summarizeExport(exported).total }),
@@ -259,6 +468,20 @@ function numberField(
     attrs: { id, type: 'number', min, max },
     props: { value: String(value) },
   }), { htmlFor: id });
+}
+
+/** ONL-003: Settings → Sync. Pure model + pure view; actions stay injected. */
+function syncPanel(ctrl: SettingsCtrl): VNode {
+  const deps = ctrl.sync;
+  const model = buildSyncPanelModel({
+    config: deps.config,
+    state: deps.state,
+    pendingCount: deps.pendingCount,
+    paused: deps.paused,
+    busy: deps.busy,
+    message: deps.message,
+  });
+  return viewSyncPanel(model, deps.actions);
 }
 
 function prefsPanel(ctrl: SettingsCtrl): VNode {
@@ -433,6 +656,7 @@ export function view(ctrl: SettingsCtrl): VNode {
     h('h2', t('screen.settings.title')),
     boardThemePanel(),
     pwaPanel(ctrl),
+    syncPanel(ctrl),
     prefsPanel(ctrl),
     panel(t('settings.data.title'), [
       h('p', t('settings.data.body')),
@@ -486,7 +710,12 @@ export class SettingsView implements Screen {
     // Track the placeholder so an unmount during the async load below still
     // removes exactly what this screen inserted.
     this.root = placeholder;
-    const ctrl = new SettingsCtrl(this.ctx.service, this.ctx.adapter);
+    const ctrl = new SettingsCtrl(
+      this.ctx.service,
+      this.ctx.adapter,
+      undefined,
+      this.ctx.syncAuthNotice ? { message: this.ctx.syncAuthNotice } : {},
+    );
     this.ctrl = ctrl;
     ctrl.redraw = () => {
       if (this.ctrl === null || this.vnode === null) return;
@@ -500,9 +729,32 @@ export class SettingsView implements Screen {
     // APP-001: install/offline state is async and non-essential — load it after
     // the first paint and let the guarded redraw update just this panel.
     void ctrl.loadPwa();
+    // ONL-009b: resolve the lazy sync runtime after first paint. A default build
+    // resolves to `undefined` (no fetch), leaving the panel untouched.
+    this.loadSync(ctrl);
     // The patch replaces the placeholder; track the live root so unmount
     // removes exactly what snabbdom inserted.
     this.root = this.vnode.elm as HTMLElement;
+  }
+
+  /**
+   * Lazily resolve the app's sync runtime and, when one is available, hand it to
+   * the controller. Failures are swallowed: sync wiring is an enhancement and
+   * must never break the Settings screen (or boot).
+   */
+  private loadSync(ctrl: SettingsCtrl): void {
+    const factory = this.ctx.sync;
+    if (!factory) return;
+    void factory()
+      .then((runtime) => {
+        if (!runtime || this.ctrl !== ctrl) return undefined;
+        return ctrl.attachSync(runtime, {
+          ...(this.ctx.syncBeginAuth ? { begin: this.ctx.syncBeginAuth } : {}),
+        });
+      })
+      .catch(() => {
+        // No sync runtime or a transient failure: keep the inert panel.
+      });
   }
 
   unmount(): void {

@@ -1,0 +1,27 @@
+# Copy to `.dev.vars` (git-ignored) for `wrangler dev` / local Node.
+# Dev-only values: no secrets, no account required.
+
+# Fixed-token local auth. Never enable outside local development.
+SYNC_ALLOW_DEV_AUTH = "true"
+
+# CORS allow-list for the local Vite dev server.
+ALLOWED_ORIGINS = "http://localhost:5173"
+
+# Caps (positive integers). Optional — defaults are MAX_BATCH=200, MAX_PUSH_BYTES=1000000.
+MAX_BATCH = "200"
+MAX_PUSH_BYTES = "1000000"
+
+# Auth/session tuning (positive integers, optional).
+# SESSION_TTL_SECONDS default 2592000 (30 days); JWKS_CACHE_SECONDS default 3600;
+# MAX_ID_TOKEN_BYTES default 8192.
+SESSION_TTL_SECONDS = "2592000"
+JWKS_CACHE_SECONDS = "3600"
+MAX_ID_TOKEN_BYTES = "8192"
+
+# Cognito. Leave commented until you have a user pool; dev-auth is enough to
+# exercise the service locally. Setting all three required values enables
+# JWKS-verified ID tokens at `/auth/session`.
+# COGNITO_REGION = "eu-west-1"
+# COGNITO_USER_POOL_ID = "eu-west-1_XXXXXXXXX"
+# COGNITO_CLIENT_ID = "xxxxxxxxxxxxxxxxxxxxxxxxxx"
+# COGNITO_JWKS_URL = ""

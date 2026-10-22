@@ -4,4 +4,4 @@ export type {
   ProgressKey,
   AttemptRecord,
   SessionState,
-} from '@chessreps/contracts';
+} from '@chessengram/contracts';

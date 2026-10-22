@@ -10,12 +10,12 @@
  * out-of-range stored value can never silently bend the scheduler.
  */
 
-import type { FailurePreset } from '@chessreps/contracts';
+import type { FailurePreset } from '@chessengram/contracts';
 import {
   DEFAULT_TIMING_POLICY,
   resolveSettings,
   type SchedulerSettings,
-} from '@chessreps/scheduler';
+} from '@chessengram/scheduler';
 
 /** Storage key for the program-agnostic curated settings (per-program: later). */
 export const SCHEDULER_SETTINGS_KEY = 'scheduler';

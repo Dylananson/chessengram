@@ -1,5 +1,5 @@
 {
-  "name": "@chessreps/scheduler",
+  "name": "@chessengram/scheduler",
   "version": "0.0.0",
   "private": true,
   "type": "module",
@@ -14,7 +14,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@chessreps/contracts": "*"
+    "@chessengram/contracts": "*"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

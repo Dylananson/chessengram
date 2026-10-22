@@ -18,8 +18,8 @@
  *   range by its completion time (or start time while unfinished).
  */
 
-import type { AttemptRecord } from '@chessreps/contracts';
-import type { WoodpeckerCycle, WoodpeckerSetRecord } from '@chessreps/scheduler';
+import type { AttemptRecord } from '@chessengram/contracts';
+import type { WoodpeckerCycle, WoodpeckerSetRecord } from '@chessengram/scheduler';
 import {
   DEFAULT_COLLECTION_ID,
   DEFAULT_PROGRAM_ID,

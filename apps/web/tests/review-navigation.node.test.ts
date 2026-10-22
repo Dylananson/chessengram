@@ -10,7 +10,7 @@ import { LocalTrainingService } from '../src/scheduler-service.ts';
 import { LocalStore } from '../src/storage/local-store.ts';
 import { InMemoryStorageBackend } from '../src/storage/memory-backend.ts';
 import { makePuzzle, setupMovePuzzle, timing } from './fixtures.ts';
-import type { AttemptEvent } from '@chessreps/contracts';
+import type { AttemptEvent } from '@chessengram/contracts';
 
 function event(
   type: AttemptEvent['type'],

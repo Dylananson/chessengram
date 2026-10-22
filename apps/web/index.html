@@ -4,14 +4,14 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <meta name="theme-color" content="#f5f5f5" />
-    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='10' fill='%23007bff'/%3E%3Ctext x='32' y='44' font-size='34' text-anchor='middle' fill='white' font-family='navy,Segoe UI,sans-serif'%3ECR%3C/text%3E%3C/svg%3E" />
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='10' fill='%23007bff'/%3E%3Ctext x='32' y='44' font-size='34' text-anchor='middle' fill='white' font-family='navy,Segoe UI,sans-serif'%3ECE%3C/text%3E%3C/svg%3E" />
     <link rel="apple-touch-icon" href="/icons/icon-192.png" />
     <link rel="manifest" href="/manifest.webmanifest" />
     <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="default" />
-    <meta name="apple-mobile-web-app-title" content="ChessReps" />
-    <title>ChessReps</title>
+    <meta name="apple-mobile-web-app-title" content="ChessEngram" />
+    <title>ChessEngram</title>
   </head>
   <body>
     <div id="promotion" class="promotion hidden" role="dialog" aria-modal="true" aria-labelledby="promotion-title" data-i18n-title="promotion.title">
@@ -28,11 +28,29 @@
     </div>
     <div class="container">
       <div class="app-header">
+        <!-- UX-006: phone navigation, top-left. The toggle is desktop-hidden; the
+             nav below becomes a drawer under the 760px breakpoint (see app.css).
+             Icon only — the current screen is exposed through the toggle's
+             accessible name instead (see router.ts). -->
+        <button
+          id="nav-toggle"
+          class="nav-toggle"
+          type="button"
+          aria-expanded="false"
+          aria-controls="nav"
+          aria-label="Menu"
+        >
+          <span class="nav-toggle-icon" aria-hidden="true">☰</span>
+        </button>
         <header>
-          <h1 data-i18n="app.title">ChessReps</h1>
+          <h1 data-i18n="app.title">ChessEngram</h1>
           <p class="subtitle" data-i18n="app.subtitle"></p>
         </header>
         <nav id="nav" class="nav" aria-label="Main navigation"></nav>
+        <!-- UX-007: a real sign-in entry point, filled by app.ts only when sync
+             is configured and signed out (empty otherwise, and hidden by
+             `.auth-slot:empty`). -->
+        <div id="auth-slot" class="auth-slot"></div>
       </div>
       <main id="screen" class="screen"></main>
     </div>

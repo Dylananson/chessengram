@@ -54,7 +54,7 @@ def fetch(directory):
     limit = 1024 * 1024
     request = urllib.request.Request(URL, headers={
         "Range": f"bytes=0-{limit - 1}", "Accept-Encoding": "identity",
-        "User-Agent": "ChessReps-T02/1 (bounded puzzle research)",
+        "User-Agent": "ChessEngram-T02/1 (bounded puzzle research)",
     })
     with urllib.request.urlopen(request, timeout=60) as response:
         # Fail closed if the server ignores Range. Never consume the whole dump.

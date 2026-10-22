@@ -8,7 +8,7 @@ const require = createRequire(PWROOT);
 const { chromium } = require('playwright-core');
 
 const base = 'http://localhost:9663';
-const ev = '/home/dtans/code/chessreps/tools/lichess-baseline/evidence';
+const ev = '/home/dtans/code/chessengram/tools/lichess-baseline/evidence';
 const out = { steps: [], completePosts: [], console: [], errors: [] };
 const step = (n, data) => { out.steps.push({ n, ...data }); console.log(`\n=== STEP ${n} ===\n${JSON.stringify(data, null, 1)}`); };
 

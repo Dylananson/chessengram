@@ -12,7 +12,7 @@ import {
 import { makePuzzle, PROGRAM_ID } from './fixtures.ts';
 
 async function serviceWith(
-  settings: Partial<import('@chessreps/scheduler').SchedulerSettings> = {},
+  settings: Partial<import('@chessengram/scheduler').SchedulerSettings> = {},
   backend = new InMemoryStorageBackend(),
 ): Promise<LocalTrainingService> {
   const service = new LocalTrainingService({ store: new LocalStore(backend), settings });

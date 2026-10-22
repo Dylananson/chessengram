@@ -190,7 +190,13 @@ export interface SelectNextResponse {
   /** Selected puzzle ID, or null if nothing eligible */
   puzzleId: string | null;
   /** Reason if no selection */
-  reason?: "no-due-work" | "daily-limit-reached" | "queue-empty" | "in-correction";
+  reason?:
+    | "no-due-work"
+    | "daily-limit-reached"
+    | "queue-empty"
+    | "in-correction"
+    /** Woodpecker failed-review run: every missed puzzle has been reviewed. */
+    | "woodpecker-review-complete";
   /** Next due info if applicable */
   nextDueAt?: number;
 }

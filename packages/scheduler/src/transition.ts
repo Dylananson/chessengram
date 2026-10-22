@@ -3,9 +3,9 @@
  * as specified by T03. Used by scheduler facade and tests.
  */
 
-import type { AttemptOutcome, FailureReason, TimingSegments } from "@chessreps/contracts";
+import type { AttemptOutcome, FailureReason, TimingSegments } from "@chessengram/contracts";
 import type { SchedulerSettings } from "./settings.ts";
-import type { ScheduleStateDetails } from "@chessreps/contracts";
+import type { ScheduleStateDetails } from "@chessengram/contracts";
 import { applyOutcome, type Transition } from "./core.ts";
 
 export interface ScoreOnceInput {

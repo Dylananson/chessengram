@@ -1,0 +1,42 @@
+# Cloudflare Workers configuration for the ChessEngram sync service.
+#
+# PLACEHOLDERS ONLY: no account ids, no secrets, no real URLs. Fill these in
+# after `wrangler d1 create` and the Cognito setup owned by ONL-006.
+# See README.md for the full deploy checklist.
+
+name = "chessreps-sync"
+main = "src/index.ts"
+compatibility_date = "2026-10-01"
+
+# D1 holds signed sync envelopes. Payloads are plaintext; see the accepted
+# server-trust trade-off in docs/research/online-sync-design.md.
+# Tables are created lazily on first use; no separate migration step needed.
+[[d1_databases]]
+binding = "SYNC_DB"
+database_name = "chessreps-sync"
+# Replace with the `database_id` printed by `wrangler d1 create chessreps-sync`.
+database_id = "<d1-database-id>"
+
+[vars]
+# Comma-separated exact origins allowed by CORS; `*` allows any. Absent ⇒ deny.
+ALLOWED_ORIGINS = "http://localhost:5173"
+MAX_BATCH = "200"
+MAX_PUSH_BYTES = "1000000"
+# BFF session cookie lifetime (seconds). Default 30 days.
+SESSION_TTL_SECONDS = "2592000"
+# Cognito JWKS cache lifetime (seconds). Default 1 hour.
+JWKS_CACHE_SECONDS = "3600"
+# Largest accepted ID token (bytes). Default 8 KiB.
+MAX_ID_TOKEN_BYTES = "8192"
+# NEVER enable in production: accepts a fixed local dev bearer token.
+SYNC_ALLOW_DEV_AUTH = "false"
+
+# Cognito values (public identifiers, but keep per-deployment). Set with
+# `wrangler secret put COGNITO_REGION` etc. or as [vars]:
+#   COGNITO_REGION
+#   COGNITO_USER_POOL_ID
+#   COGNITO_CLIENT_ID
+#   COGNITO_JWKS_URL   (optional override; derived from region + pool otherwise)
+#
+# With the three required Cognito values set, `/auth/session` verifies ID
+# tokens via JWKS; otherwise only `SYNC_ALLOW_DEV_AUTH` mode works.

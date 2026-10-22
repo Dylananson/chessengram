@@ -1,5 +1,5 @@
 /** Display-only chessboard square color preference. */
-export const BOARD_THEME_KEY = 'chessreps.boardTheme';
+export const BOARD_THEME_KEY = 'chessengram.boardTheme';
 
 export const BOARD_THEMES = ['green', 'blue', 'wood', 'slate', 'classic'] as const;
 export type BoardTheme = (typeof BOARD_THEMES)[number];

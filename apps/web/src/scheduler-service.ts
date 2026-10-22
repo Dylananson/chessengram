@@ -2,7 +2,7 @@
  * LocalTrainingService (T09-lite + T10).
  *
  * Implements the T04 `TrainingService` boundary over the real T06 scheduler
- * (`@chessreps/scheduler`) and a persistent `LocalStore`. It is the single
+ * (`@chessengram/scheduler`) and a persistent `LocalStore`. It is the single
  * place that owns:
  *   - the map progressKey -> SchedulerState (derived schedule),
  *   - raw AttemptRecord history (separate from derived state),
@@ -17,8 +17,10 @@
 
 import {
   Scheduler,
+  commitScoredOutcome,
   resolveSettings,
   selectNextDue,
+  startAttempt as reserveSchedulerAttempt,
   startWoodpeckerCycle as createWoodpeckerCycle,
   recordWoodpeckerResult as appendWoodpeckerResult,
   summarizeWoodpeckerCycle,
@@ -30,7 +32,7 @@ import {
   type WoodpeckerCycle,
   type WoodpeckerSetRecord,
   systemClock,
-} from '@chessreps/scheduler';
+} from '@chessengram/scheduler';
 import type {
   AttemptId,
   AttemptRecord,
@@ -40,7 +42,7 @@ import type {
   ScheduleStateDetails,
   SessionState,
   TimingSegments,
-} from '@chessreps/contracts';
+} from '@chessengram/contracts';
 import type {
   CommitOutcomeRequest,
   CommitOutcomeResponse,
@@ -59,7 +61,7 @@ import type {
   StartSessionRequest,
   StartSessionResponse,
   TrainingService,
-} from '@chessreps/contracts';
+} from '@chessengram/contracts';
 import { LocalStore, META_ACTIVE_SESSIONS, META_BUNDLED_BANDS, META_CONTENT_SET, META_PUZZLE_ORDER } from './storage/local-store.ts';
 import {
   DEFAULT_COLLECTION_ID,
@@ -80,6 +82,7 @@ import {
   toCurated,
   type CuratedSettings,
 } from './settings-preferences.ts';
+import type { SyncEntityType } from './sync/types.ts';
 
 export const DEFAULT_PROGRAM_ID = 'local-spaced-reps-v1';
 export const WOODPECKER_CYCLE_PROGRAM_ID = 'woodpecker-cycle-v1';
@@ -99,7 +102,7 @@ export function woodpeckerScopeId(setId: string): string {
  * Schedule scope is (programId, collectionId, puzzleId) — per-collection
  * SEPARATE progress (user decision 2026-10-15, B4; overrides the ADR-002
  * per-program proposal — see the `ProgressKey` comment in
- * `@chessreps/contracts`). A missing `collectionId` defaults to
+ * `@chessengram/contracts`). A missing `collectionId` defaults to
  * `DEFAULT_COLLECTION_ID`, so legacy callers keep working.
  */
 export function progressKeyToString(key: ProgressKey): string {
@@ -130,6 +133,23 @@ export function parseScheduleKey(key: string): ParsedScheduleKey | undefined {
 /** Effective collection scope for a progress key (missing → default). */
 export function effectiveCollectionId(key: ProgressKey): string {
   return key.collectionId ?? DEFAULT_COLLECTION_ID;
+}
+
+/**
+ * Whether two scheduler states project the same schedule. Replay receipts and
+ * idempotency keys are bookkeeping only, so an inbound re-apply that produces
+ * the same projection must not rewrite the stored schedule.
+ */
+function sameScheduleProjection(a: SchedulerState, b: SchedulerState): boolean {
+  return a.revision === b.revision && JSON.stringify(a.schedule) === JSON.stringify(b.schedule);
+}
+
+function cloneCycle(cycle: WoodpeckerCycle): WoodpeckerCycle {
+  return {
+    ...cycle,
+    puzzleIds: [...cycle.puzzleIds],
+    results: cycle.results.map((entry) => ({ ...entry })),
+  };
 }
 
 function emptyTiming(): TimingSegments {
@@ -164,6 +184,24 @@ function toContractReceipt(receipt: {
   };
 }
 
+/**
+ * Composite pointer id for one Woodpecker cycle result. Must match
+ * `woodpeckerResultRecordId` in `sync/bootstrap.ts`: the synced pointer's
+ * `recordId` and the `cycleId\0puzzleId` dedupe scope both rely on this shape.
+ */
+function woodpeckerResultPointerId(cycleId: string, puzzleId: string): string {
+  return `${cycleId}\u0000${puzzleId}`;
+}
+
+/** A source-record change the sync layer can capture (ONL-013). */
+export interface SyncLocalChange {
+  type: SyncEntityType;
+  recordId: string;
+}
+
+/** Observer callback registered through {@link LocalTrainingService.onLocalChange}. */
+export type SyncLocalChangeListener = (change: SyncLocalChange) => void;
+
 export interface LocalTrainingServiceOptions {
   store: LocalStore;
   clock?: Clock;
@@ -196,6 +234,13 @@ export class LocalTrainingService implements TrainingService {
   private activeCollectionId: string = DEFAULT_COLLECTION_ID;
   private puzzleOrder: string[] = [];
   private initialized = false;
+  /** ONL-013 change observers; empty until the sync runtime subscribes. */
+  private readonly localChangeListeners = new Set<SyncLocalChangeListener>();
+  /**
+   * Non-zero while a remote apply runs. Remote applies must never echo back
+   * outbound pointers, so notifications are suppressed for their duration.
+   */
+  private remoteApplyDepth = 0;
 
   constructor(options: LocalTrainingServiceOptions) {
     this.store = options.store;
@@ -322,11 +367,57 @@ export class LocalTrainingService implements TrainingService {
     return toCurated(this.settings);
   }
 
+  // --- local change observation (ONL-013) ---------------------------------
+
+  /**
+   * Observe source-record mutations that sync cares about (attempts,
+   * collections, Woodpecker sets/cycles/results, settings and user-authored
+   * puzzles). Returns an unsubscribe function.
+   *
+   * Derived writes (schedules, sessions, meta) and remote applies never notify:
+   * a remote change must not be re-enqueued as an outbound pointer (no echo
+   * loop). A listener that throws is ignored so an observer can never break a
+   * training mutation.
+   */
+  onLocalChange(listener: SyncLocalChangeListener): () => void {
+    this.localChangeListeners.add(listener);
+    return () => {
+      this.localChangeListeners.delete(listener);
+    };
+  }
+
+  /** Notify observers unless a remote apply is in progress. */
+  private notifyLocalChange(type: SyncEntityType, recordId: string): void {
+    if (this.remoteApplyDepth > 0) return;
+    for (const listener of this.localChangeListeners) {
+      try {
+        listener({ type, recordId });
+      } catch {
+        // A capture observer must never break a training mutation.
+      }
+    }
+  }
+
+  /**
+   * Run a remote apply with local-change notifications suppressed. All the
+   * `applyRemote*` writers go through this so applying a remote record is never
+   * captured back into the outbound queue.
+   */
+  private async withRemoteApply<T>(operation: () => Promise<T>): Promise<T> {
+    this.remoteApplyDepth += 1;
+    try {
+      return await operation();
+    } finally {
+      this.remoteApplyDepth -= 1;
+    }
+  }
+
   /** Persist and apply curated scheduler preferences. Takes effect on new attempts. */
   async applyCuratedSettings(curated: CuratedSettings): Promise<CuratedSettings> {
     const safe = parseCurated(curated);
     this.applySettings(safe);
     await this.store.saveSettings(SCHEDULER_SETTINGS_KEY, safe);
+    this.notifyLocalChange('setting', SCHEDULER_SETTINGS_KEY);
     return safe;
   }
 
@@ -449,6 +540,10 @@ export class LocalTrainingService implements TrainingService {
       }
       if (changed) await this.store.saveCollection({ ...record, puzzleIds: [...record.puzzleIds] });
     }
+    // Only user-authored puzzles are synced; bundled/CC0 content is not user data.
+    for (const puzzle of puzzles) {
+      if (puzzle.source === 'user') this.notifyLocalChange('userPuzzle', puzzle.id);
+    }
     return { added, replaced };
   }
 
@@ -503,6 +598,8 @@ export class LocalTrainingService implements TrainingService {
    * attempts on the removed puzzle remain auditable.
    */
   async removePuzzle(puzzleId: string): Promise<void> {
+    const removed = this.puzzles.get(puzzleId);
+    const wasUserPuzzle = removed?.source === 'user';
     this.puzzles.delete(puzzleId);
     this.puzzleOrder = this.puzzleOrder.filter((id) => id !== puzzleId);
     const scheduleKeys = [...this.schedules.keys()].filter((key) =>
@@ -521,6 +618,7 @@ export class LocalTrainingService implements TrainingService {
     await this.store.deletePuzzle(puzzleId);
     await this.store.saveMeta(META_PUZZLE_ORDER, [...this.puzzleOrder]);
     await this.refreshContentMeta();
+    if (wasUserPuzzle) this.notifyLocalChange('userPuzzle', puzzleId);
   }
 
   // --- collections (static sets, B4) ----------------------------------------
@@ -565,6 +663,7 @@ export class LocalTrainingService implements TrainingService {
     };
     this.collections.set(record.id, record);
     await this.store.saveCollection(record);
+    this.notifyLocalChange('collection', record.id);
     return this.copyCollection(record);
   }
 
@@ -575,6 +674,7 @@ export class LocalTrainingService implements TrainingService {
     if (!clean) throw new Error('Collection name must not be empty.');
     record.name = clean;
     await this.store.saveCollection(this.copyCollection(record));
+    this.notifyLocalChange('collection', collectionId);
     return this.copyCollection(record);
   }
 
@@ -605,6 +705,7 @@ export class LocalTrainingService implements TrainingService {
       this.activeCollectionId = DEFAULT_COLLECTION_ID;
       await this.persistActiveCollection();
     }
+    this.notifyLocalChange('collection', collectionId);
   }
 
   // --- Woodpecker F01 ------------------------------------------------------
@@ -679,6 +780,7 @@ export class LocalTrainingService implements TrainingService {
     };
     await this.store.saveWoodpeckerSet(set);
     this.woodpeckerSets.set(set.setId, set);
+    this.notifyLocalChange('woodpecker', set.setId);
     return { ...set, puzzleIds: [...set.puzzleIds] };
   }
 
@@ -709,6 +811,7 @@ export class LocalTrainingService implements TrainingService {
     await this.store.saveWoodpeckerCycle(cycleId, cycle);
     const saved = { cycleId, cycle };
     this.woodpeckerCycles.set(cycleId, saved);
+    this.notifyLocalChange('woodpecker', cycleId);
     return { cycleId, cycle: { ...cycle, puzzleIds: [...cycle.puzzleIds], results: [] } };
   }
 
@@ -724,6 +827,7 @@ export class LocalTrainingService implements TrainingService {
     const cycle = appendWoodpeckerResult(saved.cycle, puzzleId, result, activeSeconds, recordedAt);
     await this.store.saveWoodpeckerCycle(cycleId, cycle);
     this.woodpeckerCycles.set(cycleId, { cycleId, cycle });
+    this.notifyLocalChange('woodpeckerResult', woodpeckerResultPointerId(cycleId, puzzleId));
     return { ...cycle, puzzleIds: [...cycle.puzzleIds], results: [...cycle.results] };
   }
 
@@ -786,10 +890,26 @@ export class LocalTrainingService implements TrainingService {
     return [...failed];
   }
 
-  /** Select from failures only, using an isolated scheduler scope/program. */
-  selectWoodpeckerFailed(setId: string): SelectNextResponse {
-    const ids = this.getWoodpeckerFailedPuzzleIds(setId);
-    if (ids.length === 0) return { puzzleId: null, reason: 'queue-empty' };
+  /**
+   * Select from failures only, using an isolated scheduler scope/program.
+   *
+   * `excludePuzzleIds` works like the ordinary selection's: the failed set is
+   * derived from the cycle's results, which a review attempt does not change,
+   * so without the exclusion the puzzle just reviewed came straight back.
+   */
+  selectWoodpeckerFailed(
+    setId: string,
+    options: { excludePuzzleIds?: readonly string[] } = {},
+  ): SelectNextResponse {
+    const allIds = this.getWoodpeckerFailedPuzzleIds(setId);
+    const excluded = new Set(options.excludePuzzleIds ?? []);
+    const ids = allIds.filter((puzzleId) => !excluded.has(puzzleId));
+    if (ids.length === 0) {
+      return {
+        puzzleId: null,
+        reason: allIds.length > 0 ? 'woodpecker-review-complete' : 'queue-empty',
+      };
+    }
     const collectionId = woodpeckerScopeId(setId);
     const candidates: Candidate[] = ids.map((puzzleId) => {
       const key = `${WOODPECKER_FAILED_PROGRAM_ID}:${collectionId}:${puzzleId}`;
@@ -812,6 +932,7 @@ export class LocalTrainingService implements TrainingService {
     if (!record.puzzleIds.includes(puzzleId)) {
       record.puzzleIds.push(puzzleId);
       await this.store.saveCollection(this.copyCollection(record));
+      this.notifyLocalChange('collection', collectionId);
     }
   }
 
@@ -821,7 +942,230 @@ export class LocalTrainingService implements TrainingService {
     if (record.puzzleIds.includes(puzzleId)) {
       record.puzzleIds = record.puzzleIds.filter((id) => id !== puzzleId);
       await this.store.saveCollection(this.copyCollection(record));
+      this.notifyLocalChange('collection', collectionId);
     }
+  }
+
+  // --- inbound sync writer (ONL-012) ---------------------------------------
+  //
+  // These are append-only / idempotent entry points for remote records. They
+  // deliberately never enqueue any outbound pointer (the sync runtime owns the
+  // queue) and never delete local history.
+
+  /** Read puzzle content synchronously for inbound attempt reconstruction. */
+  getPuzzle(puzzleId: string): NormalizedPuzzle | undefined {
+    const puzzle = this.puzzles.get(puzzleId);
+    return puzzle ? structuredClone(puzzle) : undefined;
+  }
+
+  /** Next presentation cycle number for a set (payloads do not carry it). */
+  nextWoodpeckerCycleNumber(setId: string): number {
+    let max = 0;
+    for (const saved of this.woodpeckerCycles.values()) {
+      if (saved.cycle.setId !== setId) continue;
+      max = Math.max(max, saved.cycle.cycleNumber);
+    }
+    return max + 1;
+  }
+
+  /**
+   * Append remote raw attempts (same `attemptId` twice is a no-op) and rebuild
+   * the affected `(program, collection, puzzle)` schedules by replaying the
+   * merged attempt log through the deterministic scheduler reducer.
+   *
+   * Replay is the reason schedules converge across devices: both sides feed
+   * the same attempt records, in scoring order, into the same pure transition
+   * rules. Local schedules are only replaced when the replay projects a
+   * different state, so an idempotent re-apply changes nothing.
+   */
+  async applyRemoteAttempts(
+    records: readonly AttemptRecord[],
+  ): Promise<{ applied: number; duplicates: number }> {
+    return this.withRemoteApply(() => this.applyRemoteAttemptsInner(records));
+  }
+
+  private async applyRemoteAttemptsInner(
+    records: readonly AttemptRecord[],
+  ): Promise<{ applied: number; duplicates: number }> {
+    let applied = 0;
+    let duplicates = 0;
+    const affected = new Set<string>();
+
+    for (const record of records) {
+      const attemptId = record?.attemptId?.value;
+      if (typeof attemptId !== 'string' || attemptId === '') continue;
+      if (this.attempts.has(attemptId)) {
+        duplicates += 1;
+        affected.add(progressKeyToString(record.progressKey));
+        continue;
+      }
+      const attempt = structuredClone(record);
+      await this.store.saveAttempt(attempt);
+      this.attempts.set(attemptId, attempt);
+      applied += 1;
+      affected.add(progressKeyToString(attempt.progressKey));
+    }
+
+    for (const key of affected) await this.rebuildScheduleFromAttempts(key);
+    return { applied, duplicates };
+  }
+
+  /**
+   * Rebuild one schedule scope from the merged attempt log. Attempts without an
+   * outcome still reserve the New introduction (`introducedAt`) exactly like
+   * `startAttempt`, so an abandoned-but-synced attempt converges too.
+   */
+  private async rebuildScheduleFromAttempts(key: string): Promise<void> {
+    const parsed = parseScheduleKey(key);
+    if (!parsed || parsed.collectionId === undefined) return;
+
+    const progressKey: ProgressKey = {
+      programId: parsed.programId,
+      collectionId: parsed.collectionId,
+      puzzleId: parsed.puzzleId,
+    };
+    const history = [...this.attempts.values()]
+      .filter((attempt) => progressKeyToString(attempt.progressKey) === key)
+      .sort((a, b) => {
+        if (a.startedAt !== b.startedAt) return a.startedAt - b.startedAt;
+        return a.attemptId.value < b.attemptId.value
+          ? -1
+          : a.attemptId.value > b.attemptId.value
+            ? 1
+            : 0;
+      });
+    if (history.length === 0) return;
+
+    let state = this.scheduler.createState();
+    for (const attempt of history) {
+      state = reserveSchedulerAttempt(state, {
+        attemptId: attempt.attemptId,
+        at: attempt.startedAt,
+        progressKey,
+      }).state;
+      if (attempt.outcome === undefined) continue;
+
+      const puzzle = this.puzzles.get(attempt.progressKey.puzzleId);
+      const requiredMoves = puzzle ? Math.ceil(puzzle.solution.length / 2) : undefined;
+      const result = commitScoredOutcome(
+        state,
+        {
+          attemptId: attempt.attemptId,
+          expectedScheduleRevision: state.revision,
+          // Replay identity only needs to be stable and per-attempt unique.
+          idempotencyKey: `sync:${attempt.attemptId.value}`,
+          outcome: attempt.outcome,
+          occurredAt: attempt.completedAt ?? attempt.startedAt,
+          timing: attempt.timing,
+          ...(requiredMoves !== undefined ? { requiredMoves } : {}),
+          ...(attempt.failureReason !== undefined ? { failureReason: attempt.failureReason } : {}),
+        },
+        this.settings,
+      );
+      if (result.status === 'committed' || result.status === 'duplicate') {
+        state = result.state;
+      }
+    }
+
+    const previous = this.schedules.get(key);
+    if (previous && sameScheduleProjection(previous, state)) return;
+    this.schedules.set(key, state);
+    await this.store.saveSchedule(key, state);
+  }
+
+  /** Replace (or delete) one collection from an already-merged remote state. */
+  async applyRemoteCollection(
+    collectionId: string,
+    record: CollectionRecord | undefined,
+  ): Promise<void> {
+    return this.withRemoteApply(() => this.applyRemoteCollectionInner(collectionId, record));
+  }
+
+  private async applyRemoteCollectionInner(
+    collectionId: string,
+    record: CollectionRecord | undefined,
+  ): Promise<void> {
+    if (record === undefined) {
+      this.collections.delete(collectionId);
+      await this.store.deleteCollection(collectionId);
+      return;
+    }
+    if (record.id !== collectionId) {
+      throw new Error(`Collection id mismatch: ${collectionId}`);
+    }
+    const copy = this.copyCollection(record);
+    this.collections.set(copy.id, copy);
+    await this.store.saveCollection(copy);
+  }
+
+  async applyRemoteWoodpeckerSet(record: WoodpeckerSetRecord): Promise<void> {
+    return this.withRemoteApply(() => this.applyRemoteWoodpeckerSetInner(record));
+  }
+
+  private async applyRemoteWoodpeckerSetInner(record: WoodpeckerSetRecord): Promise<void> {
+    const copy: WoodpeckerSetRecord = { ...record, puzzleIds: [...record.puzzleIds] };
+    this.woodpeckerSets.set(copy.setId, copy);
+    await this.store.saveWoodpeckerSet(copy);
+  }
+
+  async applyRemoteWoodpeckerCycle(cycleId: string, cycle: WoodpeckerCycle): Promise<void> {
+    return this.withRemoteApply(() => this.applyRemoteWoodpeckerCycleInner(cycleId, cycle));
+  }
+
+  private async applyRemoteWoodpeckerCycleInner(
+    cycleId: string,
+    cycle: WoodpeckerCycle,
+  ): Promise<void> {
+    const copy = cloneCycle(cycle);
+    this.woodpeckerCycles.set(cycleId, { cycleId, cycle: copy });
+    await this.store.saveWoodpeckerCycle(cycleId, copy);
+  }
+
+  /**
+   * Persist synced user-puzzle content without touching collection membership:
+   * membership arrives separately through collection envelopes and must not be
+   * silently widened by content arriving first.
+   */
+  async applyRemotePuzzle(puzzle: NormalizedPuzzle): Promise<void> {
+    return this.withRemoteApply(() => this.applyRemotePuzzleInner(puzzle));
+  }
+
+  private async applyRemotePuzzleInner(puzzle: NormalizedPuzzle): Promise<void> {
+    const copy = structuredClone(puzzle);
+    if (!this.puzzles.has(copy.id)) {
+      this.puzzleOrder.push(copy.id);
+      await this.store.saveMeta(META_PUZZLE_ORDER, [...this.puzzleOrder]);
+    }
+    this.puzzles.set(copy.id, copy);
+    await this.store.savePuzzles([copy]);
+    await this.refreshContentMeta();
+  }
+
+  /**
+   * Inbound tombstone (ONL-014): a user puzzle was deleted on another device.
+   * Runs the same removal path as {@link removePuzzle} under the remote-apply
+   * guard, so content and this puzzle's derived schedules go away while raw
+   * attempt history and every other record are kept — and no outbound pointer
+   * is echoed back.
+   */
+  async applyRemotePuzzleRemoval(puzzleId: string): Promise<void> {
+    return this.withRemoteApply(() => this.removePuzzle(puzzleId));
+  }
+
+  /** Apply one remote setting group (validated/clamped by the caller's parser). */
+  async applyRemoteSettings(recordId: string, values: Record<string, unknown>): Promise<void> {
+    return this.withRemoteApply(() => this.applyRemoteSettingsInner(recordId, values));
+  }
+
+  private async applyRemoteSettingsInner(
+    recordId: string,
+    values: Record<string, unknown>,
+  ): Promise<void> {
+    if (recordId === SCHEDULER_SETTINGS_KEY) {
+      await this.applyCuratedSettings(parseCurated(values));
+      return;
+    }
+    await this.store.saveSettings(recordId, values);
   }
 
   // --- data safety (PB5) --------------------------------------------------
@@ -1104,6 +1448,7 @@ export class LocalTrainingService implements TrainingService {
       }
       this.attempts.set(attempt.attemptId.value, attempt);
       await this.store.saveAttempt(attempt);
+      this.notifyLocalChange('attempt', attempt.attemptId.value);
 
       if (request.outcome === 'success') {
         await this.clearActiveAttempt(attempt.sessionId);
@@ -1164,6 +1509,7 @@ export class LocalTrainingService implements TrainingService {
       });
       this.attempts.set(attempt.attemptId.value, attempt);
       await this.store.saveAttempt(attempt);
+      this.notifyLocalChange('attempt', attempt.attemptId.value);
 
       await this.clearActiveAttempt(attempt.sessionId);
       return { accepted: true };
@@ -1225,6 +1571,11 @@ export class LocalTrainingService implements TrainingService {
     for (const [key, state] of this.schedules) {
       const parsed = parseScheduleKey(key);
       if (!parsed || parsed.programId !== programId) continue;
+      // Exclusions apply here too: an excluded puzzle was skipped in the loop
+      // above, so its key never reached `seen` — without this check the second
+      // loop silently re-adds the puzzle that was just finished (and the
+      // fallback below then picks it, which is the reported "it repeats").
+      if (excluded.has(parsed.puzzleId)) continue;
       if (scope && parsed.collectionId !== scope.id) continue;
       if (!scope && seenPuzzles.has(parsed.puzzleId)) continue;
       if (seen.has(key)) continue;
@@ -1232,6 +1583,24 @@ export class LocalTrainingService implements TrainingService {
     }
 
     if (candidates.length === 0) {
+      // Nothing selectable. When that is because the caller excluded the only
+      // eligible puzzle (e.g. the one just finished), report when work returns
+      // instead of claiming the library is empty.
+      if (memberIds.length > 0 && memberIds.every((puzzleId) => excluded.has(puzzleId))) {
+        let nextDueAt: number | undefined;
+        for (const puzzleId of memberIds) {
+          const entry = scope
+            ? this.scopedScheduleFor(programId, scope.id, puzzleId)
+            : this.legacyScheduleFor(programId, puzzleId);
+          const dueAt = entry.schedule?.dueAt;
+          if (dueAt !== undefined && (nextDueAt === undefined || dueAt < nextDueAt)) nextDueAt = dueAt;
+        }
+        return {
+          puzzleId: null,
+          reason: 'no-due-work',
+          ...(nextDueAt !== undefined ? { nextDueAt } : {}),
+        };
+      }
       return { puzzleId: null, reason: 'queue-empty' };
     }
 
@@ -1295,6 +1664,7 @@ export class LocalTrainingService implements TrainingService {
       });
       this.attempts.set(attempt.attemptId.value, attempt);
       await this.store.saveAttempt(attempt);
+      this.notifyLocalChange('attempt', attempt.attemptId.value);
     }
     await this.clearActiveAttempt(sessionId);
   }

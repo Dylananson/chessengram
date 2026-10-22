@@ -1,5 +1,5 @@
 {
-  "name": "@chessreps/web",
+  "name": "@chessengram/web",
   "private": true,
   "version": "0.0.0",
   "type": "module",
@@ -9,7 +9,9 @@
     "preview": "vite preview",
     "preview:lan": "vite preview --host 0.0.0.0",
     "test": "node --test --experimental-strip-types tests/*.node.test.ts",
-    "smoke": "node scripts/smoke.mjs"
+    "smoke": "node scripts/smoke.mjs",
+    "fetch:engine": "node scripts/fetch-engine.mjs",
+    "prebuild": "npm run --silent fetch:engine"
   },
   "devDependencies": {
     "fake-indexeddb": "^6.2.2",
@@ -19,8 +21,8 @@
     "vite": "^8.3.0"
   },
   "dependencies": {
-    "@chessreps/contracts": "*",
-    "@chessreps/scheduler": "*",
+    "@chessengram/contracts": "*",
+    "@chessengram/scheduler": "*",
     "chessground": "^9.2.1",
     "chessops": "^0.15.1",
     "snabbdom": "^3.6.4"

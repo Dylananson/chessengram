@@ -17,7 +17,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 const require = createRequire(import.meta.url);
-const root = require.resolve('@chessreps/web/package.json').replace('/package.json', '');
+const root = require.resolve('@chessengram/web/package.json').replace('/package.json', '');
 
 const PORT = 5317;
 const BASE = `http://localhost:${PORT}`;
@@ -27,8 +27,39 @@ const findChromium = () =>
   process.env.CHROMIUM_PATH ||
   ['/usr/bin/chromium', '/usr/bin/chromium-browser', '/usr/bin/google-chrome'].find((p) => p);
 
+// The suite below asserts the *unconfigured* app (ONL-003/ONL-009b: Sync reports
+// `local-only`, Enable is disabled, zero network). `vite preview` serves whatever
+// is in `dist/`, and a configured build is a legitimate artifact — `infra/deploy.sh`
+// and `infra/write-env.sh` deliberately bake `VITE_SYNC_*` (from `.env.local` /
+// `.env.production.local`) into one. So build the bundle here with those vars
+// explicitly emptied: process env wins over `.env*` files in Vite, which makes
+// this suite independent of the machine's sync configuration.
+const SYNC_ENV_KEYS = [
+  'VITE_SYNC_API_BASE',
+  'VITE_SYNC_PROXY_TARGET',
+  'VITE_SYNC_AUTH_AUTHORITY',
+  'VITE_SYNC_AUTH_CLIENT_ID',
+  'VITE_SYNC_AUTH_REDIRECT_URI',
+];
+
+async function buildUnconfiguredBundle() {
+  const env = { ...process.env };
+  for (const key of SYNC_ENV_KEYS) env[key] = '';
+  await new Promise((resolve, reject) => {
+    const child = spawn('npm', ['run', 'build', '--workspace', '@chessengram/web'], {
+      cwd: root,
+      env,
+      stdio: 'ignore',
+    });
+    child.on('error', reject);
+    child.on('close', (code) =>
+      code === 0 ? resolve() : reject(new Error(`unconfigured build failed (exit ${code})`)),
+    );
+  });
+}
+
 function startPreview() {
-  return spawn('npm', ['run', 'preview', '--workspace', '@chessreps/web', '--', '--port', String(PORT)], {
+  return spawn('npm', ['run', 'preview', '--workspace', '@chessengram/web', '--', '--port', String(PORT)], {
     cwd: root,
     stdio: 'ignore',
   });
@@ -63,6 +94,7 @@ async function hash(page, id) {
 let browser;
 let preview;
 try {
+  await buildUnconfiguredBundle();
   preview = startPreview();
   await waitForServer(BASE);
 
@@ -70,7 +102,7 @@ try {
   if (!executablePath) throw new Error('no chromium binary found; set CHROMIUM_PATH');
   browser = await puppeteer.launch({
     executablePath,
-    userDataDir: mkdtempSync(join(tmpdir(), 'chessreps-browser-')),
+    userDataDir: mkdtempSync(join(tmpdir(), 'chessengram-browser-')),
     headless: true,
     args: ['--no-sandbox', '--disable-gpu'],
   });
@@ -92,6 +124,12 @@ try {
 
   check('no page errors on boot', pageErrors.length === 0, pageErrors.join(' | '));
 
+  // Boot is asynchronous (IndexedDB open, content seed, session start) and
+  // `networkidle0` does not imply it finished: the shell renders before the nav
+  // module runs. Wait for the shell to actually populate before asserting on it,
+  // otherwise the early checks race the boot and fail intermittently.
+  await page.waitForSelector('#nav .nav-item', { timeout: 15000 });
+
   const headerStyle = await page.$eval('.app-header', (el) => {
     const style = getComputedStyle(el);
     const rect = el.getBoundingClientRect();
@@ -111,8 +149,8 @@ try {
     els.map((el) => el.getAttribute('data-nav')),
   );
   check(
-    'nav has all eight screens',
-    JSON.stringify(navIds) === JSON.stringify(['dashboard', 'woodpecker', 'train', 'puzzles', 'collections', 'settings', 'history', 'stats']),
+    'nav has all nine screens (analysis added in AN-002)',
+    JSON.stringify(navIds) === JSON.stringify(['dashboard', 'woodpecker', 'train', 'puzzles', 'collections', 'settings', 'history', 'stats', 'analysis']),
     `got [${navIds}]`,
   );
   check('normal training tab is labeled Spaced Repetition', await page.$eval('[data-nav="train"]', (el) => el.textContent) === 'Spaced Repetition');
@@ -196,12 +234,87 @@ try {
     const r = right.getBoundingClientRect();
     return { boardTop: b.top, boardBottom: b.bottom, leftTop: l.top, leftBottom: l.bottom, rightTop: r.top, boardWidth: b.width, leftWidth: l.width, rightWidth: r.width };
   });
+  // UX-010: on a phone the status/feedback panel leads and the move list is
+  // below it; on desktop the move list stays at the top of the column.
+  const mobileOrder = await page.evaluate(() => {
+    const right = document.querySelector('.controls-right');
+    if (!right) return null;
+    const top = (selector) => right.querySelector(selector)?.getBoundingClientRect().top ?? null;
+    return { status: top('.status-panel'), moves: top('.move-list') };
+  });
+  check(
+    'phone Train puts feedback before the move list (UX-010)',
+    Boolean(mobileOrder && mobileOrder.status !== null && mobileOrder.moves !== null && mobileOrder.status < mobileOrder.moves),
+    JSON.stringify(mobileOrder),
+  );
+
   check(
     'mobile Train stacks board/actions, solve panel, then details',
     Boolean(mobileTrainLayout && mobileTrainLayout.boardBottom <= mobileTrainLayout.rightTop && mobileTrainLayout.rightTop < mobileTrainLayout.leftTop && Math.abs(mobileTrainLayout.boardWidth - mobileTrainLayout.leftWidth) < 2 && Math.abs(mobileTrainLayout.boardWidth - mobileTrainLayout.rightWidth) < 2),
     JSON.stringify(mobileTrainLayout),
   );
+
+  // --- UX-006: the phone navigation is a drawer, not a sideways strip --------
+  const drawer = await page.evaluate(() => {
+    const toggle = document.getElementById('nav-toggle');
+    const nav = document.getElementById('nav');
+    if (!toggle || !nav) return null;
+    const header = document.querySelector('.app-header');
+    const visible = getComputedStyle(toggle).display !== 'none';
+    const scrollsSideways = nav.scrollWidth > nav.clientWidth + 1 && getComputedStyle(nav).display !== 'none';
+    const firstChild = header ? header.firstElementChild === toggle : false;
+    const text = (toggle.textContent ?? '').trim();
+    const label = toggle.getAttribute('aria-label') ?? '';
+    toggle.click();
+    const opened = {
+      expanded: toggle.getAttribute('aria-expanded'),
+      open: nav.classList.contains('nav-open'),
+      display: getComputedStyle(nav).display,
+    };
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    return { visible, scrollsSideways, firstChild, text, label, opened, closed: toggle.getAttribute('aria-expanded') };
+  });
+  check(
+    'phone nav is an icon-only drawer at the top left that opens, names the screen and closes on Escape',
+    Boolean(
+      drawer &&
+        drawer.visible === true &&
+        drawer.firstChild === true &&
+        /^[^A-Za-z]*$/.test(drawer.text) &&
+        /Spaced Repetition/.test(drawer.label) &&
+        drawer.opened.expanded === 'true' &&
+        drawer.opened.open === true &&
+        drawer.opened.display === 'flex' &&
+        drawer.closed === 'false' &&
+        drawer.scrollsSideways === false,
+    ),
+    JSON.stringify(drawer),
+  );
+
+  // The signed-in status chip is gone: the shell only ever offers sign-in.
+  check(
+    'the header carries no signed-in status chip',
+    (await page.$('#auth-status')) === null,
+  );
+
+  // --- UX-007: no sign-in entry point without sync configuration ------------
+  check(
+    'unconfigured build renders no sign-in entry point (zero-network promise)',
+    (await page.$('#auth-sign-in')) === null && (await page.$('#auth-status')) === null,
+  );
+
   await page.setViewport({ width: 1280, height: 900 });
+  const desktopOrder = await page.evaluate(() => {
+    const right = document.querySelector('.controls-right');
+    if (!right) return null;
+    const top = (selector) => right.querySelector(selector)?.getBoundingClientRect().top ?? null;
+    return { status: top('.status-panel'), moves: top('.move-list') };
+  });
+  check(
+    'desktop Train keeps the move list at the top of the review column',
+    Boolean(desktopOrder && desktopOrder.moves !== null && desktopOrder.status !== null && desktopOrder.moves < desktopOrder.status),
+    JSON.stringify(desktopOrder),
+  );
 
   const statusText = await page.$eval('#status', (el) => el.textContent).catch(() => '');
   check('an attempt started', statusText.length > 0 && !statusText.includes('Loading'), statusText.trim());
@@ -459,7 +572,7 @@ try {
   check('created puzzle survives reload', survived, createdId);
 
   // --- Puzzles screen: JSONL import -------------------------------------------
-  const dir = mkdtempSync(join(tmpdir(), 'chessreps-smoke-'));
+  const dir = mkdtempSync(join(tmpdir(), 'chessengram-smoke-'));
   const importPath = join(dir, 'smoke-import.jsonl');
   writeFileSync(
     importPath,
@@ -532,6 +645,35 @@ try {
   await hash(page, 'settings');
   check('settings shows the data safety panel', await page.$('#settings-export').then(Boolean));
 
+  // --- ONL-003: Settings → Sync is visible and honestly unconfigured ----------
+  const syncPanelState = await page.evaluate(() => {
+    const panel = document.querySelector('.sync-panel');
+    const mode = document.querySelector('#sync-mode');
+    const enable = document.querySelector('#sync-enable');
+    return {
+      panel: panel !== null,
+      mode: mode?.getAttribute('data-sync-mode') ?? null,
+      text: panel?.textContent ?? '',
+      enableDisabled: enable instanceof HTMLButtonElement ? enable.disabled : null,
+    };
+  });
+  check('Settings shows the Sync panel', syncPanelState.panel, String(syncPanelState.mode));
+  check(
+    'Sync reports local-only without VITE_SYNC_* config',
+    syncPanelState.mode === 'local-only',
+    String(syncPanelState.mode),
+  );
+  check(
+    'Sync says it is not configured and keeps training on the device',
+    /not configured/i.test(syncPanelState.text) && /stays on this device/i.test(syncPanelState.text),
+  );
+  check(
+    'Sync enable is visibly disabled while unconfigured',
+    syncPanelState.enableDisabled === true,
+    String(syncPanelState.enableDisabled),
+  );
+  check('no page errors after the Sync panel renders', pageErrors.length === 0, pageErrors.join(' | '));
+
   // --- APP-001: installable + offline-ready PWA --------------------------------
   const manifest = await page.evaluate(async () => {
     const response = await fetch('/manifest.webmanifest');
@@ -590,7 +732,7 @@ try {
     originalFields: {},
   };
   const exported = {
-    format: 'chessreps-export',
+    format: 'chessengram-export',
     formatVersion: '1.0.0',
     exportedAt: Date.now(),
     backendKind: 'indexeddb',
@@ -650,13 +792,195 @@ try {
   await page.reload({ waitUntil: 'networkidle0', timeout: 20000 });
   await page.waitForSelector('#board', { timeout: 10000 });
   const controlled = await page.evaluate(() => Boolean(navigator.serviceWorker.controller));
+  // --- AN-002: the analysis screen runs the engine continuously ---------------
+  // Proves the whole feature in the real app: navigate to #/analysis, and the
+  // eval bar/score appear without pressing anything, then a board move re-runs
+  // the engine on the new position.
+  await hash(page, 'analysis');
+  await page.waitForSelector('#analysis-eval-bar', { timeout: 15000 });
+  const analysisFirst = await page
+    .waitForFunction(
+      () => {
+        const score = document.querySelector('#analysis-score')?.textContent ?? '';
+        const depth = document.querySelector('#analysis-depth')?.textContent ?? '';
+        return /[0-9]/.test(score) && /d\d+/.test(depth) ? { score, depth } : false;
+      },
+      { timeout: 40000 },
+    )
+    .then((handle) => handle.jsonValue())
+    .catch(() => null);
+  check(
+    'analysis screen auto-analyses: an eval bar, a score and a depth appear with no button press',
+    Boolean(analysisFirst && /[0-9]/.test(analysisFirst.score) && /d\d+/.test(analysisFirst.depth)),
+    JSON.stringify(analysisFirst),
+  );
+  const analysisLines = await page.$$eval('#analysis-lines .analysis-line', (rows) =>
+    rows.map((row) => row.textContent ?? ''),
+  );
+  check(
+    'analysis screen shows engine lines in SAN',
+    analysisLines.length > 0 && analysisLines.some((line) => /[a-h][1-8]|O-O|[KQRBN]/.test(line)),
+    JSON.stringify(analysisLines.slice(0, 2)),
+  );
+
+  // chessground adds `cg-wrap` to the element it was given, so the board is
+  // `#analysis.cg-wrap`, not a child of it.
+  check('analysis screen renders a free board', Boolean(await page.$('#analysis.cg-wrap')));
+
+  // Continuous means the same position keeps climbing with no further input.
+  const startDepth = Number(/d(\d+)/.exec(analysisFirst?.depth ?? '')?.[1] ?? 0);
+  const climbed = await page
+    .waitForFunction(
+      (from) => {
+        const match = /d(\d+)/.exec(document.querySelector('#analysis-depth')?.textContent ?? '');
+        return match ? Number(match[1]) > from : false;
+      },
+      { timeout: 30000 },
+      startDepth,
+    )
+    .then(() => true)
+    .catch(() => false);
+  check('analysis keeps deepening on its own (continuous search)', climbed, `from d${startDepth}`);
+
+  // The score feeds the bar (not a static 50%).
+  const barFill = await page.$eval('#analysis-eval-bar', (el) => el.getAttribute('style') ?? '');
+  check('analysis eval bar reflects the score', /--analysis-fill:\s*\d/.test(barFill), barFill);
+
+  // A real (trusted) drag on the free board: e2-e4 must extend the line and
+  // restart the search on the new position — the interaction the owner asked for.
+  await page.$eval('#analysis', (el) => el.scrollIntoView({ block: 'center' }));
+  const rect = await page.$eval('#analysis cg-board', (el) => {
+    const r = el.getBoundingClientRect();
+    return { left: r.left, top: r.top, width: r.width, height: r.height };
+  });
+  const squarePoint = (file, rank) => ({
+    x: rect.left + ((file + 0.5) * rect.width) / 8,
+    y: rect.top + ((7 - rank + 0.5) * rect.height) / 8,
+  });
+  const e2 = squarePoint(4, 1);
+  const e4 = squarePoint(4, 3);
+  await page.mouse.move(e2.x, e2.y);
+  await page.mouse.down();
+  await page.mouse.move(e4.x, e4.y, { steps: 6 });
+  await page.mouse.up();
+  const movedLine = await page
+    .waitForFunction(
+      () => /(^|\s)1\.\s*e4(\s|$)/.test(document.querySelector('#analysis-moves')?.textContent ?? ''),
+      { timeout: 10000 },
+    )
+    .then(() => true)
+    .catch(() => false);
+  check('analysis board accepts a free move and records the line', movedLine);
+  const reanalysed = await page
+    .waitForFunction(
+      () => /d(\d+)/.test(document.querySelector('#analysis-depth')?.textContent ?? ''),
+      { timeout: 30000 },
+    )
+    .then(() => true)
+    .catch(() => false);
+  check('the new position is analysed automatically', reanalysed);
+
+  // Sign convention (owner report): the displayed score is from White's side,
+  // so a Black-to-move position where Black is winning must read negative and
+  // fill the bar for Black, and vice versa. This is the exact inconsistency
+  // that was reported.
+  const openCustom = async (fen) => {
+    await page.evaluate((f) => {
+      window.location.hash = `#/analysis?fen=${encodeURIComponent(f)}`;
+    }, fen);
+    await page.waitForSelector('#analysis-eval-bar', { timeout: 15000 });
+  };
+  const readSigned = async (kind) =>
+    page
+      .waitForFunction(
+        (want) => {
+          const score = document.querySelector('#analysis-score')?.textContent ?? '';
+          const depth = document.querySelector('#analysis-depth')?.textContent ?? '';
+          const looksRight =
+            want === 'negative'
+              ? /^[−-]/.test(score)
+              : /^[+#]/.test(score);
+          return looksRight && /d\d+/.test(depth) ? score : false;
+        },
+        { timeout: 40000 },
+        kind,
+      )
+      .then((handle) => handle.jsonValue())
+      .catch(() => '');
+
+  await openCustom('rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNB1KBNR b KQkq - 0 1'); // Black to move, up a queen
+  const blackScore = await readSigned('negative');
+  const blackFill = Number(/--analysis-fill:([\d.]+)%/.exec(await page.$eval('#analysis-eval-bar', (el) => el.getAttribute('style') ?? ''))?.[1] ?? 50);
+  check(
+    'a Black-winning position shows a negative (White-POV) score and a Black bar',
+    blackScore.startsWith('−') || blackScore.startsWith('-'),
+    `${blackScore} / ${blackFill}%`,
+  );
+  check('the bar agrees with the negative score', blackFill < 40, `${blackFill}% white`);
+
+  await openCustom('rnb1kbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1'); // White to move, up a queen
+  const whiteScore = await readSigned('positive');
+  const whiteFill = Number(/--analysis-fill:([\d.]+)%/.exec(await page.$eval('#analysis-eval-bar', (el) => el.getAttribute('style') ?? ''))?.[1] ?? 50);
+  check(
+    'a White-winning position shows a positive/mate score and a White bar',
+    whiteScore.startsWith('+') || whiteScore.startsWith('#'),
+    `${whiteScore} / ${whiteFill}%`,
+  );
+  check('the bar agrees with the positive score', whiteFill > 60, `${whiteFill}% white`);
+
+  // Put the app back on the trainer: the offline block below reloads and expects
+  // `#board`, and the hash (not the router) is what survives a reload.
+  await hash(page, 'train/session');
+  await page.waitForSelector('#board', { timeout: 10000 });
+
+  // --- AN-001b: the vendored engine really runs in this app's browser ---------
+  // Proves the risky part: the lite-single wasm loads from `/engine/` with no
+  // COOP/COEP headers and answers UCI, in the same serving path the phone uses.
+  const engineRun = await page.evaluate(async () => {
+    const lines = [];
+    const worker = new Worker('/engine/stockfish-19-lite-single.js');
+    worker.addEventListener('message', (event) => {
+      if (typeof event.data === 'string') lines.push(event.data);
+    });
+    const waitFor = (predicate, timeoutMs) =>
+      new Promise((resolve) => {
+        const started = Date.now();
+        const timer = setInterval(() => {
+          if (lines.some(predicate) || Date.now() - started > timeoutMs) {
+            clearInterval(timer);
+            resolve(lines.some(predicate));
+          }
+        }, 25);
+      });
+    try {
+      worker.postMessage('uci');
+      const identified = await waitFor((line) => line.startsWith('uciok'), 30000);
+      const name = lines.find((line) => line.startsWith('id name')) ?? '';
+      if (!identified) return { identified, name, best: '', error: 'no uciok' };
+      worker.postMessage('position fen rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1');
+      worker.postMessage('go nodes 20000');
+      await waitFor((line) => line.startsWith('bestmove'), 30000);
+      const best = lines.find((line) => line.startsWith('bestmove')) ?? '';
+      return { identified, name, best };
+    } catch (error) {
+      return { identified: false, name: '', best: '', error: String(error) };
+    } finally {
+      worker.terminate();
+    }
+  });
+  check(
+    'Stockfish (lite-single wasm) loads from /engine and returns a best move',
+    engineRun.identified === true && /^bestmove [a-h][1-8][a-h][1-8]/.test(engineRun.best),
+    JSON.stringify(engineRun),
+  );
+
   // REL-001: versioned-cache discipline — activate must leave exactly one
-  // chessreps-shell-* cache so a version bump can never strand a stale shell.
+  // chessengram-shell-* cache so a version bump can never strand a stale shell.
   const shellCaches = await page.evaluate(async () =>
-    (await caches.keys()).filter((k) => k.startsWith('chessreps-shell-')));
+    (await caches.keys()).filter((k) => k.startsWith('chessengram-shell-')));
   check(
     'single versioned shell cache (no stale shell)',
-    shellCaches.length === 1 && /^chessreps-shell-v\d+$/.test(shellCaches[0] ?? ''),
+    shellCaches.length === 1 && /^chessengram-shell-v\d+$/.test(shellCaches[0] ?? ''),
     shellCaches.join(', ') || 'none',
   );
   const shellCacheName = shellCaches[0];
@@ -704,9 +1028,9 @@ try {
     try {
       // Bump whatever version is currently served, so this test does not need
       // updating every time the cache version changes.
-      const match = /chessreps-shell-v(\d+)/.exec(originalSw);
+      const match = /chessengram-shell-v(\d+)/.exec(originalSw);
       if (!match) throw new Error('CACHE_VERSION not found in dist/sw.js');
-      const nextVersion = `chessreps-shell-v${Number(match[1]) + 1}`;
+      const nextVersion = `chessengram-shell-v${Number(match[1]) + 1}`;
       writeFileSync(swPath, `${originalSw.replace(match[0], nextVersion)}\n// REL-001 smoke marker\n`);
       writeFileSync(indexPath, originalIndex.replace('</body>', '<!-- rel-001-new-bundle -->\n</body>'));
       const handover = await page.evaluate(async () => {
@@ -723,7 +1047,7 @@ try {
       await page.reload({ waitUntil: 'networkidle0', timeout: 20000 });
       await page.waitForSelector('#board', { timeout: 10000 });
       const afterKeys = await page.evaluate(async () =>
-        (await caches.keys()).filter((k) => k.startsWith('chessreps-shell-')));
+        (await caches.keys()).filter((k) => k.startsWith('chessengram-shell-')));
       check(
         'the version bump replaced the old shell cache (no stale shell)',
         afterKeys.length === 1 && afterKeys[0] === nextVersion,

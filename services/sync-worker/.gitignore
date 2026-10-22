@@ -1,0 +1,6 @@
+# Local Wrangler state and vars — never commit these.
+.dev.vars
+.wrangler/
+
+dist/
+node_modules/

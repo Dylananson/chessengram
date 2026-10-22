@@ -1,0 +1,58 @@
+# Copy to terraform.tfvars and fill in. NEVER commit terraform.tfvars.
+
+cloudflare_account_id = "00000000000000000000000000000000"
+
+# Your account's workers.dev subdomain (Workers & Pages -> "Your subdomain"),
+# e.g. "myaccount" for https://myaccount.workers.dev. Needed whenever
+# api_custom_domain is empty, because a Worker's dev URL is
+# <worker>.<subdomain>.workers.dev. `bash infra/deploy.sh` fills this in
+# automatically from CLOUDFLARE_API_TOKEN, so you normally leave it unset.
+# workers_dev_subdomain = "myaccount"
+
+
+# Optional. Leave unset to derive the app URL from the Cloudflare Pages project
+# this config creates (Terraform reads the project's subdomain in the same run,
+# so you do not need to know the URL in advance). Set it only if the app is
+# hosted elsewhere or behind a custom domain.
+# app_url = "https://chess.example.com"
+
+# Optional. The Cognito hosted-domain prefix is derived from the Cloudflare
+# account id (<project>-<env>-<6 hex>), so leave this unset. Set it only if that
+# name is already taken globally. It also sets the passkey relying party id —
+# changing it later invalidates every registered passkey.
+# cognito_domain_prefix = "chessreps-prod-a1b2c3"
+
+# Optional. Sign-in is Cognito-managed by default: passkeys + email one-time
+# codes, configured entirely by this Terraform (no third-party client needed).
+# To ALSO offer "Sign in with Google", create a Web-application OAuth client in
+# Google Cloud (Google cannot be provisioned by Terraform for this purpose) with
+# redirect URI:
+#   https://<cognito_domain>.auth.<aws_region>.amazoncognito.com/oauth2/idpresponse
+# (read the exact domain from `terraform output cognito_domain`), then set these:
+# google_client_id     = "CHANGE_ME.apps.googleusercontent.com"
+# google_client_secret = "CHANGE_ME"
+
+# Optional: custom hostnames + DNS (requires the zone id and manage_dns = true).
+# cloudflare_zone_id   = "00000000000000000000000000000000"
+# api_custom_domain    = "api.example.com"
+# app_custom_domain    = "chess.example.com"
+# manage_dns           = true
+
+# Optional: R2 mirror for the public CC0 packs.
+# enable_content_bucket  = true
+# content_custom_domain  = "packs.example.com"
+# content_base_url       = "https://packs.example.com"
+
+# Password policy (cosmetic here: the app never uses passwords — Cognito just
+# requires the PASSWORD factor to exist, and the only password ever set is the
+# random one discarded at user creation).
+# password_min_length      = 12
+# password_require_symbols = false
+
+# Keep these unless you have a reason to change them.
+# aws_region             = "ap-southeast-2"   # Sydney
+# d1_location_hint       = "oc"                # Oceania; R2 uses "apac"
+# max_batch              = 200
+# max_push_bytes         = 2097152
+# session_ttl_seconds    = 2592000
+# worker_compatibility_date = "2026-10-01"

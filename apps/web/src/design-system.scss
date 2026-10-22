@@ -1,4 +1,4 @@
-// ChessReps design system — clean-room SCSS, no runtime UI framework.
+// ChessEngram design system — clean-room SCSS, no runtime UI framework.
 // Imported after the legacy screen styles so shared primitives get one
 // consistent visual treatment while their selectors and smoke hooks stay put.
 
@@ -665,6 +665,28 @@ label, .field label { color: var(--muted); font-weight: 650; }
 .empty-state,
 .empty { color: var(--muted); }
 
+/* ONL-003: Settings → Sync. Opt-in, local-first, muted until enabled. */
+.sync-panel {
+  .sync-actions {
+    margin-top: 14px;
+  }
+
+  .sync-not-configured,
+  .sync-warning {
+    padding: 10px 12px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-control);
+    background: var(--surface-soft);
+    font-size: 13px;
+  }
+
+  .sync-message {
+    padding: 10px 12px;
+    border-radius: var(--radius-control);
+    font-size: 13px;
+  }
+}
+
 @media (max-width: 760px) {
   .container { width: min(100% - 20px, 1480px); }
   .app-header { gap: 8px; padding-right: max(8px, env(safe-area-inset-right)); padding-left: max(8px, env(safe-area-inset-left)); }
@@ -673,6 +695,15 @@ label, .field label { color: var(--muted); font-weight: 650; }
   .screen { margin-top: 12px; }
   .dashboard-page, .woodpecker-page, .spaced-page, .stats-page, .collections-screen, .history-page, .settings-page, .puzzles-page { padding-top: 10px; }
   .controls-right { padding: 15px; }
+  /* UX-010: on a phone the move list is reference material, not the first thing
+     to read. Board + status/feedback + the primary action own the first screen
+     and the list follows below the fold; the desktop column keeps its order
+     (the flex `auto` margin keeps the review nav at the bottom there). */
+  .controls-right > .status-panel { order: 1; }
+  .controls-right > .review-nav { order: 2; margin-top: 12px; }
+  .controls-right > .analysis { order: 3; }
+  .controls-right > .move-list { order: 4; margin-top: 14px; }
+  .controls-right > .move-list > h2 { font-size: 13px; color: var(--muted); }
   .button { min-height: 44px; }
   .dashboard-columns { grid-template-columns: 1fr; gap: 24px; }
   .dashboard-column > h2 { min-height: 0; }
@@ -680,4 +711,118 @@ label, .field label { color: var(--muted); font-weight: 650; }
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; transition-duration: 0.01ms !important; }
+}
+
+/* --- AN-002: analysis screen (eval bar, live lines, free board) ------------- */
+
+/* Board and panel are siblings: chessground owns the board's DOM, so it must
+   stay outside the panel subtree the view re-patches. */
+.analysis-screen {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(280px, 380px);
+  gap: 16px;
+  align-items: start;
+}
+/* chessground sizes itself from the wrap's box, and the trainer's `.board`
+   carries the square aspect ratio — repeat the essentials here (the analysis
+   host is a chessground wrap itself, so `.cg-wrap` is not a child). */
+.analysis-board {
+  width: 100%;
+  min-width: 0;
+  max-width: min(74vh, 700px);
+  aspect-ratio: 1 / 1;
+  border-radius: 6px;
+  overflow: hidden;
+  touch-action: manipulation;
+}
+.analysis-panel-screen {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+}
+.analysis-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.analysis-head h2 { margin: 0; font-size: 18px; }
+.analysis-controls { display: flex; gap: 8px; flex-wrap: wrap; }
+.analysis-body {
+  display: flex;
+  gap: 12px;
+  align-items: stretch;
+}
+/* The bar reads bottom-up (White at the bottom), like the sites. */
+.analysis-eval {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  min-width: 34px;
+}
+.analysis-eval-bar {
+  position: relative;
+  width: 18px;
+  height: min(52vh, 360px);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow: hidden;
+  background: #2b2b2b;
+}
+.analysis-eval-white {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: var(--analysis-fill, 50%);
+  background: #f5f5f5;
+  transition: height 160ms ease-out;
+}
+.analysis-eval-flip { bottom: auto; top: 0; }
+.analysis-score { margin: 0; font: 600 14px ui-monospace, SFMono-Regular, Menlo, monospace; }
+.analysis-panel { display: flex; flex-direction: column; gap: 10px; min-width: 0; flex: 1; }
+.analysis-lines {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.analysis-line {
+  display: flex;
+  gap: 10px;
+  align-items: baseline;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-soft);
+  font: 13px ui-monospace, SFMono-Regular, Menlo, monospace;
+  overflow-wrap: anywhere;
+}
+.analysis-line .analysis-score { flex: 0 0 auto; min-width: 52px; }
+.analysis-moves { font: 13px ui-monospace, SFMono-Regular, Menlo, monospace; overflow-wrap: anywhere; }
+.analysis-nav { display: flex; gap: 8px; }
+
+@media (max-width: 760px) {
+  /* Phone: one column, board first — analysis must not push the board down. */
+  .analysis-screen { grid-template-columns: 1fr; gap: 12px; }
+  /* Eval bar first, directly under the board controls (the lichess/chess.com
+     shape); the lines follow it. Full width, like the platforms. */
+  .analysis-body { flex-direction: column; }
+  .analysis-eval { flex-direction: row; align-items: center; justify-content: flex-start; width: 100%; }
+  .analysis-eval-bar { flex: 1 1 auto; width: auto; min-width: 0; height: 10px; }
+  .analysis-eval-white {
+    bottom: 0;
+    top: 0;
+    right: auto;
+    height: 100%;
+    width: var(--analysis-fill, 50%);
+    transition: width 160ms ease-out;
+  }
+  .analysis-eval-flip { left: auto; right: 0; }
+  .analysis-panel { flex: none; }
 }
