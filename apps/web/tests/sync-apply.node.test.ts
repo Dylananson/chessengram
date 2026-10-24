@@ -164,14 +164,14 @@ async function seal(
   type: SyncEntityType,
   recordId: string,
   payload: unknown,
-  overrides: { seq?: number; rev?: number; deviceId?: string } = {},
+  overrides: { seq?: number; rev?: number; deviceId?: string; updatedAt?: number } = {},
 ): Promise<SyncRecordEnvelope> {
   const envelope = await sealRecord({
     type,
     recordId,
     payload,
     deviceId: overrides.deviceId ?? DEVICE_ID,
-    now: CLOCK,
+    now: overrides.updatedAt ?? CLOCK,
     rev: overrides.rev ?? 1,
     sign: async () => 'fake-signature',
   });
@@ -700,4 +700,25 @@ test('ONL-017: a lower-rev same-millisecond collection rename is still a duplica
   assert.equal(secondRun.result.applied, 0);
   assert.equal(secondRun.result.duplicates, 1);
   assert.equal(writer.collections.get('col-1')?.name, 'Endgames');
+});
+
+test('collection receiver uses server envelope timestamp, not stale payload timestamp', async () => {
+  const writer = new MemoryWriter();
+  const stalePayloadTime = CLOCK - 50_000;
+  const oldWinner = await seal('collection', 'col-1', {
+    collectionId: 'col-1', name: 'Old name', puzzleIds: [],
+    updatedAt: stalePayloadTime, updatedBy: 'z-device',
+  }, { rev: 99, seq: 1, deviceId: 'z-device', updatedAt: CLOCK });
+  const first = await run([oldWinner], writer);
+  assert.equal(writer.collections.get('col-1')?.name, 'Old name');
+
+  // The server accepts this as newer by envelope.updatedAt, despite its
+  // independently-reset device rev being lower. Existing apply code compares
+  // the stale payload timestamp and incorrectly keeps Old name.
+  const serverWinner = await seal('collection', 'col-1', {
+    collectionId: 'col-1', name: 'New name', puzzleIds: [],
+    updatedAt: stalePayloadTime, updatedBy: 'a-device',
+  }, { rev: 1, seq: 2, deviceId: 'a-device', updatedAt: CLOCK + 10_000 });
+  await run([serverWinner], writer, first.result.cursor);
+  assert.equal(writer.collections.get('col-1')?.name, 'New name');
 });

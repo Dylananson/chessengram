@@ -792,6 +792,7 @@ test('a 401 pauses sync and keeps the queue intact', async () => {
     skipped: 0,
     duplicates: 0,
     cursor: 0,
+    paused: true,
   });
   assert.equal((await runtime.state()).mode, 'paused');
   assert.equal(storage.queue.size, 6, 'paused keeps every pointer');
@@ -1474,6 +1475,30 @@ test('Settings maps the runtime state into the panel and wires its actions', asy
   onClick!();
   await new Promise((resolve) => setTimeout(resolve, 0));
   assert.deepEqual(calls, ['syncNow']);
+});
+
+test('Settings does not report completion when syncNow pauses on an expired session', async () => {
+  const service = await makeService();
+  const adapter = { reloadAfterDataChange: async () => {} } as unknown as TrainingAdapter;
+  const calls: string[] = [];
+  const runtime = stubRuntime(calls);
+  runtime.state = async () => ({ mode: 'paused', pending: 3 });
+  runtime.syncNow = async () => {
+    calls.push('syncNow');
+    return { pushed: 0, accepted: 0, skipped: 0, paused: true };
+  };
+  let latest: VNode | undefined;
+  const ctrl = new SettingsCtrl(service, adapter, () => {
+    latest = settingsView(ctrl);
+  });
+  await ctrl.attachSync(runtime);
+  const syncNow = findById(settingsView(ctrl), 'sync-now')!;
+  const onClick = (syncNow.data?.on as { click?: () => void } | undefined)?.click;
+  onClick!();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  const rendered = collectText(latest);
+  assert.ok(!rendered.includes('Sync complete.'));
+  assert.ok(rendered.includes('Sync paused. Your sign-in may have expired; sign in again. Changes remain queued on this device.'));
 });
 
 test('Settings falls back to the inert local-only panel when no runtime is attached', async () => {

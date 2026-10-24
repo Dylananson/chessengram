@@ -126,6 +126,8 @@ function syncFailureText(): string {
   return 'Sync could not complete. Your changes stay queued on this device.';
 }
 
+class SyncPausedError extends Error {}
+
 /** Navigate to the hosted sign-in page. Injectable in tests (no browser needed). */
 function defaultSyncRedirect(url: string): void {
   const location = (globalThis as { location?: { assign?(target: string): void; href?: string } })
@@ -266,7 +268,7 @@ export class SettingsCtrl {
   private syncActions(): SyncPanelActions {
     return {
       enable: () => void this.enableSync(),
-      syncNow: () => void this.runSyncAction('Sync complete.', () => this.requireRuntime().syncNow()),
+      syncNow: () => void this.runSyncNow(),
       signOut: () =>
         void this.runSyncAction('Signed out. Your training data stayed on this device.', () =>
           this.requireRuntime().signOut(),
@@ -327,12 +329,35 @@ export class SettingsCtrl {
     try {
       await action();
       this.syncMessage = { tone: 'ok', text: successText };
-    } catch {
-      this.syncMessage = { tone: 'error', text: syncFailureText() };
+    } catch (error) {
+      this.syncMessage = {
+        tone: 'error',
+        text:
+          error instanceof SyncPausedError
+            ? 'Sync paused. Your sign-in may have expired; sign in again. Changes remain queued on this device.'
+            : syncFailureText(),
+      };
     } finally {
       this.syncBusy = false;
     }
     await this.refreshSync();
+  }
+
+  /** Report a completed transfer only when the runtime actually converged. */
+  private async runSyncNow(): Promise<void> {
+    const runtime = this.syncRuntime;
+    if (!runtime) return;
+    await this.runSyncAction('Sync complete.', async () => {
+      const result = await runtime.syncNow();
+      const state = await runtime.state();
+      if (result.paused === true || state.mode === 'paused') {
+        throw new SyncPausedError();
+      }
+      if ((result.skipped ?? 0) > 0) {
+        throw new Error('some records could not be applied');
+      }
+      return result;
+    });
   }
 
   /** Validate + clamp the raw prefs (via `parseCurated`), persist, confirm. */
