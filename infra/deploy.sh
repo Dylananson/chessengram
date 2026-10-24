@@ -20,8 +20,8 @@
 #   2. discover the account's workers.dev subdomain when the API has no custom
 #      domain, so api_url is a hostname that actually resolves
 #   3. terraform init + plan + apply
-#   4. build the PWA, generate its runtime /sync-config.json from the outputs,
-#      and upload dist/ to Cloudflare Pages (production branch)
+#   4. write the public sync settings to the ignored production env file,
+#      build the PWA, then upload dist/ to Pages (production branch)
 #   5. verify the app URL and the API /health over HTTP
 
 set -euo pipefail
@@ -200,7 +200,8 @@ if [ "$SKIP_INFRA" = false ]; then
   tf apply -input=false -auto-approve deploy.tfplan
   rm -f "$INFRA/deploy.tfplan"
 
-  # Keep the generated client config (public values only) with the build tree.
+  # Keep generated client settings out of source control. Vite embeds these
+  # public values in the client bundle during the production build.
   log "Writing apps/web/.env.production.local from terraform outputs"
   bash "$INFRA/write-env.sh" deploy
   # This deployment is served by Pages *with* the same-origin proxy
@@ -222,26 +223,6 @@ if [ "$SKIP_WEB" = false ]; then
 
   log "Building the PWA"
   (cd "$ROOT" && npm run --silent build)
-
-  # Runtime config wins per field over the VITE_* values baked at build time, so
-  # the API URL can be repointed by re-uploading dist/ (no rebuild needed).
-  # NB: -raw, not -json — the latter re-encodes the JSON string and would ship a
-  # quoted string literal instead of an object.
-  SYNC_CONFIG="$(tf output -raw sync_config_json 2>/dev/null || true)"
-  if [ -n "$SYNC_CONFIG" ] && [ "$SYNC_CONFIG" != "null" ]; then
-    # apiBase becomes same-origin `/api` for the same reason as above: Pages
-    # proxies it to the Worker, so the session cookie is first-party.
-    printf '%s' "$SYNC_CONFIG" | node -e '
-let s = "";
-process.stdin.on("data", (d) => (s += d)).on("end", () => {
-  const cfg = JSON.parse(s);
-  cfg.apiBase = "/api";
-  process.stdout.write(JSON.stringify(cfg));
-});' > "$WEB/dist/sync-config.json"
-    log "Wrote apps/web/dist/sync-config.json (apiBase: /api, proxied by Pages)"
-  else
-    warn "no sync_config_json output; the deployed app will stay local-only"
-  fi
 
   log "Uploading apps/web/dist to Cloudflare Pages ($PAGES_PROJECT)"
   # Run from the app directory: wrangler resolves `functions/` (the same-origin

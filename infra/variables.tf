@@ -20,6 +20,12 @@ variable "project_name" {
   default     = "chessreps"
 }
 
+variable "pages_project_name" {
+  description = "Cloudflare Pages project name. Kept separate because the deployed Pages project was renamed while Worker and D1 names remain unchanged."
+  type        = string
+  default     = "chessengram"
+}
+
 variable "environment" {
   description = "Deployment environment slug (prod, staging, ...)."
   type        = string

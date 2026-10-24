@@ -44,16 +44,20 @@ terraform -chdir=infra/state-bootstrap apply
 terraform -chdir=infra/state-bootstrap output -raw bucket_name
 ```
 
-Use the output bucket name in a local `infra/backend.tf` based on
-`backend.tf.example` (set the bucket, key, and AWS region). Then migrate any
-existing local main-stack state:
+Use the output bucket name to initialize the main stack with this backend:
 
 ```sh
-terraform -chdir=infra init -migrate-state
+terraform -chdir=infra init -input=false \
+  -backend-config="bucket=<bucket-name>" \
+  -backend-config="key=chessengram/prod/terraform.tfstate" \
+  -backend-config="region=ap-southeast-2" \
+  -backend-config="encrypt=true" \
+  -backend-config="use_lockfile=true"
 ```
 
-`infra/backend.tf` is git-ignored and must not contain credentials. Keep the
-bootstrap state/configuration: it manages the state bucket, which must not be
+For existing local state, back it up first and add `-migrate-state` to the init
+command after reviewing the migration. Keep the bootstrap state/configuration:
+it manages the state bucket, which must not be
 destroyed while the main state uses it. The bucket has versioning, encryption,
 public access blocking, and `prevent_destroy` enabled. S3 lockfiles require
 Terraform 1.10 or newer.
@@ -61,7 +65,7 @@ Terraform 1.10 or newer.
 ```sh
 cd infra
 cp terraform.tfvars.example terraform.tfvars     # fill in the values
-terraform init                                   # migrates local state if backend.tf is configured
+terraform init                                   # include the backend-config options above
 terraform plan
 terraform apply
 ```
@@ -226,8 +230,8 @@ safe to cache; only the manifest's short `max-age` changes.
 
 ## Security / operations notes
 
-- **State contains `google_client_secret`.** Use an encrypted remote backend
-  before pointing this at a real account (`backend.tf.example`); never commit
+- **State contains `google_client_secret`.** Use the encrypted, versioned S3
+  backend before pointing this at a real account; never commit
   `terraform.tfvars` or state (both are git-ignored).
 - **The Pages project proxies `/api/*` to the Worker.** `SYNC_API_ORIGIN`
   (a Pages env var set by this config, for both production and preview) points at

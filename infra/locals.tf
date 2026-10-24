@@ -1,6 +1,7 @@
 locals {
-  prefix = "${var.project_name}-${var.environment}"
-  worker = "${local.prefix}-sync"
+  prefix             = "${var.project_name}-${var.environment}"
+  worker             = "${local.prefix}-sync"
+  pages_project_name = var.pages_project_name
 
   tags = {
     Project     = var.project_name
@@ -18,11 +19,12 @@ locals {
   # Google federation is optional: passkeys + email OTP are managed by Cognito.
   google_enabled = var.google_client_id != "" && var.google_client_secret != ""
 
-  # The app's public URL. Derived from the Pages project unless overridden, so
-  # the operator never has to guess a hostname before applying: Terraform
-  # creates the project, reads its computed subdomain, and uses it for the
-  # Cognito callbacks, CORS and the generated client config in the same run.
-  app_url = var.app_url != "" ? var.app_url : "https://${cloudflare_pages_project.app.subdomain}"
+  # The stable Pages hostname is derived from the infra prefix. This deployment
+  # retains that hostname even though the Pages project itself was renamed to
+  # `chessengram`. Derive it without a resource reference so Pages build settings
+  # can consume the Cognito client id without a Terraform dependency cycle. Set
+  # app_url explicitly for a custom hostname.
+  app_url = var.app_url != "" ? var.app_url : "https://${local.prefix}.pages.dev"
 
   # Origins allowed to call the sync API (CORS + Cognito callbacks).
   allowed_origins = join(",", distinct(concat([local.app_url], var.extra_allowed_origins)))

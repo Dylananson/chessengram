@@ -80,7 +80,7 @@ resource "cloudflare_workers_custom_domain" "sync" {
 # The PWA itself (upload the built dist/ with `wrangler pages deploy`).
 resource "cloudflare_pages_project" "app" {
   account_id        = var.cloudflare_account_id
-  name              = local.prefix
+  name              = local.pages_project_name
   production_branch = "main"
 
   # The deployed app calls its own origin (`/api/…`) and the Pages Function in
@@ -93,6 +93,14 @@ resource "cloudflare_pages_project" "app" {
     production = {
       env_vars = {
         SYNC_API_ORIGIN = { type = "plain_text", value = local.api_url }
+        # These are public client settings consumed by the Pages build. Vite
+        # embeds VITE_* values in the browser bundle; never put credentials here.
+        VITE_SYNC_API_BASE       = { type = "plain_text", value = "/api" }
+        VITE_SYNC_AUTH_AUTHORITY = { type = "plain_text", value = "https://${aws_cognito_user_pool_domain.main.domain}.auth.${var.aws_region}.amazoncognito.com" }
+        VITE_SYNC_AUTH_CLIENT_ID = { type = "plain_text", value = aws_cognito_user_pool_client.app.id }
+        # Avoid local.app_url here: it depends on the Pages project resource,
+        # while this project's OAuth client also depends on that project URL.
+        VITE_SYNC_AUTH_REDIRECT_URI = { type = "plain_text", value = "${var.app_url != "" ? var.app_url : "https://${local.prefix}.pages.dev"}/" }
       }
     }
     preview = {
@@ -102,8 +110,9 @@ resource "cloudflare_pages_project" "app" {
     }
   }
 
-  # Keep the existing GitHub integration under Terraform management while
-  # disabling branch preview deployments. Production deployments stay enabled.
+  # Keep the existing GitHub integration under Terraform management. Omitting
+  # this block after importing the Pages project makes Terraform plan to clear
+  # its source configuration and disconnect automatic Git deployments.
   source = {
     type = "github"
     config = {

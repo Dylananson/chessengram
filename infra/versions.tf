@@ -1,5 +1,5 @@
 terraform {
-  required_version = ">= 1.6.0"
+  required_version = ">= 1.10.0"
 
   required_providers {
     cloudflare = {
@@ -12,8 +12,8 @@ terraform {
     }
   }
 
-  # State contains the Google OAuth client secret, so do not keep it only on
-  # one laptop. Copy backend.tf.example -> backend.tf for an encrypted remote
-  # backend (S3 or an S3-compatible store such as R2), or use Terraform Cloud.
-  # Left local by default so `terraform validate` works with no accounts.
+  # CI supplies the S3 backend coordinates at init time; keep bucket names and
+  # account-specific values out of the source. Local validation uses
+  # `terraform init -backend=false` and requires no cloud credentials.
+  backend "s3" {}
 }
