@@ -16,6 +16,7 @@
     "smoke": "npm run smoke --workspace @chessengram/web",
     "build:worker": "npm run build --workspace @chessengram/sync-worker",
     "deploy": "bash infra/deploy.sh",
+    "deploy:branch": "bash scripts/deploy-pages-branch.sh",
     "deploy:plan": "bash infra/deploy.sh --plan-only",
     "infra:fmt": "terraform -chdir=infra fmt -recursive",
     "infra:validate": "terraform -chdir=infra validate",

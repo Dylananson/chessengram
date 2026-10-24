@@ -158,6 +158,7 @@ Pages, then verify both URLs over HTTP:
 export CLOUDFLARE_API_TOKEN=...            # Workers Scripts:Edit, D1:Edit, Pages:Edit
 export AWS_PROFILE=...                     # or AWS_ACCESS_KEY_ID/SECRET
 npm run deploy                             # = bash infra/deploy.sh
+npm run deploy:branch -- feat/my-feature  # build + manually deploy a remote branch preview
 
 # variants
 bash infra/deploy.sh --plan-only           # terraform plan, stop before changes
@@ -165,6 +166,14 @@ bash infra/deploy.sh --yes                 # no prompt (CI)
 bash infra/deploy.sh --skip-infra --yes    # rebuild + re-upload the PWA only
 bash infra/deploy.sh --skip-web            # infra only
 ```
+
+`deploy:branch` fetches the named branch from `origin`, builds it in a temporary
+Git worktree, then uploads it to Pages using that branch name. It leaves the
+current checkout untouched and does not run Terraform. It reads the current
+Terraform outputs for the Pages project and runtime sync config, so initialize
+the configured backend and apply the infrastructure first. You can override
+the project name with a second argument or `PAGES_PROJECT`. Manual Wrangler
+uploads can still create a preview when automatic Git previews are disabled.
 
 What it does, and why in that order:
 
