@@ -39,6 +39,18 @@ class CustomPackTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "need 2"):
             custom_packs.select([], 500, 501, [], 2)
 
+    def test_site_catalog_has_variable_rating_band_sizes_and_theme_intersections(self):
+        specs = custom_packs.site_collection_specs()
+        rating = [spec for spec in specs if spec["kind"] == "rating"]
+        self.assertEqual([(spec["rating_min"], spec["rating_max"]) for spec in rating],
+                         [(start, start + 199) for start in range(500, 2500, 200)] + [(2500, 2500)])
+        self.assertEqual([spec["count"] for spec in rating], list(range(100, 1001, 100)) + [100])
+        themes = [spec for spec in specs if spec["kind"] == "theme"]
+        self.assertIn("fork", [spec["themes"][0] for spec in themes])
+        self.assertIn("pin", [spec["themes"][0] for spec in themes])
+        combinations = [spec for spec in specs if spec["kind"] == "combination"]
+        self.assertTrue(all(len(spec["themes"]) == 2 and spec["count"] >= 100 for spec in combinations))
+
 
 if __name__ == "__main__":
     unittest.main()

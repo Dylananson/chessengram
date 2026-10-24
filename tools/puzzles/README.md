@@ -170,3 +170,32 @@ filters, the archive SHA256/size, CC0 source URL, pack checksum and checks not
 performed. Generate into separate empty directories to compare reproducibility.
 The archive is not vendored, and these generated artifacts are not published or
 installed in the app automatically.
+
+### Build the shipped site catalog
+
+`--site-catalog` builds the concrete catalog used by the app in one pass over
+the complete archive. It produces variable-size rating collections (100 through
+1,000 puzzles in 200-point bands from 500–2499, plus a 100-puzzle 2500 set),
+eight 500-puzzle theme collections, and ten 100-puzzle two-theme collections.
+The generated app collection builder is separate: it works offline from the
+puzzles already installed in the user's browser and saves a personal collection;
+it does not download this archive.
+
+```sh
+mkdir -p /tmp/opencode/chessengram-site-catalog
+/tmp/opencode/chessreps-t02-venv/bin/python tools/puzzles/custom_packs.py \
+  /tmp/opencode/lichess-puzzles/lichess_db_puzzle.csv.zst \
+  /tmp/opencode/chessengram-site-catalog --site-catalog
+```
+
+The checked-in `data/puzzles/lichess-custom-v1/` directory contains the generated
+`pack.jsonl`, `collections.json` membership definitions, and `manifest.json`;
+identical serving copies live under `apps/web/public/data/puzzles/lichess-custom-v1/`
+because Vite serves static assets from `public/`.
+The manifest records the full archive checksum, CC0 provenance, selection rules,
+artifact checksums, and validation limits. The shipped catalog has 10,584 unique
+puzzle records and 29 collections. The runtime app uses exact source theme tags
+and ratings, but does not run engine-optimality or alternate-mate analysis.
+Regenerate into a new empty directory and compare artifact SHA256 values before
+replacing checked-in content; stable IDs are persisted collection IDs and must
+not be changed without an approved migration.

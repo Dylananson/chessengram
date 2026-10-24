@@ -22,7 +22,7 @@
  * invariant and the old -> new handover.
  */
 
-const CACHE_VERSION = 'chessengram-shell-v10';
+const CACHE_VERSION = 'chessengram-shell-v11';
 
 /** Everything required to boot and train offline. */
 const CORE = [
@@ -35,6 +35,8 @@ const CORE = [
   '/data/puzzles/lichess-900-1099-v1/pack.jsonl',
   '/data/puzzles/lichess-bands-v1/pack.jsonl',
   '/data/puzzles/lichess-bands-v1/bands.json',
+  '/data/puzzles/lichess-custom-v1/pack.jsonl',
+  '/data/puzzles/lichess-custom-v1/collections.json',
 ];
 
 /** Hashed entry assets referenced by the shell (Vite rewrites these per build). */

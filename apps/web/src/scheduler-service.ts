@@ -667,6 +667,19 @@ export class LocalTrainingService implements TrainingService {
     return this.copyCollection(record);
   }
 
+  /** Create and persist a collection with validated membership in one save. */
+  async createCollectionWithPuzzles(name: string, puzzleIds: string[]): Promise<CollectionRecord> {
+    const clean = name.trim();
+    if (!clean) throw new Error('Collection name must not be empty.');
+    const ids = [...new Set(puzzleIds)];
+    for (const id of ids) if (!this.puzzles.has(id)) throw new Error(`Puzzle not found: ${id}`);
+    const record: CollectionRecord = { id: `collection-${this.idFactory()}`, name: clean, puzzleIds: ids, createdAt: this.clock.now() };
+    this.collections.set(record.id, record);
+    try { await this.store.saveCollection(record); } catch (error) { this.collections.delete(record.id); throw error; }
+    this.notifyLocalChange('collection', record.id);
+    return this.copyCollection(record);
+  }
+
   async renameCollection(collectionId: string, name: string): Promise<CollectionRecord> {
     const record = this.collections.get(collectionId);
     if (!record) throw new Error(`Collection not found: ${collectionId}`);

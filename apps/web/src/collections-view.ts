@@ -50,6 +50,7 @@ import {
   type LocalTrainingService,
 } from './scheduler-service.ts';
 import { actionButton, emptyState, progressBar } from './ui/primitives.ts';
+import { selectCollectionPuzzles } from './collection-generator.ts';
 // Shared screen patch (see `./ui/patch.ts`).
 import { screenPatch as patch } from './ui/patch.ts';
 
@@ -143,6 +144,11 @@ export class CollectionsCtrl {
   message: CollectionMessage | null = null;
   renamingId: string | null = null;
   newName = '';
+  generatorName = '';
+  generatorSize = '100';
+  generatorRatingMin = '500';
+  generatorRatingMax = '2500';
+  generatorThemes = '';
   renameValue = '';
   addValues = new Map<string, string>();
   /** Collections whose puzzle lists are expanded; collapsed by default. */
@@ -187,6 +193,46 @@ export class CollectionsCtrl {
    */
   createInput(event: Event): void {
     this.newName = (event.target as HTMLInputElement | null)?.value ?? '';
+  }
+
+  generatorInput(field: 'name' | 'size' | 'ratingMin' | 'ratingMax' | 'themes', event: Event): void {
+    const value = (event.target as HTMLInputElement | null)?.value ?? '';
+    if (field === 'name') this.generatorName = value;
+    else if (field === 'size') this.generatorSize = value;
+    else if (field === 'ratingMin') this.generatorRatingMin = value;
+    else if (field === 'ratingMax') this.generatorRatingMax = value;
+    else this.generatorThemes = value;
+  }
+
+  async generateCollection(): Promise<void> {
+    try {
+      const size = Number(this.generatorSize);
+      const ratingMin = Number(this.generatorRatingMin);
+      const ratingMax = Number(this.generatorRatingMax);
+      if (!Number.isInteger(ratingMin) || !Number.isInteger(ratingMax) || ratingMin > ratingMax) {
+        throw new Error(t('collections.generator.invalidRange'));
+      }
+      const themes = this.generatorThemes.split(',').map((theme) => theme.trim()).filter(Boolean);
+      const puzzleIds = selectCollectionPuzzles(
+        this.service.listPuzzles(),
+        { size, ratingMin, ratingMax, themes },
+        Math.floor(Math.random() * 0x1_0000_0000),
+      );
+      const fallbackName = t('collections.generator.defaultName', {
+        ratingMin,
+        ratingMax,
+        themes: themes.length > 0 ? themes.join(', ') : t('collections.generator.allThemes'),
+      });
+      const created = await this.service.createCollectionWithPuzzles(this.generatorName.trim() || fallbackName, puzzleIds);
+      this.message = { kind: 'ok', text: t('collections.generator.created', { name: created.name, count: puzzleIds.length }) };
+      this.generatorName = '';
+    } catch (error) {
+      this.message = {
+        kind: 'error',
+        text: error instanceof Error ? error.message : String(error),
+      };
+    }
+    this.refresh();
   }
 
   renameInput(event: Event): void {
@@ -498,6 +544,44 @@ export function viewCollectionsList(ctrl: CollectionsCtrl): VNode {
       actionButton(t('collections.create'), 'primary', {
         id: 'collections-create',
         onClick: () => void ctrl.create(),
+      }),
+    ]),
+    h('section.panel.collections-generator', [
+      h('h2', t('collections.generator.title')),
+      h('p', t('collections.generator.help')),
+      h('div.collections-generator-fields', [
+        h('label', [t('collections.generator.name'), h('input', {
+          attrs: { id: 'collections-generator-name', placeholder: t('collections.create.placeholder') },
+          props: { value: ctrl.generatorName },
+          on: { input: (event) => ctrl.generatorInput('name', event) },
+        })]),
+        h('label', [t('collections.generator.size'), h('select', {
+          attrs: { id: 'collections-generator-size' },
+          props: { value: ctrl.generatorSize },
+          on: { change: (event) => ctrl.generatorInput('size', event) },
+        }, Array.from({ length: 10 }, (_, index) => {
+          const value = String((index + 1) * 100);
+          return h('option', { props: { value, selected: ctrl.generatorSize === value } }, value);
+        }))]),
+        h('label', [t('collections.generator.ratingMin'), h('input', {
+          attrs: { id: 'collections-generator-rating-min', type: 'number', min: '500', max: '2500', step: '100' },
+          props: { value: ctrl.generatorRatingMin },
+          on: { input: (event) => ctrl.generatorInput('ratingMin', event) },
+        })]),
+        h('label', [t('collections.generator.ratingMax'), h('input', {
+          attrs: { id: 'collections-generator-rating-max', type: 'number', min: '500', max: '2500', step: '100' },
+          props: { value: ctrl.generatorRatingMax },
+          on: { input: (event) => ctrl.generatorInput('ratingMax', event) },
+        })]),
+        h('label.collections-generator-themes', [t('collections.generator.themes'), h('input', {
+          attrs: { id: 'collections-generator-themes', placeholder: 'fork, pin' },
+          props: { value: ctrl.generatorThemes },
+          on: { input: (event) => ctrl.generatorInput('themes', event) },
+        })]),
+      ]),
+      actionButton(t('collections.generator.create'), 'primary', {
+        id: 'collections-generator-create',
+        onClick: () => void ctrl.generateCollection(),
       }),
     ]),
     h('p.collections-legend', [
