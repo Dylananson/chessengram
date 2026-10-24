@@ -29,6 +29,70 @@ reaches AWS; Cloudflare stores only ciphertext.
   npm run build --workspace @chessreps/sync-worker   # -> services/sync-worker/dist/worker.js
   ```
 
+## Terraform CI/CD (issue #3)
+
+Pull requests run only Terraform formatting and validation after initializing
+with `-backend=false`. This workflow has read-only repository permission and
+receives no AWS or Cloudflare credentials. Production operations run only from
+`main`, are serialized, and use the protected GitHub Environment named
+`production`. Configure that environment to require a reviewer, prevent
+self-review, and restrict deployment branches to `main`. Plan and apply each
+wait for the environment gate; the binary plan and readable rendering are
+retained as a 14-day Actions artifact, and apply consumes that saved plan rather
+than re-planning.
+
+### CI setup and access
+
+The S3 state bucket is bootstrapped separately using the `infra/state-bootstrap`
+configuration below. Create an AWS IAM OIDC provider for
+`https://token.actions.githubusercontent.com` with audience `sts.amazonaws.com`.
+The Terraform role trust policy must restrict `sub` to
+`repo:Dylananson/chessreps:environment:production` and `aud` to
+`sts.amazonaws.com`; do not trust arbitrary branches or pull requests. Scope
+permissions to the state bucket and key (including lockfile deletion and
+prefix-constrained `ListBucket`) and only the AWS Cognito operations this stack
+needs. Do not grant administrator access.
+
+Configure the protected `production` GitHub Environment with required reviewers,
+self-review prevention, and `main` as the permitted deployment branch. Add
+Environment variables `AWS_TERRAFORM_ROLE_ARN`, `AWS_REGION`, `TF_STATE_BUCKET`,
+`TF_STATE_REGION`, `CLOUDFLARE_ACCOUNT_ID`, and `WORKERS_DEV_SUBDOMAIN`. Add
+environment secrets `CLOUDFLARE_API_TOKEN`, `GOOGLE_CLIENT_ID`, and
+`GOOGLE_CLIENT_SECRET` (Google values may be empty if unused). Scope the
+Cloudflare token to the account and services managed here. No AWS access keys
+are stored in GitHub; AWS access is obtained through OIDC.
+
+The backend key is `chessengram/prod/terraform.tfstate`; it enables encryption
+and Terraform's S3 lockfile (`use_lockfile=true`). State and saved plan artifacts
+contain sensitive values, so limit access accordingly. Do not initialize or
+migrate the production backend until the bucket, policies, environment
+protections, and current state are reviewed. Back up existing local state before
+a deliberate `terraform init -migrate-state`; never use `-reconfigure` as a
+substitute for state migration.
+
+For each run, inspect the saved plan artifact and plan output before approving
+the apply job. The apply job uses the binary plan generated from that same
+commit. If it is missing, expired, or stale, fail and generate a new plan.
+Emergency manual operations must use the same trusted checkout, protected
+credentials, backend, and reviewed saved-plan sequence. Never use local state
+or `terraform destroy` as incident recovery.
+
+For recovery, pause deployments, identify the correct S3 object version, and
+download it to a restricted operator machine. Back up the current state and
+have a second operator review before using `terraform state push`. Do not
+overwrite a newer state version or manipulate the `.tflock` object while a
+Terraform operation may still be running. Keep the versioned state bucket,
+OIDC role/provider, and environment protections until infrastructure teardown
+is separately approved and the final state backup is verified.
+
+Credential-free local validation:
+
+```sh
+terraform -chdir=infra fmt -check -diff -recursive
+terraform -chdir=infra init -backend=false -input=false -lockfile=readonly
+terraform -chdir=infra validate -no-color
+```
+
 ## First run
 
 ### Remote state setup (recommended before applying the main stack)
@@ -44,16 +108,20 @@ terraform -chdir=infra/state-bootstrap apply
 terraform -chdir=infra/state-bootstrap output -raw bucket_name
 ```
 
-Use the output bucket name in a local `infra/backend.tf` based on
-`backend.tf.example` (set the bucket, key, and AWS region). Then migrate any
-existing local main-stack state:
+Use the output bucket name to initialize the main stack with this backend:
 
 ```sh
-terraform -chdir=infra init -migrate-state
+terraform -chdir=infra init -input=false \
+  -backend-config="bucket=<bucket-name>" \
+  -backend-config="key=chessengram/prod/terraform.tfstate" \
+  -backend-config="region=ap-southeast-2" \
+  -backend-config="encrypt=true" \
+  -backend-config="use_lockfile=true"
 ```
 
-`infra/backend.tf` is git-ignored and must not contain credentials. Keep the
-bootstrap state/configuration: it manages the state bucket, which must not be
+For existing local state, back it up first and add `-migrate-state` to the init
+command after reviewing the migration. Keep the bootstrap state/configuration:
+it manages the state bucket, which must not be
 destroyed while the main state uses it. The bucket has versioning, encryption,
 public access blocking, and `prevent_destroy` enabled. S3 lockfiles require
 Terraform 1.10 or newer.
@@ -61,7 +129,7 @@ Terraform 1.10 or newer.
 ```sh
 cd infra
 cp terraform.tfvars.example terraform.tfvars     # fill in the values
-terraform init                                   # migrates local state if backend.tf is configured
+terraform init                                   # include the backend-config options above
 terraform plan
 terraform apply
 ```
@@ -217,8 +285,8 @@ safe to cache; only the manifest's short `max-age` changes.
 
 ## Security / operations notes
 
-- **State contains `google_client_secret`.** Use an encrypted remote backend
-  before pointing this at a real account (`backend.tf.example`); never commit
+- **State contains `google_client_secret`.** Use the encrypted, versioned S3
+  backend before pointing this at a real account; never commit
   `terraform.tfvars` or state (both are git-ignored).
 - **The Pages project proxies `/api/*` to the Worker.** `SYNC_API_ORIGIN`
   (a Pages env var set by this config, for both production and preview) points at

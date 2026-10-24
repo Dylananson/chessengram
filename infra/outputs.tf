@@ -76,7 +76,7 @@ output "content_bucket" {
 }
 
 output "client_sync_config" {
-  description = "Drop this in apps/web/public/sync-config.json (or use the VITE_* equivalents)."
+  description = "Optional public runtime sync-config.json override; ordinary Pages builds use the VITE_* environment values instead."
   value = {
     apiBase         = local.api_url
     authAuthority   = "https://${aws_cognito_user_pool_domain.main.domain}.auth.${var.aws_region}.amazoncognito.com"
@@ -108,9 +108,11 @@ output "next_steps" {
     Manual equivalent:
     1. npm run build:worker                                (Worker bundle for Terraform)
     2. terraform -chdir=infra apply
-    3. npm run build, then write the runtime config and upload the PWA:
-       terraform -chdir=infra output -raw sync_config_json > apps/web/dist/sync-config.json
-       npx wrangler pages deploy apps/web/dist --project-name ${cloudflare_pages_project.app.name} --branch ${cloudflare_pages_project.app.production_branch}
+    3. write public sync settings, build the PWA (Vite embeds the settings),
+       then upload it from apps/web so the Pages Function is included:
+       bash infra/write-env.sh deploy
+       npm run build
+       cd apps/web && npx wrangler pages deploy dist --project-name ${cloudflare_pages_project.app.name} --branch ${cloudflare_pages_project.app.production_branch}
     4. Verify: curl $(terraform -chdir=infra output -raw api_url)/health -> {"ok":true,"configured":true,"auth":"cognito","storage":"d1"}
     5. Settings -> Sync -> Enable sync. Done — the key is provisioned server-side
        and there is nothing to copy or store (design #6 revised).
