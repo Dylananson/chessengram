@@ -20,6 +20,7 @@ build/
 **/*.tfstate
 **/*.tfstate.*
 **/*.tfplan
+infra/backend.tf
 
 # OS / editor
 .DS_Store
