@@ -77,11 +77,21 @@ resource "cloudflare_workers_custom_domain" "sync" {
   zone_id    = var.cloudflare_zone_id
 }
 
-# The PWA itself (upload the built dist/ with `wrangler pages deploy`).
+# The PWA itself. The Git-integrated Pages build must use apps/web as its root
+# so Cloudflare discovers apps/web/functions alongside the dist output.
 resource "cloudflare_pages_project" "app" {
   account_id        = var.cloudflare_account_id
   name              = local.pages_project_name
   production_branch = "main"
+
+  build_config = {
+    # The app is an npm workspace in the repository root. Install/build from
+    # there while keeping the Pages project root at apps/web for Functions
+    # discovery; Pages publishes dist/ relative to that root.
+    build_command   = "cd ../.. && npm ci && npm run build --workspace @chessengram/web"
+    destination_dir = "dist"
+    root_dir        = "/apps/web"
+  }
 
   # The deployed app calls its own origin (`/api/…`) and the Pages Function in
   # apps/web/functions/api/ forwards that to the Worker, so the BFF session

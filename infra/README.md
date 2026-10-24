@@ -248,6 +248,13 @@ safe to cache; only the manifest's short `max-age` changes.
 
 ## Security / operations notes
 
+- **Pages Git build root is `/apps/web`.** Terraform configures the Pages
+  project root to `apps/web` and publishes `dist/`. This is required for
+  Cloudflare Pages to discover `apps/web/functions/` (the `/api/*` proxy).
+  The build command returns to the repository root to install the npm
+  workspaces and build `@chessengram/web`. After changing this setting, verify
+  the deployment includes the `/api/*` Function and `/api/health` returns the
+  Worker JSON rather than the app HTML.
 - **State contains `google_client_secret`.** Use the encrypted, versioned S3
   backend before pointing this at a real account; never commit
   `terraform.tfvars` or state (both are git-ignored).
