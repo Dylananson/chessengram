@@ -95,7 +95,6 @@ const en: LocaleMessages = {
   'collections.start.woodpecker': 'Start Woodpecker',
   'collections.resume.woodpecker': 'Resume Woodpecker',
   'collections.resume.note': 'In progress: puzzle {id}',
-  'collections.woodpecker.tooMany': 'Woodpecker snapshots at most {max} puzzles; make a smaller collection first.',
   'collections.failedReview': 'Failed review ({count})',
   'collections.details.back': 'Back to collections',
   'collections.details.missing': 'This collection no longer exists.',

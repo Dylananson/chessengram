@@ -27,9 +27,6 @@ interface WoodpeckerMessage {
   text: string;
 }
 
-/** Internal set snapshot is capped by the service; gate the action to match. */
-const WOODPECKER_MAX_PUZZLES = 500;
-
 export class WoodpeckerCtrl {
   collections: ReturnType<LocalTrainingService['listCollections']>;
   message: WoodpeckerMessage | null = null;
@@ -120,7 +117,7 @@ function collectionCard(
   const elapsedAcrossCycles = completedCycles.reduce((sum, { cycle }) =>
     sum + Math.max(0, ((cycle.completedAt ?? cycle.startedAt) - cycle.startedAt) / 1000), 0);
   const size = set ? set.puzzleIds.length : collection.puzzleIds.length;
-  const startDisabled = size === 0 || size > WOODPECKER_MAX_PUZZLES;
+  const startDisabled = size === 0;
   return h(
     'section.panel.woodpecker-set',
     { attrs: { 'data-woodpecker-collection': collection.id } },
@@ -148,9 +145,6 @@ function collectionCard(
         disabled: startDisabled,
         onClick: () => void ctrl.startCycleFor(collection.id),
       }),
-      ...(size > WOODPECKER_MAX_PUZZLES
-        ? [h('p.progress-note', `Woodpecker snapshots at most ${WOODPECKER_MAX_PUZZLES} puzzles; make a smaller collection first.`)]
-        : []),
       failed.length
         ? actionButton(`Failed review (${failed.length})`, 'secondary', { onClick: () => ctrl.reviewFailures(collection.id) })
         : set

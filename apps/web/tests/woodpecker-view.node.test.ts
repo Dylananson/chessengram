@@ -53,3 +53,15 @@ test('Woodpecker page shows progress and resume for a started collection', async
   assert.ok(texts.includes('Resume cycle 1'));
   assert.ok(texts.some((line) => /fixed snapshot/.test(line)));
 });
+
+test('Woodpecker allows starting a collection larger than 500 puzzles', async () => {
+  const service = await makeService();
+  await service.seedContent(Array.from({ length: 501 }, (_, index) => makePuzzle({ id: `large-${index}` })));
+  const root = viewWoodpecker(new WoodpeckerCtrl(service));
+  const start = findVNodes(root, (node) => node.sel?.startsWith('button.button') === true)
+    .find((node) => node.text === 'Start Woodpecker');
+
+  assert.ok(start, 'start action is present');
+  assert.equal((start.data?.attrs as Record<string, unknown> | undefined)?.disabled, undefined);
+  assert.ok(!collectText(root).some((text) => text.includes('at most 500')));
+});

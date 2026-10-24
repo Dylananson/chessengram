@@ -54,9 +54,6 @@ import { selectCollectionPuzzles } from './collection-generator.ts';
 // Shared screen patch (see `./ui/patch.ts`).
 import { screenPatch as patch } from './ui/patch.ts';
 
-/** Internal Woodpecker snapshots are capped by the service; gate actions to match. */
-const WOODPECKER_MAX_PUZZLES = 500;
-
 export interface CollectionsRow {
   id: string;
   name: string;
@@ -435,7 +432,6 @@ function woodpeckerLabel(row: CollectionsRow): string {
 
 /** Compact grid card: summary + train actions; the title links to the detail page. */
 function collectionCard(ctrl: CollectionsCtrl, row: CollectionsRow): VNode {
-  const tooMany = row.total > WOODPECKER_MAX_PUZZLES;
   return h(
     'section.panel.collection-card',
     { key: row.id, attrs: { 'data-collection': row.id } },
@@ -468,12 +464,9 @@ function collectionCard(ctrl: CollectionsCtrl, row: CollectionsRow): VNode {
         }),
         h('div.woodpecker-create-from-collection', [
           actionButton(woodpeckerLabel(row), 'secondary', {
-            disabled: row.total === 0 || tooMany,
+            disabled: row.total === 0,
             onClick: () => void ctrl.startWoodpecker(row.id),
           }),
-          ...(tooMany
-            ? [h('p.progress-note', t('collections.woodpecker.tooMany', { max: WOODPECKER_MAX_PUZZLES }))]
-            : []),
         ]),
       ]),
     ],
@@ -631,7 +624,6 @@ function woodpeckerDetail(ctrl: CollectionsCtrl, row: CollectionsRow): VNode {
   const activeSummary = active ? summarizeWoodpeckerCycle(active.cycle) : null;
   const failed = set ? ctrl.woodpeckerFailed(set.setId) : [];
   const size = set ? set.puzzleIds.length : row.total;
-  const tooMany = size > WOODPECKER_MAX_PUZZLES;
 
   return h('section.panel.collection-detail-woodpecker', [
     h('h3', t('collections.details.woodpecker.title')),
@@ -671,7 +663,7 @@ function woodpeckerDetail(ctrl: CollectionsCtrl, row: CollectionsRow): VNode {
     ),
     h('div.button-row', [
       actionButton(woodpeckerLabel(row), 'secondary', {
-        disabled: size === 0 || tooMany,
+        disabled: size === 0,
         onClick: () => void ctrl.startWoodpecker(row.id),
       }),
       ...(failed.length > 0
@@ -682,7 +674,6 @@ function woodpeckerDetail(ctrl: CollectionsCtrl, row: CollectionsRow): VNode {
           ]
         : []),
     ]),
-    ...(tooMany ? [h('p.progress-note', t('collections.woodpecker.tooMany', { max: WOODPECKER_MAX_PUZZLES }))] : []),
   ]);
 }
 

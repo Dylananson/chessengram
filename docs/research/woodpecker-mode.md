@@ -5,7 +5,8 @@ Status: **implementation in progress**. User reprioritized feature work ahead of
 ## Confirmed user direction
 
 - Start with Woodpecker-style fixed-set training.
-- A set of about **500 puzzles** is the reference scale (based on the Disco Chess mode the user is trying).
+- About **500 puzzles** is a reference scale based on the Disco Chess mode the user is trying; it is not a maximum.
+- 2026-10-24 clarification: Woodpecker must be available for any non-empty collection, with no puzzle-count cap.
 - Repeat the same set in cycles and compare cycle speed and mistakes; the aim is to complete later cycles faster with fewer errors.
 - A puzzle failed during a cycle should also enter a separate **Failed** section for spaced repetition.
 - This feature is prioritized ahead of first-release sign-off and real-device verification. Those tasks are deferred, not cancelled.
@@ -20,7 +21,7 @@ Keep three concepts distinct:
 
 ### Candidate first experience (recommendation)
 
-- Let the user start with a curated/selected set of about 500 puzzles; support smaller sets for a personal collection that has fewer items rather than padding or duplicating puzzles.
+- Let the user start with any non-empty collection; around 500 puzzles is a useful reference size, not a cap. Do not pad or duplicate smaller collections.
 - Retain set membership as a snapshot for the run. Allow an explicit new run to refresh the snapshot.
 - Show cycle number, completion, elapsed active time, first-pass errors, and comparison with the previous completed cycle.
 - On a miss, record the normal immutable failed attempt and add the puzzle to the Woodpecker Failed queue. Do not let correction moves retroactively turn the failed scored attempt into a success.
@@ -31,7 +32,7 @@ These are recommendations to focus discussion, **not settled behavior**.
 
 ## Provisional semantics used in the first implementation
 
-1. Sets are created from a collection with selectable membership, capped at 500; puzzle IDs are snapshotted.
+1. Sets are created from a collection with selectable membership; puzzle IDs are snapshotted. (The initial 500-puzzle cap was removed after the 2026-10-24 user clarification.)
 2. A cycle covers each puzzle after one scored result, clean or failed. Failed correction does not rewrite that result.
 3. Failed reviews use a distinct program and set scope, never changing ordinary collection schedules.
 4. Cycle metrics count clean/failed scored outcomes and active solving time; failed reviews remain schedulable over time.

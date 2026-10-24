@@ -74,6 +74,18 @@ test('Woodpecker starts from a collection: one internal snapshot is created and 
   assert.deepEqual(service.getWoodpeckerSetForCollection(collectionId)?.puzzleIds, ['p1', 'p2']);
 });
 
+test('Woodpecker accepts collections larger than 500 puzzles', async () => {
+  const service = new LocalTrainingService({ store: new LocalStore(new InMemoryStorageBackend()) });
+  await service.init();
+  const puzzles = Array.from({ length: 501 }, (_, index) => makePuzzle({ id: `large-${index}` }));
+  await service.seedContent(puzzles);
+
+  const collectionId = service.getActiveCollectionId();
+  const set = await service.getOrCreateWoodpeckerSetForCollection(collectionId);
+
+  assert.equal(set.puzzleIds.length, 501);
+});
+
 test('getWoodpeckerSetForCollection prefers a set that already has cycles', async () => {
   const service = new LocalTrainingService({ store: new LocalStore(new InMemoryStorageBackend()), idFactory: (() => { let n = 0; return () => `id-${++n}`; })() });
   await service.init();

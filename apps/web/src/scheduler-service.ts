@@ -754,8 +754,8 @@ export class LocalTrainingService implements TrainingService {
   /**
    * User request 2026-10-16: Woodpecker starts from a collection, so reuse the
    * collection's canonical set or snapshot its current members into a new one on
-   * first use. Empty/>500 collections reject via {@link createWoodpeckerSet};
-   * callers gate the action on those limits.
+   * first use. Empty collections reject via {@link createWoodpeckerSet}; callers
+   * gate the action on that requirement.
    */
   async getOrCreateWoodpeckerSetForCollection(collectionId: string): Promise<WoodpeckerSetRecord> {
     const existing = this.getWoodpeckerSetForCollection(collectionId);
@@ -780,7 +780,6 @@ export class LocalTrainingService implements TrainingService {
     if (!source) throw new Error('Source collection not found.');
     if (input.puzzleIds.length === 0) throw new Error('Choose at least one puzzle.');
     if (new Set(input.puzzleIds).size !== input.puzzleIds.length) throw new Error('Puzzle selection contains duplicates.');
-    if (input.puzzleIds.length > 500) throw new Error('A Woodpecker set can contain at most 500 puzzles.');
     if (input.puzzleIds.some((id) => !source.puzzleIds.includes(id) || !this.puzzles.has(id))) {
       throw new Error('Every selected puzzle must belong to the source collection.');
     }
