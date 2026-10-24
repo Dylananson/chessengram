@@ -18,6 +18,9 @@ ChessEngram is a personal offline-first chess trainer. It reuses Lichess librari
 
 ## Agent rules
 - Never commit/push unless requested
+- Keep task changes off `main`. Before starting work, fetch `origin` and create a dedicated task branch from the latest `origin/main`; do not branch from stale local `main` or another task branch unless explicitly requested.
+- Track repository changes in a GitHub issue (create one if none exists), implement on its task branch, verify the changes, then push that branch and open a PR for review and merge through GitHub. Never commit or push directly to `main`.
+- After a PR is merged, fetch `origin` and fast-forward local `main` to `origin/main` only when the working tree is clean. Preserve uncommitted work; do not reset or discard it to synchronize. Keep local `main` clean and matching `origin/main` before starting another task.
 - Prefer small, focused changes
 - Keep data continuity and no silent data loss
 - Shared interfaces get single owner
