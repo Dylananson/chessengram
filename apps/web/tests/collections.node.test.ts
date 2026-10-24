@@ -519,19 +519,29 @@ test('Collections generator creates a saved collection from the loaded puzzle li
   const text = collectText(view(ctrl)).join(' ');
   assert.match(text, /Generate a collection/);
   assert.ok(findVNodes(view(ctrl), (node) => node.data?.attrs?.id === 'collections-generator-themes').length > 0);
+  const sizeInput = findVNodes(view(ctrl), (node) => node.data?.attrs?.id === 'collections-generator-size')[0];
+  assert.equal(sizeInput?.sel, 'input');
+  assert.deepEqual(sizeInput?.data?.attrs, {
+    id: 'collections-generator-size',
+    type: 'number',
+    min: '100',
+    max: '1000',
+    step: '1',
+  });
 
   ctrl.generatorName = 'Fork practice';
-  ctrl.generatorSize = '100';
+  // Arbitrary whole-number sizes are accepted, not only 100-puzzle increments.
+  ctrl.generatorSize = '103';
   ctrl.generatorRatingMin = '700';
   ctrl.generatorRatingMax = '899';
   ctrl.generatorThemes = 'fork';
   await ctrl.generateCollection();
   const created = ctrl.snapshot.rows.find((row) => row.name === 'Fork practice');
   assert.ok(created);
-  assert.equal(created.puzzleIds.length, 100);
+  assert.equal(created.puzzleIds.length, 103);
   assert.ok(created.puzzleIds.every((id) => id.startsWith('generated-')));
-  assert.match(ctrl.message?.text ?? '', /with 100 puzzles/);
-  assert.equal(service.getCollection(created.id)?.puzzleIds.length, 100);
+  assert.match(ctrl.message?.text ?? '', /with 103 puzzles/);
+  assert.equal(service.getCollection(created.id)?.puzzleIds.length, 103);
 });
 
 test('rename is a two-step start/save flow with validation errors', async () => {

@@ -555,14 +555,11 @@ export function viewCollectionsList(ctrl: CollectionsCtrl): VNode {
           props: { value: ctrl.generatorName },
           on: { input: (event) => ctrl.generatorInput('name', event) },
         })]),
-        h('label', [t('collections.generator.size'), h('select', {
-          attrs: { id: 'collections-generator-size' },
+        h('label', [t('collections.generator.size'), h('input', {
+          attrs: { id: 'collections-generator-size', type: 'number', min: '100', max: '1000', step: '1' },
           props: { value: ctrl.generatorSize },
-          on: { change: (event) => ctrl.generatorInput('size', event) },
-        }, Array.from({ length: 10 }, (_, index) => {
-          const value = String((index + 1) * 100);
-          return h('option', { props: { value, selected: ctrl.generatorSize === value } }, value);
-        }))]),
+          on: { input: (event) => ctrl.generatorInput('size', event) },
+        })]),
         h('label', [t('collections.generator.ratingMin'), h('input', {
           attrs: { id: 'collections-generator-rating-min', type: 'number', min: '500', max: '2500', step: '100' },
           props: { value: ctrl.generatorRatingMin },
