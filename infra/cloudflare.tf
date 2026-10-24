@@ -101,6 +101,23 @@ resource "cloudflare_pages_project" "app" {
       }
     }
   }
+
+  # Keep the existing GitHub integration under Terraform management while
+  # disabling branch preview deployments. Production deployments stay enabled.
+  source = {
+    type = "github"
+    config = {
+      owner                          = "Dylananson"
+      owner_id                       = "13480673"
+      path_includes                  = ["*"]
+      pr_comments_enabled            = true
+      preview_deployment_setting     = "none"
+      production_branch              = "main"
+      production_deployments_enabled = true
+      repo_id                        = "1430263889"
+      repo_name                      = "chessengram"
+    }
+  }
 }
 
 resource "cloudflare_pages_domain" "app" {

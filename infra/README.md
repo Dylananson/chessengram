@@ -31,10 +31,37 @@ reaches AWS; Cloudflare stores only ciphertext.
 
 ## First run
 
+### Remote state setup (recommended before applying the main stack)
+
+The main Terraform state contains sensitive values. Create the S3 backend bucket
+first using the isolated bootstrap configuration, which keeps its own local
+state:
+
+```sh
+terraform -chdir=infra/state-bootstrap init
+terraform -chdir=infra/state-bootstrap plan
+terraform -chdir=infra/state-bootstrap apply
+terraform -chdir=infra/state-bootstrap output -raw bucket_name
+```
+
+Use the output bucket name in a local `infra/backend.tf` based on
+`backend.tf.example` (set the bucket, key, and AWS region). Then migrate any
+existing local main-stack state:
+
+```sh
+terraform -chdir=infra init -migrate-state
+```
+
+`infra/backend.tf` is git-ignored and must not contain credentials. Keep the
+bootstrap state/configuration: it manages the state bucket, which must not be
+destroyed while the main state uses it. The bucket has versioning, encryption,
+public access blocking, and `prevent_destroy` enabled. S3 lockfiles require
+Terraform 1.10 or newer.
+
 ```sh
 cd infra
 cp terraform.tfvars.example terraform.tfvars     # fill in the values
-terraform init                                   # add -backend-config once you set backend.tf
+terraform init                                   # migrates local state if backend.tf is configured
 terraform plan
 terraform apply
 ```
