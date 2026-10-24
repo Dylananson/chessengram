@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import { strict as assert } from 'node:assert';
-import { PuzzleGame, buildMoveList, buildPlaybackSteps } from '../src/puzzle-game.ts';
+import { PuzzleGame, buildMoveList, buildPlaybackSteps, buildReviewLine } from '../src/puzzle-game.ts';
+import { CURATED_SOLUTIONS, type CuratedSolutionEntry } from '../src/curated-solutions.ts';
 import { makePuzzle, promotionPuzzle, setupMovePuzzle } from './fixtures.ts';
 
 test('correct solver move advances and auto-plays the opponent reply', () => {
@@ -133,6 +134,82 @@ test('isLegalSolverMove handles promotion roles without playing', () => {
 // --- BRD-004: remaining-line computation -------------------------------------
 
 const START_FEN = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
+
+test('curated alternative lines grade, resume, reveal, and project the same line', () => {
+  const puzzle = makePuzzle({ id: 'curated-test', solution: ['e2e4', 'e7e5', 'g1f3'] });
+  const registry = CURATED_SOLUTIONS as Record<string, CuratedSolutionEntry>;
+  registry[puzzle.id] = {
+    canonicalSolution: [...puzzle.solution],
+    alternatives: [{
+      line: ['d2d4', 'd7d5', 'c2c4'],
+      verification: 'Test fixture only: independently supplied legal alternate line.',
+    }],
+  };
+  try {
+    const game = new PuzzleGame(puzzle);
+    assert.equal(game.playUserMove('d2', 'd4').kind, 'correct');
+    assert.deepEqual([...game.solutionPlaybackLine().plies], ['c2c4']);
+    assert.equal(game.playUserMove('c2', 'c4').kind, 'correct');
+    assert.equal(game.isCompleted, true);
+
+    const resumed = new PuzzleGame(puzzle);
+    resumed.replaySolverMoves(['d2d4']);
+    assert.deepEqual([...resumed.solutionPlaybackLine().plies], ['c2c4']);
+
+    const attempts = [
+      { uci: 'd2d4', correct: true },
+      { uci: 'c2c4', correct: true },
+    ];
+    const moveList = buildMoveList(puzzle, attempts, { complete: true });
+    assert.deepEqual(moveList.flatMap((row) => [row.white?.uci, row.black?.uci].filter(Boolean)),
+      ['d2d4', 'd7d5', 'c2c4']);
+
+    const review = buildReviewLine(puzzle, [
+      { eventId: 'a1', type: 'move', occurredAt: 1, payload: { uci: 'd2d4', correct: true } },
+      { eventId: 'a2', type: 'move', occurredAt: 2, payload: { uci: 'c2c4', correct: true } },
+    ]);
+    assert.deepEqual(review.map((step) => step.uci).filter(Boolean), ['d2d4', 'd7d5', 'c2c4']);
+  } finally {
+    delete registry[puzzle.id];
+  }
+});
+
+test('curated alternatives are ignored if their canonical source line no longer matches', () => {
+  const puzzle = makePuzzle({ id: 'curated-stale', solution: ['e2e4'] });
+  const registry = CURATED_SOLUTIONS as Record<string, CuratedSolutionEntry>;
+  registry[puzzle.id] = {
+    canonicalSolution: ['d2d4'],
+    alternatives: [{ line: ['e2e4'], verification: 'stale fixture' }],
+  };
+  try {
+    assert.equal(new PuzzleGame(puzzle).playUserMove('d2', 'd4').kind, 'wrong');
+  } finally {
+    delete registry[puzzle.id];
+  }
+});
+
+test('mate-in-one accepts and projects any legal move that checkmates', () => {
+  const puzzle = makePuzzle({
+    id: 'mate-in-one-alternatives',
+    themes: ['mateIn1'],
+    solverFen: '8/8/8/8/8/8/2Q5/k1K5 w - - 0 1',
+    sourceFen: '8/8/8/8/8/8/2Q5/k1K5 w - - 0 1',
+    solution: ['c2a4'],
+  });
+  const game = new PuzzleGame(puzzle);
+  const outcome = game.playUserMove('c2', 'b2');
+  assert.equal(outcome.kind, 'correct');
+  if (outcome.kind === 'correct') assert.equal(outcome.completed, true);
+  assert.equal(game.isCompleted, true);
+
+  const attempts = [{ uci: 'c2b2', correct: true }];
+  const moveList = buildMoveList(puzzle, attempts, { complete: true });
+  assert.deepEqual(moveList.flatMap((row) => [row.white?.uci, row.black?.uci].filter(Boolean)), ['c2b2']);
+  const review = buildReviewLine(puzzle, [
+    { eventId: 'mate1', type: 'move', occurredAt: 1, payload: { uci: 'c2b2', correct: true } },
+  ]);
+  assert.deepEqual(review.map((step) => step.uci).filter(Boolean), ['c2b2']);
+});
 
 test('BRD-004: solutionPlaybackLine plays the remainder while still on-path', () => {
   const game = new PuzzleGame(makePuzzle({ id: 'pb-on', solution: ['e2e4', 'e7e5', 'g1f3'] }));
