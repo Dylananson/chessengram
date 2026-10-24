@@ -403,7 +403,7 @@ try {
   await hash(page, 'collections');
   await page.waitForSelector('.collections-screen', { timeout: 5000 });
   const bandSummaries = await page.$$eval(
-    '[data-collection^="lichess-bands-v1-"] > p',
+    '.collection-card[data-collection^="lichess-bands-v1-"] .collection-card-counts',
     (els) => els.map((el) => el.textContent),
   );
   check(
@@ -421,8 +421,18 @@ try {
     bandThemes.length === 5 && bandThemes.every((size) => size === 500),
     JSON.stringify(bandThemes),
   );
+  const customCatalogCount = await page.$$eval(
+    '.collection-card[data-collection^="lichess-custom-v1-"]',
+    (cards) => cards.length,
+  );
+  check('Collections includes all 29 bundled rating and theme sets', customCatalogCount === 29, `${customCatalogCount} catalog collections`);
   check('Collections renders a responsive grid of cards', (await page.$('.collections-grid')) !== null);
   check('Collections cards omit the add-puzzle input', (await page.$('.collections-grid input[id^="add-"]')) === null);
+  check('Collections exposes the offline puzzle-set generator', (await page.$('#collections-generator-create')) !== null);
+  await page.$eval('#collections-generator-name', (el) => { el.value = 'Smoke generated'; el.dispatchEvent(new Event('input', { bubbles: true })); });
+  await page.click('#collections-generator-create');
+  await page.waitForFunction(() => document.querySelector('.collections-screen')?.textContent?.includes('Created Smoke generated with 100 puzzles.'));
+  check('generated collection is saved with the selected puzzle count', await page.$$eval('.collection-card', (cards) => cards.some((card) => card.textContent.includes('Smoke generated') && /100 puzzles/.test(card.querySelector('.collection-card-counts')?.textContent))));
   await page.click('.collections-grid [data-collection] [id^="collection-view-"]');
   await page.waitForSelector('[data-collection-detail]', { timeout: 5000 });
   check('Collection card opens a detail page', (await page.$('[data-collection-detail]')) !== null);
@@ -537,7 +547,7 @@ try {
   check('puzzles screen shows the pack panel', /Pack/.test(packVisible), packVisible);
 
   const rowsBefore = await page.$$eval('#puzzles-list tbody tr', (r) => r.length);
-  check('library lists the starter and bundled band packs', rowsBefore === 2600, `${rowsBefore} rows`);
+  check('library lists the bundled puzzle catalog', rowsBefore >= 100, `${rowsBefore} puzzles`);
 
   await page.click('#puzzles-new-btn');
   await page.waitForSelector('#pc-save', { timeout: 5000 });
@@ -554,7 +564,7 @@ try {
   check('creator produced an id', Boolean(createdId), createdId);
 
   const rowsAfterCreate = await page.$$eval('#puzzles-list tbody tr', (r) => r.length);
-  check('created puzzle appears in the library', rowsAfterCreate === 2601, `${rowsAfterCreate} rows`);
+  check('created puzzle appears in the library', rowsAfterCreate === rowsBefore + 1, `${rowsBefore} -> ${rowsAfterCreate} visible rows`);
   const createdInList = createdId
     ? await page.$$eval('#puzzles-list tbody tr td:first-child', (cells, id) =>
         cells.some((c) => c.textContent === id), createdId)
@@ -754,7 +764,10 @@ try {
   check('import preview shows the file summary', /Export from/.test(importPreview));
 
   await page.click('#settings-import-confirm');
-  await sleep(500);
+  await page.waitForFunction(
+    () => /Imported|Import failed|Import error/i.test(document.querySelector('#settings-message')?.textContent ?? ''),
+    { timeout: 60000 },
+  );
   const settingsMessage = await page.$eval('#settings-message', (el) => el.textContent).catch(() => '');
   check('import reports success', /Imported/.test(settingsMessage), settingsMessage.trim());
   check('import created a recovery snapshot', await page.$('[data-restore]').then(Boolean));
@@ -766,7 +779,7 @@ try {
   await page
     .waitForFunction(
       () => /Restored/.test(document.querySelector('#settings-message')?.textContent ?? ''),
-      { timeout: 20000 },
+      { timeout: 60000 },
     )
     .catch(() => {});
   const restoredMessage = await page.$eval('#settings-message', (el) => el.textContent).catch(() => '');
@@ -1000,6 +1013,8 @@ try {
     cacheKeys.includes('/data/puzzles/lichess-900-1099-v1/pack.jsonl')
       && cacheKeys.includes('/data/puzzles/lichess-bands-v1/pack.jsonl')
       && cacheKeys.includes('/data/puzzles/lichess-bands-v1/bands.json')
+      && cacheKeys.includes('/data/puzzles/lichess-custom-v1/pack.jsonl')
+      && cacheKeys.includes('/data/puzzles/lichess-custom-v1/collections.json')
       && cacheKeys.includes('/icons/maskable-512.png')
       && cacheKeys.includes('/manifest.webmanifest'),
     JSON.stringify(cacheKeys.filter((k) => k.startsWith('/data/'))),

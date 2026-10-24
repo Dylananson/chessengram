@@ -15,12 +15,14 @@ import {
   promptInstall,
 } from '../src/pwa.ts';
 
-test('the offline promise covers the shell, icons and both bundled packs', () => {
+test('the offline promise covers the shell, icons and all bundled packs', () => {
   assert.ok(REQUIRED_OFFLINE_ASSETS.includes('/index.html'));
   assert.ok(REQUIRED_OFFLINE_ASSETS.includes('/manifest.webmanifest'));
   assert.ok(REQUIRED_OFFLINE_ASSETS.includes('/data/puzzles/lichess-900-1099-v1/pack.jsonl'));
   assert.ok(REQUIRED_OFFLINE_ASSETS.includes('/data/puzzles/lichess-bands-v1/pack.jsonl'));
   assert.ok(REQUIRED_OFFLINE_ASSETS.includes('/data/puzzles/lichess-bands-v1/bands.json'));
+  assert.ok(REQUIRED_OFFLINE_ASSETS.includes('/data/puzzles/lichess-custom-v1/pack.jsonl'));
+  assert.ok(REQUIRED_OFFLINE_ASSETS.includes('/data/puzzles/lichess-custom-v1/collections.json'));
   assert.ok(REQUIRED_OFFLINE_ASSETS.some((asset) => asset.startsWith('/icons/')));
 });
 

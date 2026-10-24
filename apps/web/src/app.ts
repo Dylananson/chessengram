@@ -16,7 +16,7 @@ import { applySavedBoardTheme } from './board-theme.ts';
 import { applyTranslations, detectLocale, setLocale, t } from './i18n.ts';
 import { migrateLegacyStorageKeys } from './legacy-keys.ts';
 import { initPwa } from './pwa.ts';
-import { loadBundledBands, loadPuzzlesFromPack, BANDS_PACK_ID } from './pack-loader.ts';
+import { loadBundledBands, loadBundledCustomCollections, loadPuzzlesFromPack, SITE_CATALOG_PACK_ID } from './pack-loader.ts';
 import { navigate, registerScreen, startRouter, type ScreenId } from './router.ts';
 import {
   DEFAULT_PROGRAM_ID,
@@ -345,13 +345,19 @@ async function init(): Promise<void> {
 
   // F02: add the bundled rating-band collections once per pack. Additive only —
   // the starter collection keeps its membership and existing progress stands.
-  if ((await service.bundledBandsPackId()) !== BANDS_PACK_ID) {
+  if ((await service.bundledBandsPackId()) !== SITE_CATALOG_PACK_ID) {
     try {
-      const bands = await loadBundledBands();
+      const [bands, custom] = await Promise.all([loadBundledBands(), loadBundledCustomCollections()]);
+      const puzzleById = new Map([...bands.puzzles, ...custom.puzzles].map((puzzle) => [puzzle.id, puzzle]));
       await service.seedBundledCollections(
-        bands.packId,
-        bands.puzzles,
-        bands.bands.map((band) => ({ id: band.id, name: band.name, puzzleIds: band.puzzleIds })),
+        SITE_CATALOG_PACK_ID,
+        [...puzzleById.values()],
+        [
+          ...bands.bands.map((band) => ({ id: band.id, name: band.name, puzzleIds: band.puzzleIds })),
+          ...custom.collections.map((collection) => ({
+            id: collection.id, name: collection.name, puzzleIds: collection.puzzleIds,
+          })),
+        ],
       );
     } catch {
       // Bundled content is an enhancement; a fetch failure must not block boot.

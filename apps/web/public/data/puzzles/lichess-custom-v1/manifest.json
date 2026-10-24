@@ -1,0 +1,284 @@
+{
+  "checksums_sha256": {
+    "collections.json": "8b93dc6c7fda0fbbe61f8dd91ca59c358de457f08387f3b13cd834b9f2fd658a",
+    "pack.jsonl": "a792a0c02ba92310f7cb7613f2fb13dc85bfe49096d62b0801f9856bf8569498"
+  },
+  "collection_count": 29,
+  "id": "lichess-custom-v1",
+  "license": "CC0-1.0",
+  "not_checked": [
+    "engine optimality",
+    "non-checkmating alternate solutions",
+    "global representativeness"
+  ],
+  "puzzle_count": 10584,
+  "schema_version": 1,
+  "selection": {
+    "collections": [
+      {
+        "count": 100,
+        "id": "lichess-custom-v1-rating-500-699",
+        "ratingMax": 699,
+        "ratingMin": 500,
+        "themes": []
+      },
+      {
+        "count": 200,
+        "id": "lichess-custom-v1-rating-700-899",
+        "ratingMax": 899,
+        "ratingMin": 700,
+        "themes": []
+      },
+      {
+        "count": 300,
+        "id": "lichess-custom-v1-rating-900-1099",
+        "ratingMax": 1099,
+        "ratingMin": 900,
+        "themes": []
+      },
+      {
+        "count": 400,
+        "id": "lichess-custom-v1-rating-1100-1299",
+        "ratingMax": 1299,
+        "ratingMin": 1100,
+        "themes": []
+      },
+      {
+        "count": 500,
+        "id": "lichess-custom-v1-rating-1300-1499",
+        "ratingMax": 1499,
+        "ratingMin": 1300,
+        "themes": []
+      },
+      {
+        "count": 600,
+        "id": "lichess-custom-v1-rating-1500-1699",
+        "ratingMax": 1699,
+        "ratingMin": 1500,
+        "themes": []
+      },
+      {
+        "count": 700,
+        "id": "lichess-custom-v1-rating-1700-1899",
+        "ratingMax": 1899,
+        "ratingMin": 1700,
+        "themes": []
+      },
+      {
+        "count": 800,
+        "id": "lichess-custom-v1-rating-1900-2099",
+        "ratingMax": 2099,
+        "ratingMin": 1900,
+        "themes": []
+      },
+      {
+        "count": 900,
+        "id": "lichess-custom-v1-rating-2100-2299",
+        "ratingMax": 2299,
+        "ratingMin": 2100,
+        "themes": []
+      },
+      {
+        "count": 1000,
+        "id": "lichess-custom-v1-rating-2300-2499",
+        "ratingMax": 2499,
+        "ratingMin": 2300,
+        "themes": []
+      },
+      {
+        "count": 100,
+        "id": "lichess-custom-v1-rating-2500",
+        "ratingMax": 2500,
+        "ratingMin": 2500,
+        "themes": []
+      },
+      {
+        "count": 500,
+        "id": "lichess-custom-v1-theme-fork",
+        "ratingMax": 2500,
+        "ratingMin": 500,
+        "themes": [
+          "fork"
+        ]
+      },
+      {
+        "count": 500,
+        "id": "lichess-custom-v1-theme-pin",
+        "ratingMax": 2500,
+        "ratingMin": 500,
+        "themes": [
+          "pin"
+        ]
+      },
+      {
+        "count": 500,
+        "id": "lichess-custom-v1-theme-skewer",
+        "ratingMax": 2500,
+        "ratingMin": 500,
+        "themes": [
+          "skewer"
+        ]
+      },
+      {
+        "count": 500,
+        "id": "lichess-custom-v1-theme-discoveredAttack",
+        "ratingMax": 2500,
+        "ratingMin": 500,
+        "themes": [
+          "discoveredAttack"
+        ]
+      },
+      {
+        "count": 500,
+        "id": "lichess-custom-v1-theme-sacrifice",
+        "ratingMax": 2500,
+        "ratingMin": 500,
+        "themes": [
+          "sacrifice"
+        ]
+      },
+      {
+        "count": 500,
+        "id": "lichess-custom-v1-theme-deflection",
+        "ratingMax": 2500,
+        "ratingMin": 500,
+        "themes": [
+          "deflection"
+        ]
+      },
+      {
+        "count": 500,
+        "id": "lichess-custom-v1-theme-attraction",
+        "ratingMax": 2500,
+        "ratingMin": 500,
+        "themes": [
+          "attraction"
+        ]
+      },
+      {
+        "count": 500,
+        "id": "lichess-custom-v1-theme-clearance",
+        "ratingMax": 2500,
+        "ratingMin": 500,
+        "themes": [
+          "clearance"
+        ]
+      },
+      {
+        "count": 100,
+        "id": "lichess-custom-v1-theme-fork-and-pin",
+        "ratingMax": 2500,
+        "ratingMin": 500,
+        "themes": [
+          "fork",
+          "pin"
+        ]
+      },
+      {
+        "count": 100,
+        "id": "lichess-custom-v1-theme-fork-and-skewer",
+        "ratingMax": 2500,
+        "ratingMin": 500,
+        "themes": [
+          "fork",
+          "skewer"
+        ]
+      },
+      {
+        "count": 100,
+        "id": "lichess-custom-v1-theme-fork-and-discoveredAttack",
+        "ratingMax": 2500,
+        "ratingMin": 500,
+        "themes": [
+          "fork",
+          "discoveredAttack"
+        ]
+      },
+      {
+        "count": 100,
+        "id": "lichess-custom-v1-theme-pin-and-skewer",
+        "ratingMax": 2500,
+        "ratingMin": 500,
+        "themes": [
+          "pin",
+          "skewer"
+        ]
+      },
+      {
+        "count": 100,
+        "id": "lichess-custom-v1-theme-pin-and-discoveredAttack",
+        "ratingMax": 2500,
+        "ratingMin": 500,
+        "themes": [
+          "pin",
+          "discoveredAttack"
+        ]
+      },
+      {
+        "count": 100,
+        "id": "lichess-custom-v1-theme-skewer-and-discoveredAttack",
+        "ratingMax": 2500,
+        "ratingMin": 500,
+        "themes": [
+          "skewer",
+          "discoveredAttack"
+        ]
+      },
+      {
+        "count": 100,
+        "id": "lichess-custom-v1-theme-fork-and-sacrifice",
+        "ratingMax": 2500,
+        "ratingMin": 500,
+        "themes": [
+          "fork",
+          "sacrifice"
+        ]
+      },
+      {
+        "count": 100,
+        "id": "lichess-custom-v1-theme-pin-and-sacrifice",
+        "ratingMax": 2500,
+        "ratingMin": 500,
+        "themes": [
+          "pin",
+          "sacrifice"
+        ]
+      },
+      {
+        "count": 100,
+        "id": "lichess-custom-v1-theme-fork-and-deflection",
+        "ratingMax": 2500,
+        "ratingMin": 500,
+        "themes": [
+          "fork",
+          "deflection"
+        ]
+      },
+      {
+        "count": 100,
+        "id": "lichess-custom-v1-theme-pin-and-clearance",
+        "ratingMax": 2500,
+        "ratingMin": 500,
+        "themes": [
+          "pin",
+          "clearance"
+        ]
+      }
+    ],
+    "deduplication": "per-collection normalized solver FEN first four fields",
+    "quality": {
+      "plays_min": 100,
+      "popularity_min": 80,
+      "rating_deviation_max": 100
+    },
+    "rating_ranges": "inclusive 200-point bands from 500–699 through 2300–2499, plus the 2500 singleton",
+    "seed": "chessengram-custom-packs-v1",
+    "theme_semantics": "exact Lichess source tags; every required tag must match"
+  },
+  "source": {
+    "archive_bytes": 307234795,
+    "archive_sha256": "76335bfa7d7c4a7f93c1366d81549e53951ebb79dd43d34904cab8f22d962f8d",
+    "license_source": "https://database.lichess.org/#puzzles",
+    "url": "https://database.lichess.org/lichess_db_puzzle.csv.zst"
+  }
+}

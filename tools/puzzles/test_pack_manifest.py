@@ -19,6 +19,7 @@ _spec.loader.exec_module(pack_manifest)
 PUZZLES = Path(__file__).resolve().parents[2] / "data/puzzles"
 STARTER = "lichess-900-1099-v1"
 BANDS = "lichess-bands-v1"
+CUSTOM = "lichess-custom-v1"
 BASE = "https://cdn.example.invalid/chessengram/packs"
 
 # Recorded pack hashes (regression guard against accidental content drift).
@@ -50,8 +51,8 @@ class PackManifestTests(unittest.TestCase):
         manifest = pack_manifest.build_manifest(PUZZLES, BASE)
         packs = {pack["packId"]: pack for pack in manifest["packs"]}
 
-        # Sorted by packId and exactly the two shipped packs.
-        self.assertEqual([pack["packId"] for pack in manifest["packs"]], [STARTER, BANDS])
+        # Sorted by packId and exactly the shipped packs.
+        self.assertEqual([pack["packId"] for pack in manifest["packs"]], [STARTER, BANDS, CUSTOM])
 
         starter = packs[STARTER]
         self.assertEqual(starter["sha256"], STARTER_SHA256)
@@ -70,6 +71,10 @@ class PackManifestTests(unittest.TestCase):
         self.assertEqual(bands["puzzleCount"], 2500)
         self.assertEqual([band["id"] for band in bands["bands"]], BAND_IDS)
         self.assertEqual([band["puzzleCount"] for band in bands["bands"]], [500] * 5)
+
+        custom = packs[CUSTOM]
+        self.assertEqual(custom["puzzleCount"], 10584)
+        self.assertEqual(custom["sha256"], "a792a0c02ba92310f7cb7613f2fb13dc85bfe49096d62b0801f9856bf8569498")
 
     def test_version_changes_when_a_pack_byte_changes(self):
         with tempfile.TemporaryDirectory(prefix="chessengram-manifest-") as tmp:

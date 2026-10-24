@@ -7,6 +7,10 @@ export const DEFAULT_PACK_ID = 'lichess-900-1099-v1';
 export const BANDS_PACK_PATH = '/data/puzzles/lichess-bands-v1/pack.jsonl';
 export const BANDS_META_PATH = '/data/puzzles/lichess-bands-v1/bands.json';
 export const BANDS_PACK_ID = 'lichess-bands-v1';
+export const CUSTOM_PACK_PATH = '/data/puzzles/lichess-custom-v1/pack.jsonl';
+export const CUSTOM_COLLECTIONS_PATH = '/data/puzzles/lichess-custom-v1/collections.json';
+/** Bump this marker when additive bundled collections/content change. */
+export const SITE_CATALOG_PACK_ID = 'lichess-site-catalog-v1';
 
 export interface BundledBand {
   id: string;
@@ -21,6 +25,20 @@ export interface LoadedBands {
   packId: string;
   puzzles: NormalizedPuzzle[];
   bands: BundledBand[];
+}
+
+export interface BundledCustomCollection {
+  id: string;
+  name: string;
+  ratingMin: number;
+  ratingMax: number;
+  themes: string[];
+  puzzleIds: string[];
+}
+
+export interface LoadedCustomCollections {
+  puzzles: NormalizedPuzzle[];
+  collections: BundledCustomCollection[];
 }
 
 export interface LoadedPack {
@@ -100,4 +118,18 @@ export async function loadBundledBands(
   }
   const document = (await response.json()) as { bands?: BundledBand[] };
   return { packId, puzzles: pack.puzzles, bands: Array.isArray(document.bands) ? document.bands : [] };
+}
+
+/** Load the generated CC0 corpus and its rating/theme collection definitions. */
+export async function loadBundledCustomCollections(): Promise<LoadedCustomCollections> {
+  const [pack, response] = await Promise.all([
+    loadPuzzlesFromPack(CUSTOM_PACK_PATH, SITE_CATALOG_PACK_ID),
+    fetch(CUSTOM_COLLECTIONS_PATH),
+  ]);
+  if (!response.ok) throw new Error(`Failed to load custom collection metadata: ${response.status}`);
+  const document = (await response.json()) as { collections?: BundledCustomCollection[] };
+  return {
+    puzzles: pack.puzzles,
+    collections: Array.isArray(document.collections) ? document.collections : [],
+  };
 }

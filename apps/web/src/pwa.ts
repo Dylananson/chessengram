@@ -17,6 +17,8 @@ export const REQUIRED_OFFLINE_ASSETS = [
   '/data/puzzles/lichess-900-1099-v1/pack.jsonl',
   '/data/puzzles/lichess-bands-v1/pack.jsonl',
   '/data/puzzles/lichess-bands-v1/bands.json',
+  '/data/puzzles/lichess-custom-v1/pack.jsonl',
+  '/data/puzzles/lichess-custom-v1/collections.json',
 ] as const;
 
 export const SHELL_CACHE_PREFIX = 'chessengram-shell-';

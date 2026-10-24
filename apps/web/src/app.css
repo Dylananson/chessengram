@@ -567,6 +567,36 @@ body.board-theme-classic cg-board { background-color: var(--square-light); }
   flex: 1 1 220px;
   max-width: 320px;
 }
+.collections-generator {
+  margin-top: 16px;
+}
+.collections-generator h2 {
+  margin: 0 0 6px;
+  font-size: 1.05rem;
+}
+.collections-generator > p {
+  max-width: 75ch;
+  margin: 0 0 12px;
+  color: var(--muted);
+}
+.collections-generator-fields {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 10px;
+  margin-bottom: 12px;
+}
+.collections-generator-fields label {
+  display: grid;
+  gap: 5px;
+  font-size: 0.9rem;
+}
+.collections-generator-fields input,
+.collections-generator-fields select {
+  width: 100%;
+}
+.collections-generator-themes {
+  grid-column: 1 / -1;
+}
 .collections-legend {
   display: flex;
   flex-wrap: wrap;
