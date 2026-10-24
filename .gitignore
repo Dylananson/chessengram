@@ -9,6 +9,7 @@ node_modules/
 dist/
 build/
 *.log
+**/.wrangler/
 
 # Local environment / secrets
 .env
@@ -27,3 +28,5 @@ infra/backend.tf
 *.swp
 .idea/
 .vscode/
+# Skill files materialized locally by the coding-agent harness are not project source.
+.opencode/skills/github-issue-pr/SKILL.md

@@ -29,6 +29,24 @@ reaches AWS; Cloudflare stores only ciphertext.
   npm run build --workspace @chessreps/sync-worker   # -> services/sync-worker/dist/worker.js
   ```
 
+## Manually deploy a branch preview from GitHub
+
+The **Actions → Deploy Pages preview → Run workflow** action manually builds a
+repository branch and uploads it to the existing `chessengram` Pages project as
+a preview (it refuses `main`). Select `main` as the workflow ref, enter the
+branch to preview, then approve the `pages-preview` environment deployment. The
+resulting URL is printed in the Wrangler deployment log. This is a manual
+Direct Upload; it does not re-enable automatic Git preview builds.
+
+Cloudflare authentication is required for the upload. Configure a GitHub
+Environment named `pages-preview`, restrict it to `main`, require a reviewer,
+and prevent self-review. Store a Cloudflare API token with the account's Pages
+Edit permission as that environment's `CLOUDFLARE_API_TOKEN` secret. The token
+is injected only into the final Wrangler upload step. The target branch is
+built in a separate job with no secrets, and the deploy job checks out the
+trusted workflow from `main` and receives only the built site/functions
+artifact. Do not add secrets to the build job or use a repository-wide token.
+
 ## First run
 
 ### Remote state setup (recommended before applying the main stack)

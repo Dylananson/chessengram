@@ -1,0 +1,84 @@
+name: Deploy Pages preview
+
+on:
+  workflow_dispatch:
+    inputs:
+      branch:
+        description: Existing repository branch to build and preview (not main)
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pages-preview-${{ inputs.branch }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out requested branch (no deployment credentials in this job)
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ inputs.branch }}
+          persist-credentials: false
+      - name: Validate preview branch
+        env:
+          PREVIEW_BRANCH: ${{ inputs.branch }}
+        run: |
+          git check-ref-format --branch "$PREVIEW_BRANCH"
+          if [ "$PREVIEW_BRANCH" = main ]; then
+            echo "Refusing to create a preview from main; production is deployed separately." >&2
+            exit 1
+          fi
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install and build
+        run: npm ci && npm run build
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: pages-preview-${{ github.run_id }}
+          path: |
+            apps/web/dist/
+            apps/web/functions/
+          if-no-files-found: error
+          retention-days: 1
+
+  deploy:
+    needs: build
+    if: github.ref == 'refs/heads/main'
+    environment: pages-preview
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      # This is the trusted main revision that supplied the workflow, not the
+      # branch being previewed. The target branch contributes only the built
+      # site/functions artifact from the credential-free build job.
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: main
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+      - name: Install pinned Wrangler
+        run: npm install --global wrangler@4.88.0
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: pages-preview-${{ github.run_id }}
+          path: preview-site
+      - name: Deploy branch preview
+        working-directory: preview-site
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          PREVIEW_BRANCH: ${{ inputs.branch }}
+        run: >-
+          wrangler pages deploy dist
+          --project-name chessengram
+          --branch "$PREVIEW_BRANCH"
