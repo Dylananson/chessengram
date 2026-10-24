@@ -21,7 +21,6 @@ import { makeSan } from 'chessops/san';
 import { makeUci, parseSquare, parseUci, squareRank } from 'chessops/util';
 import type { Color, Move, Role, SquareName } from 'chessops/types';
 import type { AttemptEvent, NormalizedPuzzle } from '@chessengram/contracts';
-import { CURATED_SOLUTIONS } from './curated-solutions.ts';
 
 export type PromotionRole = 'q' | 'r' | 'b' | 'n';
 
@@ -38,71 +37,6 @@ export type UserMoveOutcome =
   | { kind: 'needs-promotion'; from: SquareName; to: SquareName }
   | { kind: 'ignored' };
 
-type AcceptedLines = { canonical: readonly string[]; alternatives: readonly (readonly string[])[] };
-
-function acceptedLines(puzzle: NormalizedPuzzle): AcceptedLines {
-  const entry = CURATED_SOLUTIONS[puzzle.id];
-  if (
-    !entry ||
-    entry.canonicalSolution.length !== puzzle.solution.length ||
-    entry.canonicalSolution.some((move, index) => move !== puzzle.solution[index])
-  ) {
-    return { canonical: puzzle.solution, alternatives: [] };
-  }
-  const alternatives = entry.alternatives
-    .filter((item) => item.verification.trim().length > 0 && item.line.length > 0)
-    .map((item) => item.line);
-  return { canonical: puzzle.solution, alternatives };
-}
-
-function matchingLineForNextMove(
-  puzzle: NormalizedPuzzle,
-  playedSolverMoves: readonly string[],
-  nextMove: string,
-): readonly string[] | undefined {
-  const { canonical, alternatives } = acceptedLines(puzzle);
-  const matching = [canonical, ...alternatives].find((line) =>
-    playedSolverMoves.every((move, index) => line[index * 2] === move) &&
-    line[playedSolverMoves.length * 2] === nextMove,
-  );
-  if (matching) return matching;
-
-  // The Lichess database explicitly permits any checkmating move for a
-  // mate-in-one puzzle. Verify the exact position locally; do not infer
-  // alternatives for any other puzzle or from engine analysis.
-  if (
-    playedSolverMoves.length === 0 &&
-    puzzle.solution.length === 1 &&
-    puzzle.themes.includes('mateIn1')
-  ) {
-    const position = Chess.fromSetup(parseFen(puzzle.solverFen).unwrap()).unwrap();
-    const move = parseUci(nextMove);
-    if (move && position.isLegal(move)) {
-      position.play(move);
-      if (position.isCheckmate()) return [nextMove];
-    }
-  }
-  return undefined;
-}
-
-function solutionForAttempts(
-  puzzle: NormalizedPuzzle,
-  attempts: readonly OrderedAttemptMove[],
-): readonly string[] {
-  const solverMoves: string[] = [];
-  for (const attempt of attempts) {
-    if (!attempt.correct) continue;
-    const line = matchingLineForNextMove(puzzle, solverMoves, attempt.uci);
-    if (!line) continue;
-    solverMoves.push(attempt.uci);
-  }
-  if (solverMoves.length === 0) return acceptedLines(puzzle).canonical;
-  return (
-    matchingLineForNextMove(puzzle, solverMoves.slice(0, -1), solverMoves.at(-1)!) ??
-    acceptedLines(puzzle).canonical
-  );
-}
-
 export class PuzzleGame {
   private readonly puzzle: NormalizedPuzzle;
   private readonly solverColor: Color;
@@ -110,13 +44,10 @@ export class PuzzleGame {
   private ply = 0;
   private failed = false;
   private completed = false;
-  private solution: readonly string[];
-  private solverMoves: string[] = [];
 
   constructor(puzzle: NormalizedPuzzle) {
     const setup = parseFen(puzzle.solverFen).unwrap();
     this.puzzle = puzzle;
-    this.solution = acceptedLines(puzzle).canonical;
     this.pos = Chess.fromSetup(setup).unwrap();
     this.solverColor = puzzle.solverColor;
   }
@@ -152,7 +83,7 @@ export class PuzzleGame {
   }
 
   get requiredSolverMoves(): number {
-    return Math.ceil(this.solution.length / 2);
+    return Math.ceil(this.puzzle.solution.length / 2);
   }
 
   legalDests(): Map<SquareName, SquareName[]> {
@@ -193,25 +124,28 @@ export class PuzzleGame {
     if (!move || !this.pos.isLegal(move)) return { kind: 'illegal' };
 
     const uci = makeUci(move);
-    const matchingLine = matchingLineForNextMove(this.puzzle, this.solverMoves, uci);
-    if (!matchingLine) {
+    const afterMove = this.pos.clone();
+    afterMove.play(move);
+    if (afterMove.isCheckmate()) {
+      this.pos = afterMove;
+      this.completed = true;
+      return { kind: 'correct', uci, fenAfterSolver: this.fen, completed: true };
+    }
+    if (uci !== this.puzzle.solution[this.ply]) {
       this.failed = true;
       return { kind: 'wrong', uci, fen: this.fen };
     }
-
-    this.solution = matchingLine;
-    this.solverMoves.push(uci);
 
     this.pos.play(move);
     this.ply += 1;
     const fenAfterSolver = this.fen;
 
-    if (this.ply >= this.solution.length) {
+    if (this.ply >= this.puzzle.solution.length) {
       this.completed = true;
       return { kind: 'correct', uci, fenAfterSolver, completed: true };
     }
 
-    const opponentUci = this.solution[this.ply]!;
+    const opponentUci = this.puzzle.solution[this.ply]!;
     const opponentMove = parseUci(opponentUci);
     if (!opponentMove || !this.pos.isLegal(opponentMove)) {
       // Malformed pack: never leave the board stuck; finish at the solver move.
@@ -221,7 +155,7 @@ export class PuzzleGame {
 
     this.pos.play(opponentMove);
     this.ply += 1;
-    if (this.ply >= this.solution.length) this.completed = true;
+    if (this.ply >= this.puzzle.solution.length) this.completed = true;
 
     return {
       kind: 'correct',
@@ -249,13 +183,13 @@ export class PuzzleGame {
     if (this.failed) {
       return {
         startFen: this.puzzle.solverFen,
-        plies: [...this.solution],
+        plies: [...this.puzzle.solution],
         fromStart: true,
       };
     }
     return {
       startFen: this.fen,
-      plies: this.solution.slice(this.ply),
+      plies: this.puzzle.solution.slice(this.ply),
       fromStart: false,
     };
   }
@@ -269,24 +203,28 @@ export class PuzzleGame {
       if (this.completed) break;
       const move = parseUci(uci);
       if (!move || !this.pos.isLegal(move)) break;
-      const matchingLine = matchingLineForNextMove(this.puzzle, this.solverMoves, uci);
-      if (!matchingLine) break;
-      this.solution = matchingLine;
-      this.solverMoves.push(uci);
+      const afterMove = this.pos.clone();
+      afterMove.play(move);
+      if (!afterMove.isCheckmate() && uci !== this.puzzle.solution[this.ply]) break;
       this.pos.play(move);
       this.ply += 1;
 
-      if (this.ply >= this.solution.length) {
+      if (this.pos.isCheckmate()) {
         this.completed = true;
         break;
       }
-      const opponentUci = this.solution[this.ply]!;
+
+      if (this.ply >= this.puzzle.solution.length) {
+        this.completed = true;
+        break;
+      }
+      const opponentUci = this.puzzle.solution[this.ply]!;
       const opponentMove = parseUci(opponentUci);
       if (!opponentMove || !this.pos.isLegal(opponentMove)) break;
       this.pos.play(opponentMove);
       this.ply += 1;
     }
-    if (this.ply >= this.solution.length) this.completed = true;
+    if (this.ply >= this.puzzle.solution.length) this.completed = true;
   }
 }
 
@@ -498,13 +436,19 @@ export function buildMoveList(
   // Only moves actually applied to the board appear — a wrong attempt is
   // reverted and never advances the line, so the list is the played mainline
   // (the puzzle PGN) rather than raw input history.
-  const ordered = attempts;
-  const solution = solutionForAttempts(puzzle, ordered);
+  const solution = puzzle.solution;
   let ply = 0;
-  for (const attempt of ordered) {
+  for (const attempt of attempts) {
     if (ply >= solution.length) break;
     const move = parseUci(attempt.uci);
-    if (!attempt.correct || attempt.uci !== solution[ply] || !move || !pos.isLegal(move)) continue;
+    if (!attempt.correct || !move || !pos.isLegal(move)) continue;
+    if (attempt.uci !== solution[ply]) {
+      const afterMove = pos.clone();
+      afterMove.play(move);
+      if (!afterMove.isCheckmate()) continue;
+      record(move);
+      break;
+    }
     record(move);
     ply += 1;
     const reply = ply < solution.length ? parseUci(solution[ply]!) : undefined;
@@ -571,21 +515,26 @@ export function buildReviewLine(
     push(makeUci(start.setupMove), 'setup');
   }
 
-  const ordered = orderedAttemptMoves(events);
-  const solution = solutionForAttempts(puzzle, ordered);
-  for (const attempt of ordered) {
-    if (!attempt.correct || attempt.uci !== solution[ply]) {
+  for (const attempt of orderedAttemptMoves(events)) {
+    const solverMove = parseUci(attempt.uci);
+    const legal = !!solverMove && pos.isLegal(solverMove);
+    const alternateMate = attempt.correct && legal && attempt.uci !== puzzle.solution[ply] && (() => {
+      const afterMove = pos.clone();
+      afterMove.play(solverMove!);
+      return afterMove.isCheckmate();
+    })();
+    if (!attempt.correct || (attempt.uci !== puzzle.solution[ply] && !alternateMate)) {
       // Wrong attempt: annotate the current position without advancing.
       push(attempt.uci, 'wrong');
       continue;
     }
-    const solverMove = parseUci(attempt.uci);
-    if (!solverMove || !pos.isLegal(solverMove)) break;
+    if (!solverMove || !legal) break;
     pos.play(solverMove);
     ply += 1;
     push(attempt.uci, 'solver');
-    if (ply >= solution.length) break;
-    const opponentUci = solution[ply]!;
+    if (pos.isCheckmate()) break;
+    if (ply >= puzzle.solution.length) break;
+    const opponentUci = puzzle.solution[ply]!;
     const opponentMove = parseUci(opponentUci);
     if (!opponentMove || !pos.isLegal(opponentMove)) break;
     pos.play(opponentMove);
