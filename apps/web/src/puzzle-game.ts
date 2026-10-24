@@ -124,6 +124,13 @@ export class PuzzleGame {
     if (!move || !this.pos.isLegal(move)) return { kind: 'illegal' };
 
     const uci = makeUci(move);
+    const afterMove = this.pos.clone();
+    afterMove.play(move);
+    if (afterMove.isCheckmate()) {
+      this.pos = afterMove;
+      this.completed = true;
+      return { kind: 'correct', uci, fenAfterSolver: this.fen, completed: true };
+    }
     if (uci !== this.puzzle.solution[this.ply]) {
       this.failed = true;
       return { kind: 'wrong', uci, fen: this.fen };
@@ -196,9 +203,16 @@ export class PuzzleGame {
       if (this.completed) break;
       const move = parseUci(uci);
       if (!move || !this.pos.isLegal(move)) break;
-      if (uci !== this.puzzle.solution[this.ply]) break;
+      const afterMove = this.pos.clone();
+      afterMove.play(move);
+      if (!afterMove.isCheckmate() && uci !== this.puzzle.solution[this.ply]) break;
       this.pos.play(move);
       this.ply += 1;
+
+      if (this.pos.isCheckmate()) {
+        this.completed = true;
+        break;
+      }
 
       if (this.ply >= this.puzzle.solution.length) {
         this.completed = true;
@@ -427,7 +441,14 @@ export function buildMoveList(
   for (const attempt of attempts) {
     if (ply >= solution.length) break;
     const move = parseUci(attempt.uci);
-    if (!attempt.correct || attempt.uci !== solution[ply] || !move || !pos.isLegal(move)) continue;
+    if (!attempt.correct || !move || !pos.isLegal(move)) continue;
+    if (attempt.uci !== solution[ply]) {
+      const afterMove = pos.clone();
+      afterMove.play(move);
+      if (!afterMove.isCheckmate()) continue;
+      record(move);
+      break;
+    }
     record(move);
     ply += 1;
     const reply = ply < solution.length ? parseUci(solution[ply]!) : undefined;
@@ -495,16 +516,23 @@ export function buildReviewLine(
   }
 
   for (const attempt of orderedAttemptMoves(events)) {
-    if (!attempt.correct || attempt.uci !== puzzle.solution[ply]) {
+    const solverMove = parseUci(attempt.uci);
+    const legal = !!solverMove && pos.isLegal(solverMove);
+    const alternateMate = attempt.correct && legal && attempt.uci !== puzzle.solution[ply] && (() => {
+      const afterMove = pos.clone();
+      afterMove.play(solverMove!);
+      return afterMove.isCheckmate();
+    })();
+    if (!attempt.correct || (attempt.uci !== puzzle.solution[ply] && !alternateMate)) {
       // Wrong attempt: annotate the current position without advancing.
       push(attempt.uci, 'wrong');
       continue;
     }
-    const solverMove = parseUci(attempt.uci);
-    if (!solverMove || !pos.isLegal(solverMove)) break;
+    if (!solverMove || !legal) break;
     pos.play(solverMove);
     ply += 1;
     push(attempt.uci, 'solver');
+    if (pos.isCheckmate()) break;
     if (ply >= puzzle.solution.length) break;
     const opponentUci = puzzle.solution[ply]!;
     const opponentMove = parseUci(opponentUci);

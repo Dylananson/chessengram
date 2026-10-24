@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import { strict as assert } from 'node:assert';
-import { PuzzleGame, buildMoveList, buildPlaybackSteps } from '../src/puzzle-game.ts';
+import { PuzzleGame, buildMoveList, buildPlaybackSteps, buildReviewLine } from '../src/puzzle-game.ts';
 import { makePuzzle, promotionPuzzle, setupMovePuzzle } from './fixtures.ts';
 
 test('correct solver move advances and auto-plays the opponent reply', () => {
@@ -29,6 +29,47 @@ test('wrong move marks failure without changing the board position', () => {
   assert.equal(result.kind, 'wrong');
   assert.equal(game.failedState, true);
   assert.equal(game.fen, before, 'board should be untouched on a wrong move');
+});
+
+test('any legal move delivering checkmate solves regardless of the stored line', () => {
+  const game = new PuzzleGame(makePuzzle({
+    id: 'alternate-mate',
+    solverFen: 'r1bqkbnr/pppp1ppp/2n5/4p2Q/2B1P3/8/PPPP1PPP/RNB1K1NR w KQkq - 0 1',
+    solution: ['e2e3'],
+  }));
+
+  const result = game.playUserMove('h5', 'f7');
+  assert.equal(result.kind, 'correct');
+  if (result.kind !== 'correct') return;
+  assert.equal(result.completed, true);
+  assert.equal(game.isCompleted, true);
+  assert.equal(game.failedState, false);
+
+  const resumed = new PuzzleGame(makePuzzle({
+    id: 'alternate-mate-resume',
+    solverFen: 'r1bqkbnr/pppp1ppp/2n5/4p2Q/2B1P3/8/PPPP1PPP/RNB1K1NR w KQkq - 0 1',
+    solution: ['e2e3'],
+  }));
+  resumed.replaySolverMoves(['h5f7']);
+  assert.equal(resumed.isCompleted, true);
+
+  const puzzle = makePuzzle({
+    id: 'alternate-mate-review',
+    solverFen: 'r1bqkbnr/pppp1ppp/2n5/4p2Q/2B1P3/8/PPPP1PPP/RNB1K1NR w KQkq - 0 1',
+    solution: ['e2e3'],
+  });
+  assert.deepEqual(
+    buildMoveList(puzzle, [{ uci: 'h5f7', correct: true }], { complete: true })
+      .flatMap((row) => [row.white?.uci, row.black?.uci].filter(Boolean)),
+    ['h5f7'],
+  );
+  assert.deepEqual(
+    buildReviewLine(puzzle, [{
+      eventId: 'mate', type: 'move', occurredAt: 1,
+      payload: { uci: 'h5f7', correct: true },
+    }]).map((step) => step.uci).filter(Boolean),
+    ['h5f7'],
+  );
 });
 
 test('illegal move is rejected and does not fail the attempt', () => {
