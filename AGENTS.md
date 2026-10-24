@@ -18,6 +18,9 @@ ChessEngram is a personal offline-first chess trainer. It reuses Lichess librari
 
 ## Agent rules
 - Never commit/push unless requested
+- Keep task changes off `main`. Before starting work, fetch `origin` and create a dedicated task branch from the latest `origin/main`; do not branch from stale local `main` or another task branch unless explicitly requested.
+- Track repository changes in a GitHub issue (create one if none exists), implement on its task branch, verify the changes, then push that branch and open a PR for review and merge through GitHub. Never commit or push directly to `main`.
+- After a PR is merged, fetch `origin` and fast-forward local `main` to `origin/main` only when the working tree is clean. Preserve uncommitted work; do not reset or discard it to synchronize. Keep local `main` clean and matching `origin/main` before starting another task.
 - Prefer small, focused changes
 - Keep data continuity and no silent data loss
 - Shared interfaces get single owner
@@ -31,4 +34,4 @@ ChessEngram is a personal offline-first chess trainer. It reuses Lichess librari
 - Autonomous loop: a task is Ready when deps are Done AND its `Owns` paths touch no other running task. Rounds run all Ready tasks in parallel, then the coordinator verifies combined (`npm test`, `npm run typecheck`, `npm run build`, `npm run smoke` for user-visible changes), commits if green, updates GRAPH.md, and starts the next round. Stop at user-gated items (needs-device, needs-decision, plan wording).
 - Migration discipline: preserve every control `id`, `data-*` hook, and class that smoke/CSS/tests depend on — audit before finishing. Behavior-neutral rounds stay behavior-neutral; missing shared helpers become named follow-ups, never drive-by edits to shared files. Concurrent agents never share a file.
 - Provenance: third-party ideas/patterns are free; verbatim-adapted lines keep their upstream notice + SHA + `THIRD-PARTY-NOTICE.md` entry. Default to clean-room.
-- `docs/PROJECT_PLAN.md` wording is coordinator-owned; agents never edit it. No pushes, ever.
+- `docs/PROJECT_PLAN.md` wording is coordinator-owned; agents never edit it.
