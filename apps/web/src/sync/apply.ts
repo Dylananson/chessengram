@@ -636,7 +636,10 @@ async function applyOne(
     }
 
     case 'collection': {
-      const collection = readCollectionPayload(payload);
+      // The Worker orders mutable envelopes by their signed top-level timestamp.
+      // Do not trust the nested timestamp for conflict resolution: older clients
+      // could populate it from immutable collection.createdAt.
+      const collection = { ...readCollectionPayload(payload), updatedAt: envelope.updatedAt };
       const localRecord = writer.getCollection(collection.collectionId);
       const localState = await writer.loadCollectionSyncState(collection.collectionId);
       const baseline = localState ?? (localRecord ? collectionStateFromRecord(localRecord) : undefined);

@@ -449,6 +449,8 @@ export interface SyncRunResult {
   accepted: number;
   applied?: number;
   skipped?: number;
+  /** True when this round was short-circuited by an unauthenticated/paused session. */
+  paused?: boolean;
   duplicates?: number;
   cursor?: number;
 }
@@ -824,7 +826,8 @@ export class LocalSyncRuntime implements SyncRuntime {
     // A manual (or auto) round supersedes any pending debounce.
     this.cancelDebounce();
     const empty: SyncRunResult = { pushed: 0, accepted: 0, applied: 0, skipped: 0, duplicates: 0 };
-    if (!this.isConfigured() || this.paused) return empty;
+    if (!this.isConfigured()) return empty;
+    if (this.paused) return { ...empty, paused: true };
     await this.secretsReady;
     const saved = await this.storage.load();
     if (saved?.enabled !== true) return empty;
@@ -839,7 +842,7 @@ export class LocalSyncRuntime implements SyncRuntime {
         this.deviceKeys = await this.ensureDeviceKeys(api);
       } catch (error) {
         this.markPausedOn(error);
-        return empty;
+        return { ...empty, ...(this.paused ? { paused: true } : {}) };
       }
     }
 
@@ -919,7 +922,7 @@ export class LocalSyncRuntime implements SyncRuntime {
 
     this.retryAttempt = 0;
     this.cancelRetry();
-    return { pushed, accepted, applied, skipped, duplicates, cursor };
+    return { pushed, accepted, applied, skipped, duplicates, cursor, ...(this.paused ? { paused: true } : {}) };
   }
 
   /**
@@ -1554,7 +1557,9 @@ function buildPayload(
         collectionId: collection.id,
         name: collection.name,
         puzzleIds: [...collection.puzzleIds],
-        updatedAt: collection.createdAt,
+        // The immutable creation time is not a mutation timestamp. The signed
+        // envelope and payload both need the current change time for LWW.
+        updatedAt: now,
         updatedBy: deviceId,
       };
     }
