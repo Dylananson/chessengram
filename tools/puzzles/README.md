@@ -138,3 +138,35 @@ Artifacts: `pack.jsonl` (2,500 puzzles, interleaved across bands),
 `source.json` (archive URL, size, SHA256, license). `test_bands.py` covers the
 band boundaries and the selection rules. Recorded pack SHA256:
 `f83302975558f072d14daa50c00a73f55aea056aca25c5f9f2b968b60323930c`.
+
+## Custom sparse and theme-filtered packs (`custom_packs.py`)
+
+For additional 100–1000-puzzle packs, use `custom_packs.py` against the same
+complete official Lichess CSV archive. It creates a pack for one explicit
+inclusive rating interval less than 200 points wide and zero or more exact
+Lichess theme tags. Repeated `--theme` options are an **AND** filter; tags come
+from the source `Themes` field, not inference from the board or solution.
+Intervals such as 500–699, 700–899, …, 2300–2499 tile the requested 500–2500
+coverage (the upper boundary is exclusive for the next interval).
+
+```sh
+mkdir -p /tmp/opencode/forks-pack
+/tmp/opencode/chessreps-t02-venv/bin/python tools/puzzles/custom_packs.py \
+  /tmp/opencode/lichess-puzzles/lichess_db_puzzle.csv.zst /tmp/opencode/forks-pack \
+  --rating-min 500 --rating-max 699 --theme fork --count 100
+mkdir -p /tmp/opencode/pin-fork-pack
+/tmp/opencode/chessreps-t02-venv/bin/python tools/puzzles/custom_packs.py \
+  /tmp/opencode/lichess-puzzles/lichess_db_puzzle.csv.zst /tmp/opencode/pin-fork-pack \
+  --rating-min 900 --rating-max 1099 --theme pin --theme fork --count 100
+```
+
+Selection applies the established deviation/popularity/plays quality filter,
+then orders by SHA256 of a versioned seed, filter and puzzle ID. The tool
+normalizes every selected puzzle with `puzzles.normalize` (legal setup/solution
+and mate-tag consistency) and removes duplicate solver positions. It fails
+closed if the deterministic candidate window cannot supply the requested count;
+it does not relax filters or claim a different theme. `manifest.json` records
+filters, the archive SHA256/size, CC0 source URL, pack checksum and checks not
+performed. Generate into separate empty directories to compare reproducibility.
+The archive is not vendored, and these generated artifacts are not published or
+installed in the app automatically.
