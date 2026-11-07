@@ -106,6 +106,16 @@ test('playAnalysisMove rejects illegal moves and unreadable FENs without throwin
   assert.equal(playAnalysisMove('not a fen', 'e2', 'e4'), undefined);
 });
 
+test('playAnalysisMove normalises castling dragged onto the rook to O-O', () => {
+  const fen = 'r3k2r/8/8/8/8/8/8/R3K2R w KQkq - 0 1';
+  const rookDrop = playAnalysisMove(fen, 'e1', 'h1');
+  const kingTarget = playAnalysisMove(fen, 'e1', 'g1');
+  assert.ok(rookDrop);
+  assert.equal(rookDrop.san, 'O-O');
+  assert.equal(rookDrop.uci, 'e1g1');
+  assert.equal(rookDrop.fen, kingTarget?.fen);
+});
+
 test('analysisMoveText numbers the line like a scoresheet', () => {
   const e4 = playAnalysisMove(ANALYSIS_START_FEN, 'e2', 'e4')!;
   const e5 = playAnalysisMove(e4.fen, 'e7', 'e5')!;

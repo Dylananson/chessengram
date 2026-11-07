@@ -20,6 +20,7 @@ import { parseFen, makeFen } from 'chessops/fen';
 import { makeSan } from 'chessops/san';
 import { makeUci, parseUci } from 'chessops/util';
 import type { SquareName } from 'chessops/types';
+import { normalizeCastlingDest } from './castling-input.ts';
 import { h } from 'snabbdom/build/h.js';
 import type { VNode } from 'snabbdom/build/vnode.js';
 import { screenPatch as patch } from './ui/patch.ts';
@@ -102,8 +103,11 @@ export function playAnalysisMove(fen: string, from: SquareName, to: SquareName, 
   // Build the move from `from`+`to` (+ a promotion role). Promotions default to
   // a queen: the analysis board is for exploring and has no scoring
   // consequences, so interrupting with a picker would only cost flow.
+  // A king dropped on its own rook (`rookCastle`) is the same castling move
+  // as the king's two-square target; canonicalise it so the line shows O-O.
+  const dest = normalizeCastlingDest(chess, from, to);
   const suffix = promotion ?? '';
-  const move = parseUci(`${from}${to}${suffix}`) ?? parseUci(`${from}${to}q`);
+  const move = parseUci(`${from}${dest}${suffix}`) ?? parseUci(`${from}${dest}q`);
   if (!move || !chess.isLegal(move)) return undefined;
 
   const san = makeSan(chess, move);

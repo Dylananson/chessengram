@@ -86,6 +86,48 @@ test('legalDests exposes solver destinations in chessground shape', () => {
   assert.ok(dests.get('e2')?.includes('e4'));
 });
 
+const CASTLE_FEN = 'r3k2r/8/8/8/8/8/8/R3K2R w KQkq - 0 1';
+
+test('castling grades correctly when the king is dragged onto its rook', () => {
+  const game = new PuzzleGame(makePuzzle({ id: 'castle-h', solverFen: CASTLE_FEN, solution: ['e1g1'] }));
+  const result = game.playUserMove('e1', 'h1');
+  assert.equal(result.kind, 'correct');
+  if (result.kind !== 'correct') return;
+  assert.equal(result.uci, 'e1g1', 'rook-drop normalises to the solution UCI');
+  assert.ok(result.completed, 'the stored one-move line is complete');
+  assert.match(game.fen, /^r3k2r\/8\/8\/8\/8\/8\/8\/R4RK1 b kq/);
+});
+
+test('castling works by king target square and remains a legal premove probe', () => {
+  const game = new PuzzleGame(makePuzzle({ id: 'castle-g', solverFen: CASTLE_FEN, solution: ['e1g1'] }));
+  assert.equal(game.isLegalSolverMove('e1', 'h1'), true, 'rook-drop queued as a premove');
+  assert.equal(game.isLegalSolverMove('e1', 'g1'), true, 'king-target premove');
+  const result = game.playUserMove('e1', 'g1');
+  assert.equal(result.kind, 'correct');
+  if (result.kind !== 'correct') return;
+  assert.equal(result.uci, 'e1g1');
+});
+
+test('queenside castling dragged onto the a-rook grades as O-O-O', () => {
+  const game = new PuzzleGame(makePuzzle({ id: 'castle-a', solverFen: CASTLE_FEN, solution: ['e1c1'] }));
+  const result = game.playUserMove('e1', 'a1');
+  assert.equal(result.kind, 'correct');
+  if (result.kind !== 'correct') return;
+  assert.equal(result.uci, 'e1c1');
+});
+
+test('a king dropped on a friendly rook without castling rights is illegal', () => {
+  const game = new PuzzleGame(makePuzzle({
+    id: 'castle-blocked',
+    solverFen: '4k3/8/8/8/8/8/8/R3K2R w - - 0 1',
+    solution: ['e1g1'],
+  }));
+  assert.equal(game.isLegalSolverMove('e1', 'h1'), false);
+  const result = game.playUserMove('e1', 'h1');
+  assert.equal(result.kind, 'illegal');
+  assert.equal(game.failedState, false, 'an illegal drop never fails the attempt');
+});
+
 test('promotion requires a role, then completes with the chosen piece', () => {
   const game = new PuzzleGame(promotionPuzzle);
   assert.equal(game.requiresPromotion('b7', 'b8'), true);
