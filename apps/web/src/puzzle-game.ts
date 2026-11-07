@@ -21,6 +21,7 @@ import { makeSan } from 'chessops/san';
 import { makeUci, parseSquare, parseUci, squareRank } from 'chessops/util';
 import type { Color, Move, Role, SquareName } from 'chessops/types';
 import type { AttemptEvent, NormalizedPuzzle } from '@chessengram/contracts';
+import { normalizeCastlingDest } from './castling-input.ts';
 
 export type PromotionRole = 'q' | 'r' | 'b' | 'n';
 
@@ -110,7 +111,8 @@ export class PuzzleGame {
    */
   isLegalSolverMove(from: SquareName, to: SquareName, promotion?: PromotionRole): boolean {
     if (this.completed || this.pos.turn !== this.solverColor) return false;
-    const move = parseUci(`${from}${to}${promotion ?? ''}`);
+    const dest = normalizeCastlingDest(this.pos, from, to);
+    const move = parseUci(`${from}${dest}${promotion ?? ''}`);
     return !!move && this.pos.isLegal(move);
   }
 
@@ -120,7 +122,10 @@ export class PuzzleGame {
       return { kind: 'needs-promotion', from, to };
     }
 
-    const move = parseUci(`${from}${to}${promotion ?? ''}`);
+    // Chessground lets the king be dragged onto its own rook (`rookCastle`).
+    // Canonicalise that to the king's target so grading matches solution UCI.
+    const dest = normalizeCastlingDest(this.pos, from, to);
+    const move = parseUci(`${from}${dest}${promotion ?? ''}`);
     if (!move || !this.pos.isLegal(move)) return { kind: 'illegal' };
 
     const uci = makeUci(move);

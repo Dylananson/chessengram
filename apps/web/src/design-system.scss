@@ -733,7 +733,10 @@ label, .field label { color: var(--muted); font-weight: 650; }
   aspect-ratio: 1 / 1;
   border-radius: 6px;
   overflow: hidden;
-  touch-action: manipulation;
+  /* Same phone-drag contract as the trainer board: never let the browser turn
+     a piece drag into a page pan (chessground#296). */
+  touch-action: none;
+  -webkit-touch-callout: none;
 }
 .analysis-panel-screen {
   display: flex;

@@ -224,6 +224,15 @@ try {
 
   await page.setViewport({ width: 390, height: 844 });
   await sleep(100);
+  // Phone drag: `touch-action: manipulation` lets the browser claim a piece
+  // drag as a page pan, and chessground cancels the move (chessground#296).
+  // The board must own touch gestures; the page still scrolls outside it.
+  const trainTouchAction = await page.$eval('#board', (el) => getComputedStyle(el).touchAction);
+  check(
+    'phone Train board owns its touch gestures (drag is not eaten by page pan)',
+    trainTouchAction === 'none',
+    trainTouchAction,
+  );
   const mobileTrainLayout = await page.evaluate(() => {
     const board = document.querySelector('.board-wrap');
     const left = document.querySelector('.controls-left');
@@ -892,6 +901,55 @@ try {
     .then(() => true)
     .catch(() => false);
   check('the new position is analysed automatically', reanalysed);
+
+  // Phone drag on the real board: a touch gesture must move the piece, not pan
+  // the page. This is the regression chessground#296 describes, and the reason
+  // the boards set `touch-action: none`.
+  await page.setViewport({ width: 390, height: 844, isMobile: true, hasTouch: true });
+  await sleep(250);
+  const analysisTouchAction = await page.$eval('#analysis', (el) => getComputedStyle(el).touchAction);
+  check(
+    'phone analysis board owns its touch gestures (drag is not eaten by page pan)',
+    analysisTouchAction === 'none',
+    analysisTouchAction,
+  );
+  // Open a fresh White-to-move position: the analysis orientation follows the
+  // side to move, and the screen-point maths below assumes White at the bottom.
+  await page.evaluate((fen) => {
+    window.location.hash = `#/analysis?fen=${encodeURIComponent(fen)}`;
+  }, 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1');
+  // The route is already mounted, so wait for the new (empty) line rather than
+  // for the selector that was there before the hash change.
+  await page
+    .waitForFunction(
+      () => !/e4/.test(document.querySelector('#analysis-moves')?.textContent ?? ''),
+      { timeout: 10000 },
+    )
+    .catch(() => {});
+  await sleep(400);
+  const touchRect = await page.$eval('#analysis cg-board', (el) => {
+    const r = el.getBoundingClientRect();
+    return { left: r.left, top: r.top, width: r.width, height: r.height };
+  });
+  const touchPoint = (file, rank) => ({
+    x: touchRect.left + ((file + 0.5) * touchRect.width) / 8,
+    y: touchRect.top + ((7 - rank + 0.5) * touchRect.height) / 8,
+  });
+  const touchE2 = touchPoint(4, 1);
+  const touchE4 = touchPoint(4, 3);
+  await page.touchscreen.touchStart(touchE2.x, touchE2.y);
+  await page.touchscreen.touchMove(touchE2.x, touchE2.y - 12);
+  await page.touchscreen.touchMove(touchE4.x, touchE4.y);
+  await page.touchscreen.touchEnd();
+  const touchMoved = await page
+    .waitForFunction(
+      () => /1\.\s*e4(\s|$)/.test(document.querySelector('#analysis-moves')?.textContent ?? ''),
+      { timeout: 10000 },
+    )
+    .then(() => true)
+    .catch(() => false);
+  check('a phone touch drag moves a piece instead of panning the page', touchMoved);
+  await page.setViewport({ width: 1280, height: 900 });
 
   // Sign convention (owner report): the displayed score is from White's side,
   // so a Black-to-move position where Black is winning must read negative and

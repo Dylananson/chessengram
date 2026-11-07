@@ -123,7 +123,11 @@ h1 {
   border-radius: 6px;
   overflow: hidden;
   box-shadow: 0 2px 10px rgba(0, 0, 0, 0.12);
-  touch-action: manipulation;
+  /* Phone drag: `manipulation` lets the browser claim the gesture as a pan,
+     which cancels chessground's touch drag (chessground#296). The board owns
+     its gestures; page scrolling starts outside it. */
+  touch-action: none;
+  -webkit-touch-callout: none;
 }
 /* Clean-room square palettes. Chessground renders the board as an 8x8
    background and overlays only interactive/highlight squares; these rules
