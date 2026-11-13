@@ -182,6 +182,31 @@ test('MultiPV lines are reported with their own scores, best first', async () =>
   engine.dispose();
 });
 
+test('live updates report the best move from MultiPV 1 only', async () => {
+  const worker = new FakeWorker((command, reply) => {
+    if (command === 'uci') return reply('uciok');
+    if (command === 'isready') return reply('readyok');
+    if (command.startsWith('go')) {
+      reply('info depth 10 multipv 1 score cp 30 pv e2e4 e7e5');
+      reply('info depth 10 multipv 2 score cp 5 pv d2d4 d7d5');
+      reply('info depth 10 multipv 3 score mate 2 pv c2c4 c7c5');
+      reply('bestmove e2e4');
+    }
+  });
+  const engine = createEngine({ createWorker: () => worker });
+
+  const reported: Array<string | undefined> = [];
+  const evaluation = await engine.evaluate(START_FEN, {
+    multiPv: 3,
+    depth: 10,
+    onUpdate: (update) => reported.push(update.bestMove),
+  });
+
+  assert.deepEqual(reported, ['e2e4', 'e2e4', 'e2e4'], 'every live report names the MultiPV-1 move');
+  assert.equal(evaluation.bestMove, 'e2e4');
+  engine.dispose();
+});
+
 test('a search that never answers is rejected by the timeout, and the queue survives', async () => {
   let searches = 0;
   const worker = new FakeWorker((command, reply) => {
