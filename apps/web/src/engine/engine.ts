@@ -279,13 +279,15 @@ export function createEngine(options: CreateEngineOptions = {}): EngineSession {
     const existing = pending.lines.get(index);
     if (!existing || (info.depth ?? 0) >= (existing.depth ?? 0)) {
       pending.lines.set(index, info);
+      // Only MultiPV 1 is the best move (a deeper line's first move is a weaker
+      // choice). Track it before the report so a live snapshot never lags.
+      if (index === 1 && info.pv !== undefined) pending.bestKnown = info.pv[0];
       // Live progress: report every improvement to the caller (continuous mode).
       pending.options.onUpdate?.({
         ...collect(pending.fen, pending.lines),
         ...(pending.bestKnown !== undefined ? { bestMove: pending.bestKnown } : {}),
       });
     }
-    if (info.pv !== undefined) pending.bestKnown = info.pv[0];
   }
 
   function start(): Promise<void> {
